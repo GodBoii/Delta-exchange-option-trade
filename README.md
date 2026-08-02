@@ -1,13 +1,14 @@
 # Delta Strategy Desk
 
-A self-hosted strategy workstation for Delta Exchange India. It connects a Delta API account, keeps the connection in a secure 30-day server session, resolves live option contracts, previews multi-leg strategies, schedules entry/exit, and records every submitted order.
+A client-facing strategy workstation for Delta Exchange India. Supabase Auth provides persistent email/password and Google sign-in, Supabase Postgres stores user-scoped strategies and executions, and Supabase Vault protects each user's one-time Delta API connection.
 
 ## Security first
 
 - Never place Delta API secrets in source code, browser storage, screenshots, or Git.
 - Rotate any key that has been pasted into chat or shared in an image before using this app.
-- Credentials are sent once to the server, validated against `GET /v2/profile`, encrypted with AES-256-GCM, and stored in the local SQLite database. The browser receives only an opaque HttpOnly, SameSite=Strict session cookie.
+- Users can sign in or create an account with email/password through Supabase Auth. Google OAuth is available alongside it when the provider is configured. Delta credentials are entered once after application authentication, validated against `GET /v2/profile`, and stored through a server-only Supabase Vault function.
 - Delta signatures are generated server-side immediately before each request. The secret is never returned to the browser.
+- The Supabase service-role key is server-only and must never use a `NEXT_PUBLIC_` name.
 - Use a dedicated API key with only the permissions needed. Trading keys require the deployed server's static public IP to be allowlisted in Delta.
 - Start with Delta testnet. Production orders can lose money.
 
@@ -21,25 +22,29 @@ Requirements: Node.js 22+.
    npm install
    ```
 
-2. Create `.env.local` from `.env.example` and generate a unique encryption key:
+2. Run the complete database migration in Supabase SQL Editor:
 
-   ```powershell
-   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-   ```
+   [`supabase/migrations/001_initial_schema.sql`](supabase/migrations/001_initial_schema.sql)
 
-3. Start the web app:
+3. Create `.env.local` from `.env.example`. Add the Supabase project URL, publishable key, and the server-only service-role key.
+
+4. Configure Google under Supabase Dashboard > Authentication > Sign In / Providers. The Google OAuth callback URI is:
+
+   `https://xphxxkmeqqgjobkmclso.supabase.co/auth/v1/callback`
+
+5. Start the web app:
 
    ```powershell
    npm run dev
    ```
 
-4. In a second terminal, start the durable scheduler:
+6. In a second terminal, start the durable scheduler:
 
    ```powershell
    npm run worker
    ```
 
-The worker must remain online for scheduled entry and exit. For deployment, run the web process and worker as separate supervised services that share the same persistent database volume and encryption key.
+The worker must remain online for scheduled entry and exit. For deployment, run the web process and worker as separate supervised services using the same Supabase project and server credentials.
 
 ## Strategy execution model
 
@@ -68,8 +73,8 @@ npm run build
 ## Important operational notes
 
 - System time must be synchronized. Delta rejects signatures older than five seconds.
-- Do not run more than one worker against the same SQLite database. A distributed deployment should move persistence and job locking to PostgreSQL.
-- SQLite is appropriate for a single self-hosted instance. Back up the `data` directory and protect filesystem access.
+- Run one scheduler worker initially. Before horizontally scaling workers, add a database-backed distributed lease/claim RPC.
+- Keep Row Level Security enabled. Delta connections and Vault RPCs remain inaccessible to browser roles.
 - This project calls Delta's REST API directly because exact signing, India/testnet host selection, and product-specific option resolution are core requirements. CCXT and `delta-rest-client` are not required at runtime.
 - The public WebSocket migration described in Delta's 2026 changelog is not needed for this REST-based version. A future real-time market tape should use `wss://public-socket.india.delta.exchange`, not deprecated legacy public channels.
 
