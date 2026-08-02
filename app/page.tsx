@@ -10,7 +10,7 @@ import {
   Save, ShieldCheck, SlidersHorizontal, Trash2, TrendingUp, Wallet,
   X, Zap
 } from "lucide-react";
-import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy";
+import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" };
@@ -50,7 +50,16 @@ function errorMessage(error: unknown) {
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
+  const apiOrigin = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+  const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+  const response = await fetch(`${apiOrigin}${url}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      ...init?.headers
+    }
+  });
   const data = await response.json().catch(() => ({})) as T & { message?: string; error?: string | { message?: string; code?: string } };
   if (!response.ok) {
     const nested = typeof data.error === "object" ? data.error?.message : data.error;
@@ -325,7 +334,7 @@ function StrategyBuilder({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; t
       </SettingsPanel>
       <SettingsPanel wide icon={<SlidersHorizontal />} title="Legwise settings" description="Define how protection and square-off rules apply across legs.">
         <div className="legwise-row"><Segmented label="Square off" value={strategy.squareOff} onChange={v => setStrategy({ ...strategy, squareOff: v as "partial" | "complete" })} options={[{ value: "partial", label: "Partial" }, { value: "complete", label: "Complete" }]} /><Toggle checked={strategy.trailToBreakEven} onChange={v => setStrategy({ ...strategy, trailToBreakEven: v })} label="Trail SL to break-even" /><Segmented disabled={!strategy.trailToBreakEven} label="Break-even scope" value={strategy.breakEvenScope} onChange={v => setStrategy({ ...strategy, breakEvenScope: v as "all_legs" | "stop_loss_legs" })} options={[{ value: "all_legs", label: "All legs" }, { value: "stop_loss_legs", label: "SL legs" }]} /><OptionalNumber label="Overall target" value={strategy.overallTarget} onChange={v => setStrategy({ ...strategy, overallTarget: v })} /><OptionalNumber label="Overall stop loss" value={strategy.overallStopLoss} onChange={v => setStrategy({ ...strategy, overallStopLoss: v })} /></div>
-        <p className="worker-note"><Activity /> Cross-leg target, stop, and break-even values are saved for review; automated monitoring is not enabled in this worker version.</p>
+        <p className="scheduler-note"><Activity /> Cross-leg target, stop, and break-even values are saved for review; automated monitoring is not enabled in this scheduler version.</p>
       </SettingsPanel>
     </div>
     <section className="legs-panel panel" data-reveal>
@@ -362,7 +371,7 @@ function LegRow({ leg, index, total, open, onToggle, onUpdate, onRemove, onDupli
       <div className="leg-grid primary-fields"><NumberField label="Lots" min={1} value={leg.lots} onChange={v => onUpdate({ lots: v || 1 })} /><Segmented label="Position" value={leg.position} onChange={v => onUpdate({ position: v as "buy" | "sell" })} options={[{ value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }]} /><Segmented label="Option type" value={leg.optionType} onChange={v => onUpdate({ optionType: v as "call" | "put" })} options={[{ value: "call", label: "Call" }, { value: "put", label: "Put" }]} /><Field label="Expiry"><input type="date" min={new Date().toISOString().slice(0,10)} value={leg.expiry} onChange={e => onUpdate({ expiry: e.target.value })} /></Field><Select label="Strike criteria" value={leg.strikeMode} onChange={v => onUpdate({ strikeMode: v as StrategyLeg["strikeMode"] })} options={["atm", "itm", "otm", "exact"]} />{leg.strikeMode === "exact" ? <OptionalNumber label="Exact strike" value={leg.exactStrike} onChange={v => onUpdate({ exactStrike: v })} /> : <NumberField label="Strike steps" min={0} max={100} value={leg.strikeSteps} onChange={v => onUpdate({ strikeSteps: v })} />}</div>
       <div className="subsection-label">Order & protection</div>
       <div className="leg-grid risk-fields"><Segmented label="Order type" value={leg.orderType} onChange={v => onUpdate({ orderType: v as "market_order" | "limit_order" })} options={[{ value: "market_order", label: "Market" }, { value: "limit_order", label: "Limit" }]} />{leg.orderType === "limit_order" && <Field label="Limit price"><input inputMode="decimal" value={leg.limitPrice || ""} onChange={e => onUpdate({ limitPrice: e.target.value || undefined })} placeholder="0.00" /></Field>}<OptionalNumber label="Target profit" value={leg.targetProfit} onChange={v => onUpdate({ targetProfit: v })} /><OptionalNumber label={`Stop loss${leg.position === "sell" ? " (required)" : ""}`} value={leg.stopLoss} onChange={v => onUpdate({ stopLoss: v })} /><OptionalNumber label="Trail SL" value={leg.trailStop} onChange={v => onUpdate({ trailStop: v })} /><NumberField label="Re-entry on target" min={0} max={10} value={leg.reentryOnTarget} onChange={v => onUpdate({ reentryOnTarget: v })} /><NumberField label="Re-entry on SL" min={0} max={10} value={leg.reentryOnStop} onChange={v => onUpdate({ reentryOnStop: v })} /></div>
-      <p className="worker-note"><Activity /> Re-entry values are saved for review but are not automatically monitored by this worker version.</p>
+      <p className="scheduler-note"><Activity /> Re-entry values are saved for review but are not automatically monitored by this scheduler version.</p>
     </div>}
   </article>;
 }
