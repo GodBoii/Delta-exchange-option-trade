@@ -1,21 +1,22 @@
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type SetAllCookies } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import type { Database } from "@/lib/supabase/types";
 
 export async function getSupabaseServerClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) throw new Error("Supabase public environment variables are not configured");
   const cookieStore = await cookies();
-  return createServerClient(url, key, {
+  return createServerClient<Database>(url, key, {
     cookies: {
       getAll: () => cookieStore.getAll(),
-      setAll: (items) => {
+      setAll: ((items) => {
         try {
           for (const { name, value, options } of items) cookieStore.set(name, value, options);
         } catch {
           // Server Components cannot always write cookies; middleware refreshes them.
         }
-      }
+      }) satisfies SetAllCookies
     }
   });
 }
