@@ -1,85 +1,161 @@
 # Delta Strategy Desk
 
-A client-facing strategy workstation for Delta Exchange India. Supabase Auth provides persistent email/password and Google sign-in, Supabase Postgres stores user-scoped strategies and executions, and Supabase Vault protects each user's one-time Delta API connection.
+A client-facing Delta Exchange India options strategy workstation with a Next.js frontend, Supabase Auth/Postgres/Vault, and a Dockerized Python FastAPI trading backend.
 
-## Security first
+## Architecture
 
-- Never place Delta API secrets in source code, browser storage, screenshots, or Git.
-- Rotate any key that has been pasted into chat or shared in an image before using this app.
-- Users can sign in or create an account with email/password through Supabase Auth. Google OAuth is available alongside it when the provider is configured. Delta credentials are entered once after application authentication, validated against `GET /v2/profile`, and stored through a server-only Supabase Vault function.
-- Delta signatures are generated server-side immediately before each request. The secret is never returned to the browser.
-- The Supabase service-role key is server-only and must never use a `NEXT_PUBLIC_` name.
-- Use a dedicated API key with only the permissions needed. Trading keys require the deployed server's static public IP to be allowlisted in Delta.
-- Start with Delta testnet. Production orders can lose money.
+- **Frontend:** Next.js on Vercel.
+- **Authentication:** Supabase email/password and optional Google OAuth.
+- **Persistence:** Supabase Postgres with Row Level Security.
+- **Delta credentials:** Supabase Vault, accessed only with the server-side service role.
+- **Trading API and scheduler:** Python FastAPI in one continuously running Docker container on a static-IP server.
 
-## Run locally
+The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
-Requirements: Node.js 22+.
+## Repository layout
 
-1. Install dependencies:
+```text
+app/                         Next.js client UI and Supabase OAuth callback
+lib/                         Browser/server Supabase helpers and frontend types
+backend/app/                 FastAPI, Delta client, execution engine, scheduler
+backend/tests/               Python strategy safety tests
+backend/Dockerfile           Production Python image
+docker-compose.yml           Single-replica backend deployment
+supabase/migrations/         Database, RLS, and Vault functions
+```
 
-   ```powershell
-   npm install
-   ```
+## Local frontend
 
-2. Run the complete database migration in Supabase SQL Editor:
+Create `.env.local` from `.env.example` and set:
 
-   [`supabase/migrations/001_initial_schema.sql`](supabase/migrations/001_initial_schema.sql)
+```text
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+NEXT_PUBLIC_API_URL=http://localhost:8000
+SUPABASE_SERVICE_ROLE_KEY=...
+DELTA_PRODUCTION_URL=https://api.india.delta.exchange
+```
 
-3. Create `.env.local` from `.env.example`. Add the Supabase project URL, publishable key, and the server-only service-role key.
-
-4. Configure Google under Supabase Dashboard > Authentication > Sign In / Providers. The Google OAuth callback URI is:
-
-   `https://xphxxkmeqqgjobkmclso.supabase.co/auth/v1/callback`
-
-5. Start the web app:
-
-   ```powershell
-   npm run dev
-   ```
-
-6. In a second terminal, start the durable scheduler:
-
-   ```powershell
-   npm run worker
-   ```
-
-The worker must remain online for scheduled entry and exit. For deployment, run the web process and worker as separate supervised services using the same Supabase project and server credentials.
-
-## Strategy execution model
-
-Delta's batch-order endpoint only supports orders belonging to one contract. Option legs have different product IDs, so a multi-leg strategy cannot be exchange-atomic. Delta Strategy Desk therefore:
-
-1. Resolves every leg from the live option chain and presents a preview.
-2. Requires an explicit real-funds acknowledgement.
-3. Assigns an idempotent client order ID to each leg.
-4. Submits legs sequentially and stops after the first failure.
-5. Records successful and failed submissions for reconciliation.
-6. Uses reduce-only market orders for the scheduled strategy exit.
-
-Per-leg target, stop-loss, and trailing-stop values are converted from points around the preview mark and attached as Delta bracket parameters. Market slippage means the actual distance from the fill can differ from the preview.
-
-Advanced cross-leg lifecycle fields (overall target/stop, break-even propagation, and automatic re-entry counts) are persisted and displayed in previews, but this version does not automatically monitor or execute them. Automating them safely requires strategy-scoped fill attribution; Delta exposes net product positions, so treating a shared product position as belonging to one strategy could close or reopen unrelated trades. The preview calls out this limitation whenever one of these fields is configured.
-
-## Commands
+Then run:
 
 ```powershell
-npm test
-npm run typecheck
+npm install
+npm run dev
+```
+
+## Local Python backend with Docker
+
+The Compose service reads server credentials from the ignored root `.env.local` file.
+
+```powershell
+docker compose up -d --build
+docker compose ps
+docker compose logs -f backend
+```
+
+The API is available at `http://localhost:8000`, its health endpoint is `/health`, and interactive API documentation is available at `/docs`.
+
+The scheduler is part of the Python application lifecycle. There is no separate npm worker command. It checks Supabase every two seconds while the container is healthy.
+
+To stop it:
+
+```powershell
+docker compose down
+```
+
+## Production deployment
+
+### Vercel frontend
+
+Configure these Vercel environment variables and redeploy:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL=https://xphxxkmeqqgjobkmclso.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+NEXT_PUBLIC_SITE_URL=https://delta-exchange-option-trade.vercel.app
+NEXT_PUBLIC_API_URL=https://your-python-api-domain.example
+```
+
+Do not add `SUPABASE_SERVICE_ROLE_KEY` or Delta API secrets to Vercel.
+
+### Supabase Auth URLs
+
+Use this Site URL:
+
+```text
+https://delta-exchange-option-trade.vercel.app
+```
+
+Add this Redirect URL:
+
+```text
+https://delta-exchange-option-trade.vercel.app/auth/callback
+```
+
+### Docker backend
+
+Deploy the Docker service to an always-on VPS or container host with a stable outbound public IP. On the server, create an ignored `.env.local` containing the server variables, then run:
+
+```bash
+docker compose up -d --build
+```
+
+Expose the API through HTTPS using a reverse proxy such as Caddy or Nginx. The Vercel frontend must use an `https://` API URL; browsers will block an HTTP backend from an HTTPS page.
+
+Required backend variables are documented in `backend/.env.example`. `FRONTEND_ORIGINS` already includes:
+
+```text
+https://delta-exchange-option-trade.vercel.app
+```
+
+Run exactly one backend container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design.
+
+Add the backend server's static public IP to the Delta API key allowlist. Vercel's IP is not used for Delta requests.
+
+## Scheduling behavior
+
+1. The authenticated user previews and schedules a strategy.
+2. The strategy is stored in Supabase.
+3. The Python scheduler finds due entries every two seconds.
+4. It resolves current option contracts and submits legs sequentially to Delta.
+5. At the configured exit time, it sends reduce-only market orders for the recorded products.
+6. Every execution and order response is recorded in Supabase.
+
+Entries more than `MAX_ENTRY_LATENESS_SECONDS` late are not submitted. They are marked `attention` instead, preventing a restarted server from placing an unexpectedly stale trade. The default is 60 seconds. Late exits are still attempted to reduce open risk.
+
+Delta cannot atomically submit option legs with different product IDs. A later leg can fail after earlier legs have filled. Overall strategy target/stop, cross-leg break-even, and automatic re-entry remain previewed and persisted but are not automatically monitored by this version.
+
+## Validation
+
+Frontend:
+
+```powershell
 npm run lint
+npm run typecheck
 npm run build
 ```
 
-## Important operational notes
+Backend:
 
-- System time must be synchronized. Delta rejects signatures older than five seconds.
-- Run one scheduler worker initially. Before horizontally scaling workers, add a database-backed distributed lease/claim RPC.
-- Keep Row Level Security enabled. Delta connections and Vault RPCs remain inaccessible to browser roles.
-- This project calls Delta's REST API directly because exact signing, India/testnet host selection, and product-specific option resolution are core requirements. CCXT and `delta-rest-client` are not required at runtime.
-- The public WebSocket migration described in Delta's 2026 changelog is not needed for this REST-based version. A future real-time market tape should use `wss://public-socket.india.delta.exchange`, not deprecated legacy public channels.
+```powershell
+cd backend
+.venv\Scripts\python -m ruff check app tests
+.venv\Scripts\python -m pytest
+```
 
-## Reference
+Docker:
 
-- [Delta Exchange API documentation](https://docs.delta.exchange/)
-- [Delta REST client on PyPI](https://pypi.org/project/delta-rest-client/)
-- [CCXT](https://github.com/ccxt/ccxt)
+```powershell
+docker compose build
+docker compose up -d
+```
+
+## Security notes
+
+- Never expose `SUPABASE_SERVICE_ROLE_KEY` through a `NEXT_PUBLIC_` variable.
+- Never store Delta secrets in frontend code, browser storage, Git, or Docker images.
+- Keep `.env.local` only on the trusted backend server.
+- Use a dedicated Delta trading key with only required permissions and the backend IP allowlisted.
+- Keep the server clock synchronized; Delta rejects stale request signatures.
+- Configure TLS, container restart policies, health monitoring, centralized logs, and alerts before unattended live trading.
