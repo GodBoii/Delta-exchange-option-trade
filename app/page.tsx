@@ -5,10 +5,10 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
-  CircleDollarSign, Clock3, Copy, GripVertical, KeyRound, Layers3,
+  CircleDollarSign, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
   LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw,
-  Save, ShieldCheck, SlidersHorizontal, Trash2, TrendingUp, Wallet,
-  X, Zap
+  Save, ShieldCheck, SlidersHorizontal, Trash2, TrendingUp, Upload, Wallet,
+  WifiOff, X, Zap
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -21,6 +21,7 @@ type ResolvedLeg = StrategyLeg & { productId: number; productSymbol: string; str
 type PreviewData = { definition: StrategyDefinition; legs: ResolvedLeg[]; warnings: string[] };
 type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[] };
 type Tab = "builder" | "dashboard" | "runs";
+type BackendStatus = "checking" | "online" | "offline";
 
 const today = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 const localDateTime = (offsetHours: number) => {
@@ -44,6 +45,17 @@ const initialStrategy = (): StrategyDefinition => ({
   legs: [newLeg(), newLeg({ position: "sell", strikeMode: "otm", strikeSteps: 2, stopLoss: 25 })],
   acknowledgement: false as true
 });
+const DRAFT_STORAGE_KEY = "delta-strategy-draft-v1";
+
+function isStrategyDefinition(value: unknown): value is StrategyDefinition {
+  if (!value || typeof value !== "object") return false;
+  const strategy = value as Record<string, unknown>;
+  return typeof strategy.name === "string"
+    && Boolean(strategy.instrument && typeof strategy.instrument === "object")
+    && Boolean(strategy.entry && typeof strategy.entry === "object")
+    && Array.isArray(strategy.legs)
+    && strategy.legs.length > 0;
+}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
@@ -51,9 +63,13 @@ function errorMessage(error: unknown) {
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const apiOrigin = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+  if (window.location.protocol === "https:" && apiOrigin.startsWith("http://")) {
+    throw new Error("The local trading backend is available only from the local frontend.");
+  }
   const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
   const response = await fetch(`${apiOrigin}${url}`, {
     ...init,
+    signal: init?.signal ?? AbortSignal.timeout(8_000),
     headers: {
       "Content-Type": "application/json",
       ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
@@ -73,6 +89,7 @@ export default function Home() {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
   const [tab, setTab] = useState<Tab>("builder");
   const [mobileNav, setMobileNav] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -85,9 +102,27 @@ export default function Home() {
 
   const loadSession = useCallback(async () => {
     try {
-      const data = await requestJson<SessionResponse>("/api/session");
-      setUser(data.authenticated ? data.user : null);
-      setAccount(data.connected ? data.account : null);
+      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+      if (!session?.user) {
+        setUser(null); setAccount(null); setBackendStatus("offline");
+        return;
+      }
+      const metadata = session.user.user_metadata ?? {};
+      setUser({
+        id: session.user.id,
+        email: session.user.email,
+        displayName: String(metadata.full_name ?? metadata.name ?? session.user.email?.split("@")[0] ?? "Client"),
+        avatarUrl: typeof metadata.avatar_url === "string" ? metadata.avatar_url : null
+      });
+      try {
+        const data = await requestJson<SessionResponse>("/api/session", { signal: AbortSignal.timeout(3_000) });
+        setBackendStatus("online");
+        setAccount(data.connected ? data.account : null);
+        if (data.user) setUser(data.user);
+      } catch {
+        setBackendStatus("offline");
+        setAccount(null);
+      }
     } catch (error) { setNotice({ tone: "error", text: errorMessage(error) }); }
     finally { setSessionLoading(false); }
   }, []);
@@ -104,7 +139,7 @@ export default function Home() {
   async function signOut() {
     try {
       await getSupabaseBrowserClient().auth.signOut();
-      setUser(null); setAccount(null); setTab("builder");
+      setUser(null); setAccount(null); setBackendStatus("offline"); setTab("builder");
     } catch (error) { setNotice({ tone: "error", text: errorMessage(error) }); }
   }
 
@@ -132,13 +167,15 @@ export default function Home() {
           </header>
           <main className="workspace">
             {notice && <Toast tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Toast>}
-            {tab === "builder" && <StrategyBuilder onNotice={setNotice} />}
+            {tab === "builder" && <StrategyBuilder onNotice={setNotice} liveEnabled />}
             {tab === "dashboard" && <Dashboard onNotice={setNotice} />}
             {tab === "runs" && <RunHistory onNotice={setNotice} />}
           </main>
           {confirmDisconnect && <ConfirmModal title="Disconnect Delta Exchange?" description="The stored Delta API secret will be permanently removed from Vault. Your application account and saved strategy history will remain." confirm="Disconnect Delta" onClose={() => setConfirmDisconnect(false)} onConfirm={() => void disconnectDelta()} />}
         </>
-      ) : user ? <ConnectView user={user} onSignOut={signOut} onConnected={(next) => { setAccount(next); setNotice({ tone: "ok", text: "Delta Exchange connected securely." }); }} /> : <AuthView onAuthenticated={loadSession} />}
+      ) : user && backendStatus === "online" ? <ConnectView user={user} onSignOut={signOut} onConnected={(next) => { setAccount(next); setNotice({ tone: "ok", text: "Delta Exchange connected securely." }); }} />
+        : user ? <DesignWorkspace user={user} notice={notice} onNotice={setNotice} onClearNotice={() => setNotice(null)} onRetry={loadSession} onSignOut={signOut} />
+        : <AuthView onAuthenticated={loadSession} />}
     </div>
   );
 }
@@ -258,6 +295,32 @@ function Toast({ tone, onClose, children }: { tone: "ok" | "error"; onClose: () 
   return <div className={`toast ${tone}`} role="status">{tone === "ok" ? <Check /> : <AlertTriangle />}<span>{children}</span><button onClick={onClose} aria-label="Dismiss"><X /></button></div>;
 }
 
+function DesignWorkspace({ user, notice, onNotice, onClearNotice, onRetry, onSignOut }: {
+  user: AppUser;
+  notice: { tone: "ok" | "error"; text: string } | null;
+  onNotice: (notice: { tone: "ok" | "error"; text: string }) => void;
+  onClearNotice: () => void;
+  onRetry: () => Promise<void>;
+  onSignOut: () => void;
+}) {
+  return <>
+    <header className="topbar design-topbar" data-reveal>
+      <Brand />
+      <nav className="main-nav" aria-label="Design workspace navigation"><NavButton active icon={<Layers3 />} onClick={() => undefined}>Strategy designer</NavButton></nav>
+      <div className="account-cluster">
+        <span className="connection-chip offline"><i />Design mode</span>
+        <div className="account-copy"><strong>{user.displayName || "Client"}</strong><span>Frontend-only workspace</span></div>
+        <button className="icon-button" onClick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut /></button>
+      </div>
+    </header>
+    <main className="workspace">
+      {notice && <Toast tone={notice.tone} onClose={onClearNotice}>{notice.text}</Toast>}
+      <section className="backend-banner" role="status"><WifiOff /><div><strong>Trading backend is not connected</strong><p>You can design and export strategies here. Start Docker and open the local frontend to preview contracts, connect Delta, schedule, or execute.</p></div><button className="secondary-button" onClick={() => void onRetry()}><RefreshCw />Retry connection</button></section>
+      <StrategyBuilder onNotice={onNotice} liveEnabled={false} />
+    </main>
+  </>;
+}
+
 function ConnectView({ user, onConnected, onSignOut }: { user: AppUser; onConnected: (account: Account) => void; onSignOut: () => void }) {
   const panel = useRef<HTMLDivElement>(null);
   const [apiKey, setApiKey] = useState(""); const [apiSecret, setApiSecret] = useState("");
@@ -299,12 +362,32 @@ function ConnectView({ user, onConnected, onSignOut }: { user: AppUser; onConnec
   </main>;
 }
 
-function StrategyBuilder({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; text: string }) => void }) {
+function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok" | "error"; text: string }) => void; liveEnabled: boolean }) {
   const [strategy, setStrategy] = useState<StrategyDefinition>(initialStrategy);
   const [expanded, setExpanded] = useState<string | null>(strategy.legs[0].id);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
+  const importInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as unknown;
+        if (isStrategyDefinition(parsed)) {
+          setStrategy(parsed);
+          setExpanded(parsed.legs[0]?.id ?? null);
+        }
+      }
+    } catch { localStorage.removeItem(DRAFT_STORAGE_KEY); }
+    finally { setDraftReady(true); }
+  }, []);
+
+  useEffect(() => {
+    if (draftReady) localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(strategy));
+  }, [draftReady, strategy]);
 
   const updateLeg = (id: string, patch: Partial<StrategyLeg>) => setStrategy(s => ({ ...s, legs: s.legs.map(l => l.id === id ? { ...l, ...patch } : l) }));
   const removeLeg = (id: string) => setStrategy(s => ({ ...s, legs: s.legs.filter(l => l.id !== id) }));
@@ -313,6 +396,10 @@ function StrategyBuilder({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; t
   const addLeg = () => { if (strategy.legs.length >= 12) return; const leg = newLeg({ expiry: strategy.legs[0]?.expiry || today() }); setStrategy(s => ({ ...s, legs: [...s.legs, leg] })); setExpanded(leg.id); };
 
   async function openPreview() {
+    if (!liveEnabled) {
+      setError("Start the Docker backend and use the local frontend to resolve live contracts.");
+      return;
+    }
     setPreviewing(true); setError("");
     try {
       const data = await requestJson<{ success: true } & PreviewData>("/api/strategies/preview", { method: "POST", body: JSON.stringify(strategy) });
@@ -321,8 +408,31 @@ function StrategyBuilder({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; t
     finally { setPreviewing(false); }
   }
 
+  function exportDraft() {
+    const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), strategy }, null, 2);
+    const href = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `${strategy.name.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "delta-strategy"}.json`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+    onNotice({ tone: "ok", text: "Strategy exported. Import this file from your local trading workspace." });
+  }
+
+  async function importDraft(file?: File) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const candidate = parsed && typeof parsed === "object" && "strategy" in parsed ? (parsed as { strategy: unknown }).strategy : parsed;
+      if (!isStrategyDefinition(candidate)) throw new Error("This file is not a valid Delta strategy draft.");
+      setStrategy(candidate); setExpanded(candidate.legs[0]?.id ?? null); setPreview(null); setError("");
+      onNotice({ tone: "ok", text: "Strategy draft imported successfully." });
+    } catch (importError) { onNotice({ tone: "error", text: errorMessage(importError) }); }
+    finally { if (importInput.current) importInput.current.value = ""; }
+  }
+
   return <div className="builder-page">
-    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy workspace</div><h1>Build a new strategy</h1><p>Configure, resolve, and verify every leg before it reaches Delta.</p></div><div className="draft-state"><span>Unsaved strategy</span><small>Changes remain on this device</small></div></section>
+    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy workspace</div><h1>Build a new strategy</h1><p>Configure every leg anywhere, then use the local trading workspace for live actions.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Browser draft</span><small>Saved automatically on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
     <div className="strategy-name-row panel" data-reveal><Field label="Strategy name"><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
     <div className="settings-grid">
       <SettingsPanel icon={<CircleDollarSign />} title="Instrument settings" description="Choose the contract family and price source.">
@@ -346,7 +456,7 @@ function StrategyBuilder({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; t
     </section>
     <footer className="builder-actions" data-reveal>
       <label className="acknowledgement"><input type="checkbox" checked={strategy.acknowledgement} onChange={e => setStrategy({ ...strategy, acknowledgement: e.target.checked as true })} /><span><Check /></span><p><strong>I understand the execution risk.</strong><small>Legs are submitted sequentially and market prices can change after preview.</small></p></label>
-      <div>{error && <span className="action-error"><AlertTriangle />{error}</span>}<button className="primary-button" disabled={previewing || !strategy.acknowledgement || strategy.legs.length === 0} onClick={openPreview}>{previewing ? <LoaderCircle className="spin" /> : <Zap />}{previewing ? "Resolving contracts" : "Preview strategy"}</button></div>
+      <div>{error && <span className="action-error"><AlertTriangle />{error}</span>}<button className={liveEnabled ? "primary-button" : "secondary-button"} disabled={previewing || !liveEnabled || !strategy.acknowledgement || strategy.legs.length === 0} onClick={openPreview}>{previewing ? <LoaderCircle className="spin" /> : liveEnabled ? <Zap /> : <WifiOff />}{previewing ? "Resolving contracts" : liveEnabled ? "Preview strategy" : "Local backend required"}</button></div>
     </footer>
     {preview && <PreviewDrawer preview={preview} strategy={strategy} onClose={() => setPreview(null)} onNotice={onNotice} />}
   </div>;
