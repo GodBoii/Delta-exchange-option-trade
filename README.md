@@ -12,6 +12,8 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
+The frontend also supports a backend-optional design mode. Supabase sign-in, strategy configuration, automatic browser draft storage, and JSON export/import work without the Python service. Delta connection, live contract preview, scheduling, execution, dashboard data, and run history require the local Docker backend.
+
 ## Repository layout
 
 ```text
@@ -68,16 +70,21 @@ docker compose down
 
 ### Vercel frontend
 
-Configure these Vercel environment variables and redeploy:
+For frontend-only design mode, configure these Vercel environment variables and redeploy:
 
 ```text
 NEXT_PUBLIC_SUPABASE_URL=https://xphxxkmeqqgjobkmclso.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 NEXT_PUBLIC_SITE_URL=https://delta-exchange-option-trade.vercel.app
-NEXT_PUBLIC_API_URL=https://your-python-api-domain.example
 ```
 
-Do not add `SUPABASE_SERVICE_ROLE_KEY` or Delta API secrets to Vercel.
+Do not add `SUPABASE_SERVICE_ROLE_KEY` or Delta API secrets to Vercel. You can omit `NEXT_PUBLIC_API_URL` while the backend remains local. The deployed HTTPS site will automatically enter design mode instead of trying to use the HTTP localhost backend.
+
+If you later expose the Docker API through a public HTTPS domain, add:
+
+```text
+NEXT_PUBLIC_API_URL=https://your-python-api-domain.example
+```
 
 ### Supabase Auth URLs
 
@@ -125,6 +132,19 @@ Add the backend server's static public IP to the Delta API key allowlist. Vercel
 Entries more than `MAX_ENTRY_LATENESS_SECONDS` late are not submitted. They are marked `attention` instead, preventing a restarted server from placing an unexpectedly stale trade. The default is 60 seconds. Late exits are still attempted to reduce open risk.
 
 Delta cannot atomically submit option legs with different product IDs. A later leg can fail after earlier legs have filled. Overall strategy target/stop, cross-leg break-even, and automatic re-entry remain previewed and persisted but are not automatically monitored by this version.
+
+## Working away from the backend
+
+On `https://delta-exchange-option-trade.vercel.app` without the Docker service:
+
+- Email/password and configured Google authentication continue to work through Supabase.
+- The full leg and strategy builder remains usable.
+- Draft changes are saved automatically in that browser's local storage.
+- Use **Export** to download a strategy JSON file.
+
+At home, start Docker and the local frontend, sign in, and use **Import** to load that JSON file. You can then connect Delta, preview live contracts, schedule, or execute.
+
+Browser storage is isolated by website origin, so the deployed site and `localhost` cannot directly share local storage. Export/import is the deliberate transfer mechanism.
 
 ## Validation
 
