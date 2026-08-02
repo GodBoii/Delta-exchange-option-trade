@@ -5,15 +5,17 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
-  CircleDollarSign, Clock3, Copy, ExternalLink, GripVertical, KeyRound, Layers3,
+  CircleDollarSign, Clock3, Copy, GripVertical, KeyRound, Layers3,
   LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw,
   Save, ShieldCheck, SlidersHorizontal, Trash2, TrendingUp, Wallet,
   X, Zap
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" | "testnet" };
-type SessionResponse = { success: boolean; connected: boolean; account: Account | null; message?: string; error?: string };
+type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" };
+type AppUser = { id: string; email?: string | null; displayName?: string | null; avatarUrl?: string | null };
+type SessionResponse = { success: boolean; authenticated: boolean; connected: boolean; user: AppUser | null; account: Account | null; message?: string; error?: string };
 type StrategyRow = { id: string; name: string; status: string; entryAt: string; exitAt: string; lastError?: string | null; createdAt: string };
 type ResolvedLeg = StrategyLeg & { productId: number; productSymbol: string; strike: number; markPrice: string | null };
 type PreviewData = { definition: StrategyDefinition; legs: ResolvedLeg[]; warnings: string[] };
@@ -60,9 +62,11 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 export default function Home() {
   const root = useRef<HTMLDivElement>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [tab, setTab] = useState<Tab>("builder");
   const [mobileNav, setMobileNav] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
   useGSAP(() => {
@@ -73,6 +77,7 @@ export default function Home() {
   const loadSession = useCallback(async () => {
     try {
       const data = await requestJson<SessionResponse>("/api/session");
+      setUser(data.authenticated ? data.user : null);
       setAccount(data.connected ? data.account : null);
     } catch (error) { setNotice({ tone: "error", text: errorMessage(error) }); }
     finally { setSessionLoading(false); }
@@ -80,10 +85,17 @@ export default function Home() {
 
   useEffect(() => { void loadSession(); }, [loadSession]);
 
-  async function disconnect() {
+  async function disconnectDelta() {
     try {
       await requestJson("/api/session", { method: "DELETE" });
-      setAccount(null); setTab("builder"); setNotice({ tone: "ok", text: "Delta account disconnected on this device." });
+      setAccount(null); setConfirmDisconnect(false); setTab("builder"); setNotice({ tone: "ok", text: "Delta Exchange disconnected. Your application account remains signed in." });
+    } catch (error) { setNotice({ tone: "error", text: errorMessage(error) }); }
+  }
+
+  async function signOut() {
+    try {
+      await getSupabaseBrowserClient().auth.signOut();
+      setUser(null); setAccount(null); setTab("builder");
     } catch (error) { setNotice({ tone: "error", text: errorMessage(error) }); }
   }
 
@@ -101,10 +113,11 @@ export default function Home() {
               <NavButton active={tab === "runs"} icon={<Activity />} onClick={() => { setTab("runs"); setMobileNav(false); }}>Run history</NavButton>
             </nav>
             <div className="account-cluster">
-              <span className={`environment ${account.environment}`}><i />{account.environment}</span>
+              <span className="connection-chip"><i />Delta connected</span>
               <button className="icon-button notification" aria-label="Notifications"><Bell /><span /></button>
               <div className="account-copy"><strong>{account.accountName || "Delta account"}</strong><span>{account.email || "Connected securely"}</span></div>
-              <button className="icon-button" onClick={disconnect} aria-label="Disconnect Delta account" title="Disconnect"><LogOut /></button>
+              <button className="icon-button" onClick={() => setConfirmDisconnect(true)} aria-label="Disconnect Delta Exchange" title="Disconnect Delta Exchange"><KeyRound /></button>
+              <button className="icon-button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut /></button>
               <button className="icon-button nav-toggle" onClick={() => setMobileNav(v => !v)} aria-label="Toggle navigation"><Menu /></button>
             </div>
           </header>
@@ -114,10 +127,110 @@ export default function Home() {
             {tab === "dashboard" && <Dashboard onNotice={setNotice} />}
             {tab === "runs" && <RunHistory onNotice={setNotice} />}
           </main>
+          {confirmDisconnect && <ConfirmModal title="Disconnect Delta Exchange?" description="The stored Delta API secret will be permanently removed from Vault. Your application account and saved strategy history will remain." confirm="Disconnect Delta" onClose={() => setConfirmDisconnect(false)} onConfirm={() => void disconnectDelta()} />}
         </>
-      ) : <ConnectView onConnected={(next) => { setAccount(next); setNotice({ tone: "ok", text: "Connection verified. Your encrypted session is ready." }); }} />}
+      ) : user ? <ConnectView user={user} onSignOut={signOut} onConnected={(next) => { setAccount(next); setNotice({ tone: "ok", text: "Delta Exchange connected securely." }); }} /> : <AuthView onAuthenticated={loadSession} />}
     </div>
   );
+}
+
+function AuthView({ onAuthenticated }: { onAuthenticated: () => Promise<void> }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState<"email" | "google" | null>(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  useGSAP(() => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    gsap.from(".auth-copy > *, .auth-card", { opacity: 0, y: 22, stagger: .08, duration: .65, ease: "power3.out" });
+  }, { scope: panel });
+
+  async function signInWithGoogle() {
+    setBusy("google"); setError(""); setMessage("");
+    try {
+      const origin = window.location.origin;
+      const { error: authError } = await getSupabaseBrowserClient().auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${origin}/auth/callback` }
+      });
+      if (authError) throw authError;
+    } catch (nextError) {
+      setError(errorMessage(nextError)); setBusy(null);
+    }
+  }
+
+  async function submitEmailAuth(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(""); setMessage("");
+    if (mode === "sign-up" && password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setBusy("email");
+    try {
+      const supabase = getSupabaseBrowserClient();
+      if (mode === "sign-in") {
+        const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (authError) throw authError;
+        await onAuthenticated();
+        return;
+      }
+
+      const { data, error: authError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` }
+      });
+      if (authError) throw authError;
+      if (data.session) {
+        await onAuthenticated();
+        return;
+      }
+      setPassword(""); setConfirmPassword("");
+      setMessage("Account created. Check your email and confirm the address to continue.");
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function changeMode(nextMode: "sign-in" | "sign-up") {
+    setMode(nextMode); setError(""); setMessage(""); setPassword(""); setConfirmPassword("");
+  }
+
+  return <main className="connect-shell auth-shell" ref={panel}>
+    <header className="connect-header"><Brand /><span className="auth-trust"><ShieldCheck /> Secure client access</span></header>
+    <div className="auth-grid">
+      <section className="auth-copy">
+        <div className="eyebrow"><span /> Professional strategy operations</div>
+        <h1>One account for every strategy decision.</h1>
+        <p>Sign in to build, schedule, and monitor Delta Exchange option strategies from a private workspace.</p>
+        <div className="trust-row"><div><ShieldCheck /><span><strong>Private workspace</strong><small>Your strategies are isolated to your account.</small></span></div><div><LockKeyhole /><span><strong>Persistent sign-in</strong><small>Secure sessions are managed by Supabase Auth.</small></span></div></div>
+      </section>
+      <section className="auth-card" aria-label="Sign in">
+        <div className="card-heading"><span className="heading-icon"><LockKeyhole /></span><div><h2>{mode === "sign-in" ? "Welcome back" : "Create your workspace"}</h2><p>{mode === "sign-in" ? "Sign in with your email and password." : "Create a secure account managed by Supabase."}</p></div></div>
+        <div className="auth-mode" role="tablist" aria-label="Authentication mode">
+          <button type="button" role="tab" aria-selected={mode === "sign-in"} className={mode === "sign-in" ? "active" : ""} onClick={() => changeMode("sign-in")}>Sign in</button>
+          <button type="button" role="tab" aria-selected={mode === "sign-up"} className={mode === "sign-up" ? "active" : ""} onClick={() => changeMode("sign-up")}>Create account</button>
+        </div>
+        <form className="email-auth-form" onSubmit={submitEmailAuth}>
+          <Field label="Email address"><input type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" placeholder="you@company.com" required /></Field>
+          <Field label="Password"><input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === "sign-in" ? "current-password" : "new-password"} placeholder={mode === "sign-in" ? "Enter your password" : "At least 8 characters"} minLength={8} required /></Field>
+          {mode === "sign-up" && <Field label="Confirm password"><input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter the password again" minLength={8} required /></Field>}
+          {error && <div className="inline-error" role="alert"><AlertTriangle />{error}</div>}
+          {message && <div className="inline-success" role="status"><Check />{message}</div>}
+          <button className="primary-button full" disabled={busy !== null}>{busy === "email" ? <><LoaderCircle className="spin" />{mode === "sign-in" ? "Signing in" : "Creating account"}</> : <><LockKeyhole />{mode === "sign-in" ? "Sign in securely" : "Create account"}</>}</button>
+        </form>
+        <div className="auth-divider"><span>Or continue with</span></div>
+        <button className="google-button" onClick={() => void signInWithGoogle()} disabled={busy !== null}><span className="google-mark">G</span>{busy === "google" ? "Opening Google" : "Continue with Google"}</button>
+        <p className="terms">Signing in creates your private application account. Delta Exchange is connected separately once, after authentication.</p>
+      </section>
+    </div>
+  </main>;
 }
 
 function Brand() {
@@ -136,10 +249,9 @@ function Toast({ tone, onClose, children }: { tone: "ok" | "error"; onClose: () 
   return <div className={`toast ${tone}`} role="status">{tone === "ok" ? <Check /> : <AlertTriangle />}<span>{children}</span><button onClick={onClose} aria-label="Dismiss"><X /></button></div>;
 }
 
-function ConnectView({ onConnected }: { onConnected: (account: Account) => void }) {
+function ConnectView({ user, onConnected, onSignOut }: { user: AppUser; onConnected: (account: Account) => void; onSignOut: () => void }) {
   const panel = useRef<HTMLDivElement>(null);
   const [apiKey, setApiKey] = useState(""); const [apiSecret, setApiSecret] = useState("");
-  const [environment, setEnvironment] = useState<"production" | "testnet">("testnet");
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   useGSAP(() => {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -149,25 +261,24 @@ function ConnectView({ onConnected }: { onConnected: (account: Account) => void 
   async function connect(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const result = await requestJson<{ account: Account }>("/api/session/connect", { method: "POST", body: JSON.stringify({ apiKey, apiSecret, environment }) });
+      const result = await requestJson<{ account: Account }>("/api/session/connect", { method: "POST", body: JSON.stringify({ apiKey, apiSecret }) });
       setApiKey(""); setApiSecret(""); onConnected(result.account);
     } catch (err) { setError(errorMessage(err)); }
     finally { setBusy(false); }
   }
 
   return <main className="connect-shell" ref={panel}>
-    <header className="connect-header"><Brand /><a href="https://docs.delta.exchange/" target="_blank" rel="noreferrer">Delta API docs <ExternalLink /></a></header>
+    <header className="connect-header"><Brand /><div className="onboarding-user"><span>{user.displayName || user.email}</span><button onClick={onSignOut}>Sign out</button></div></header>
     <div className="connect-grid">
       <section className="connect-copy">
         <div className="eyebrow"><span /> Strategy operations console</div>
-        <h1>Build option strategies with execution-grade clarity.</h1>
-        <p>Connect your Delta Exchange account to resolve live contracts, schedule entries, and monitor every strategy from one controlled workspace.</p>
+        <h1>Connect Delta Exchange once.</h1>
+        <p>Your application account is ready. Complete this one-time connection to resolve live contracts and securely submit reviewed strategies.</p>
         <div className="trust-row"><div><ShieldCheck /><span><strong>Encrypted at rest</strong><small>Your API secret never returns to the browser.</small></span></div><div><LockKeyhole /><span><strong>Persistent secure session</strong><small>Reconnect only when you choose to sign out.</small></span></div></div>
       </section>
       <form className="connect-card" onSubmit={connect} aria-label="Connect Delta Exchange account">
         <div className="card-heading"><span className="heading-icon"><KeyRound /></span><div><h2>Connect Delta Exchange</h2><p>Verify trading access to continue.</p></div></div>
-        <Segmented label="Environment" value={environment} onChange={(v) => setEnvironment(v as "production" | "testnet")} options={[{ value: "production", label: "Production" }, { value: "testnet", label: "Testnet" }]} />
-        {environment === "production" && <div className="production-warning"><AlertTriangle /><p><strong>Production uses real funds.</strong><br />Orders confirmed in this environment are sent to your live Delta account.</p></div>}
+        <div className="production-warning"><AlertTriangle /><p><strong>Live Delta Exchange India connection.</strong><br />Orders are submitted only after preview and explicit confirmation.</p></div>
         <Field label="API key"><input value={apiKey} onChange={e => setApiKey(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Paste your API key" minLength={16} required /></Field>
         <Field label="API secret"><input type="password" value={apiSecret} onChange={e => setApiSecret(e.target.value)} autoComplete="new-password" placeholder="Paste your API secret" minLength={24} required /></Field>
         {error && <div className="inline-error" role="alert"><AlertTriangle />{error}</div>}
