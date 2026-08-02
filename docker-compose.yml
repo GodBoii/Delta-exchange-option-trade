@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env.local
+    environment:
+      FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
+      SCHEDULER_ENABLED: "true"
+      SCHEDULER_POLL_SECONDS: "2"
+      MAX_ENTRY_LATENESS_SECONDS: "60"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)); s=data['scheduler']; assert data['success'] and (not s['enabled'] or s['running'])"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
