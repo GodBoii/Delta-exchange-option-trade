@@ -61,13 +61,49 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
 
+let resolvedApiOrigin: string | null = null;
+let apiResolution: Promise<string> | null = null;
+
+function resetApiOrigin() {
+  resolvedApiOrigin = null;
+  apiResolution = null;
+}
+
+async function discoverApiOrigin() {
+  const explicit = (process.env.NEXT_PUBLIC_API_URL ?? "").trim().replace(/\/$/, "");
+  const ports = (process.env.NEXT_PUBLIC_API_PORTS ?? "8000,8585,8085,8011,8001")
+    .split(",").map(port => port.trim()).filter(port => /^\d{2,5}$/.test(port));
+  const localHost = ["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.hostname : "localhost";
+  const candidates = Array.from(new Set([
+    ...(explicit ? [explicit] : []),
+    ...ports.map(port => `http://${localHost}:${port}`)
+  ])).filter(origin => window.location.protocol !== "https:" || origin.startsWith("https://"));
+  if (!candidates.length) throw new Error("The trading backend is not configured for this website.");
+
+  const probes = candidates.map(async origin => {
+    const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1_200), cache: "no-store" });
+    if (!response.ok) throw new Error(`${origin} is unavailable`);
+    const health = await response.json().catch(() => null) as { success?: boolean; service?: string } | null;
+    if (!health?.success || health.service !== "delta-strategy-api") throw new Error(`${origin} is not the trading API`);
+    return origin;
+  });
+  try { return await Promise.any(probes); }
+  catch { throw new Error("No local trading backend was found on the configured ports."); }
+}
+
+async function apiOrigin() {
+  if (resolvedApiOrigin) return resolvedApiOrigin;
+  apiResolution ??= discoverApiOrigin();
+  try {
+    resolvedApiOrigin = await apiResolution;
+    return resolvedApiOrigin;
+  } finally { apiResolution = null; }
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const apiOrigin = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-  if (window.location.protocol === "https:" && apiOrigin.startsWith("http://")) {
-    throw new Error("The local trading backend is available only from the local frontend.");
-  }
+  const origin = await apiOrigin();
   const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-  const response = await fetch(`${apiOrigin}${url}`, {
+  const response = await fetch(`${origin}${url}`, {
     ...init,
     signal: init?.signal ?? AbortSignal.timeout(8_000),
     headers: {
@@ -115,6 +151,7 @@ export default function Home() {
         avatarUrl: typeof metadata.avatar_url === "string" ? metadata.avatar_url : null
       });
       try {
+        resetApiOrigin();
         const data = await requestJson<SessionResponse>("/api/session", { signal: AbortSignal.timeout(3_000) });
         setBackendStatus("online");
         setAccount(data.connected ? data.account : null);
