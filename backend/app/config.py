@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     scheduler_poll_seconds: float = 2.0
     max_entry_lateness_seconds: int = 60
     frontend_origins: str = "http://localhost:3000,https://delta-exchange-option-trade.vercel.app"
+    frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
     log_level: str = "INFO"
 
     @field_validator("scheduler_poll_seconds")

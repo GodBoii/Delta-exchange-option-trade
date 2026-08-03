@@ -7,11 +7,12 @@ services:
       - .env.local
     environment:
       FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
+      FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1)(:\d+)?$
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
       MAX_ENTRY_LATENESS_SECONDS: "60"
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped
     init: true
     healthcheck:
