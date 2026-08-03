@@ -35,6 +35,7 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_PORTS=8000,8585,8085,8011,8001
 SUPABASE_SERVICE_ROLE_KEY=...
 DELTA_PRODUCTION_URL=https://api.india.delta.exchange
 ```
@@ -57,6 +58,30 @@ docker compose logs -f backend
 ```
 
 The API is available at `http://localhost:8000`, its health endpoint is `/health`, and interactive API documentation is available at `/docs`.
+
+### Flexible local ports
+
+The frontend is not tied to port 3000. Next.js may run on 3000, 3001, 3002, or another local port; the Python backend accepts authenticated browser requests from any `localhost` or `127.0.0.1` port.
+
+For Google OAuth and email-confirmation callbacks, add every local frontend callback you plan to use to Supabase Authentication > URL Configuration, for example `http://localhost:3000/auth/callback`, `http://localhost:3001/auth/callback`, and `http://localhost:3002/auth/callback`.
+
+The frontend probes the backend ports listed in `NEXT_PUBLIC_API_PORTS` in parallel and uses the first endpoint that returns a valid Delta Strategy API health response. An explicit `NEXT_PUBLIC_API_URL` is preferred but is not mandatory locally.
+
+Use the automatic local launcher. It checks the configured backend ports and starts Docker on the first available one:
+
+```powershell
+.\scripts\start-backend.ps1
+```
+
+If you prefer to choose the backend port yourself:
+
+```powershell
+$env:BACKEND_PORT=8585
+docker compose up -d --build
+npm run dev
+```
+
+The frontend will discover `http://localhost:8585` automatically. Other included fallback ports are 8085, 8011, and 8001. To use another port, add it to `NEXT_PUBLIC_API_PORTS`, restart the frontend, and set the same `BACKEND_PORT` before starting Compose.
 
 The scheduler is part of the Python application lifecycle. There is no separate npm worker command. It checks Supabase every two seconds while the container is healthy.
 
