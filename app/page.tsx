@@ -493,7 +493,7 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
         <Segmented label="Strategy type" value={strategy.entry.strategyType} onChange={v => setStrategy({ ...strategy, entry: { ...strategy.entry, strategyType: v as "intraday" | "btst" | "positional" } })} options={[{ value: "intraday", label: "Intraday" }, { value: "btst", label: "BTST" }, { value: "positional", label: "Positional" }]} />
         <div className="field-grid two"><Field label="Entry time"><input type="datetime-local" value={toLocal(strategy.entry.entryAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, entryAt: iso(e.target.value) } })} /></Field><Field label="Exit time"><input type="datetime-local" value={toLocal(strategy.entry.exitAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, exitAt: iso(e.target.value) } })} /></Field></div>
       </SettingsPanel>
-      <SettingsPanel wide icon={<Shield />} title="Risk control" description="One trigger. One paired exit.">
+      <SettingsPanel wide icon={<Shield />} title="Risk control" description="Set how loss protection closes the position.">
         <RiskControl strategy={strategy} onChange={setStrategy} />
       </SettingsPanel>
     </div>
@@ -533,26 +533,20 @@ function RiskControl({ strategy, onChange }: { strategy: StrategyDefinition; onC
       <Segmented label="Trigger" value={strategy.riskMode} onChange={setMode} options={[{ value: "combined_premium", label: "Combined" }, { value: "legwise", label: "Per leg" }]} />
       <div className="risk-status" aria-label={combined ? "Both short legs close together" : "Each leg closes independently"}><i /><span>{combined ? "Paired exit" : "Independent"}</span></div>
     </div>
-    {combined ? <div className="risk-bento">
-      <div className="risk-diagram">
-        <div className="risk-leg call"><span>SELL</span><strong>CALL</strong></div>
-        <div className="risk-lines" aria-hidden="true"><i /><i /></div>
-        <div className="risk-shield"><Shield /><strong>{stop}%</strong></div>
-        <div className="risk-lines out" aria-hidden="true"><i /><i /></div>
-        <div className="risk-leg put"><span>SELL</span><strong>PUT</strong></div>
-        <div className="paired-close"><span>BUY</span><strong>CALL + PUT</strong></div>
-      </div>
-      <label className="risk-stop-control">
-        <span>Combined SL</span>
-        <div><input type="number" min="1" max="1000" value={stop} onChange={event => onChange({ ...strategy, combinedStopLossPercent: Math.max(1, Number(event.target.value) || 1) })} /><b>%</b></div>
+    {combined ? <div className="risk-compact-grid">
+      <label className="risk-compact-control risk-stop-compact">
+        <span>Combined stop loss</span>
+        <div><input aria-label="Combined stop loss percent" type="number" min="1" max="1000" value={stop} onChange={event => onChange({ ...strategy, combinedStopLossPercent: Math.max(1, Number(event.target.value) || 1) })} /><b>%</b></div>
+        <small>Closes both legs at this total premium loss.</small>
       </label>
-      <div className="risk-multiple entry"><span>Entry</span><strong>1×</strong><i /></div>
-      <div className="risk-multiple exit"><span>Exit</span><strong>{Number.isInteger(exitMultiple) ? exitMultiple.toFixed(0) : exitMultiple.toFixed(1)}×</strong><i /></div>
-      <label className="risk-backup">
-        <ShieldCheck />
-        <span><small>Backup / leg</small><span><input type="number" min="1" max="5000" value={strategy.emergencyStopLossPercent ?? ""} onChange={event => onChange({ ...strategy, emergencyStopLossPercent: event.target.value ? Number(event.target.value) : undefined })} placeholder="Off" /><b>%</b></span></span>
+      <div className="risk-compact-stat entry"><span>Entry premium</span><strong>1×</strong><small>Reference</small></div>
+      <div className="risk-compact-stat exit"><span>Exit trigger</span><strong>{Number.isInteger(exitMultiple) ? exitMultiple.toFixed(0) : exitMultiple.toFixed(1)}×</strong><small>Combined premium</small></div>
+      <label className="risk-compact-control risk-backup-compact">
+        <span><ShieldCheck />Emergency stop / leg</span>
+        <div><input aria-label="Emergency stop loss percent per leg" type="number" min="1" max="5000" value={strategy.emergencyStopLossPercent ?? ""} onChange={event => onChange({ ...strategy, emergencyStopLossPercent: event.target.value ? Number(event.target.value) : undefined })} placeholder="Off" /><b>%</b></div>
+        <small>Optional individual hard limit.</small>
       </label>
-    </div> : <div className="legwise-row compact"><Segmented label="Square off" value={strategy.squareOff} onChange={value => onChange({ ...strategy, squareOff: value as "partial" | "complete" })} options={[{ value: "partial", label: "Partial" }, { value: "complete", label: "Complete" }]} /><Toggle checked={strategy.trailToBreakEven} onChange={value => onChange({ ...strategy, trailToBreakEven: value })} label="Trail to break-even" /><div className="legwise-cue"><span /><span /><small>Stops stay inside each leg</small></div></div>}
+    </div> : <div className="legwise-row compact"><Segmented label="Square off" value={strategy.squareOff} onChange={value => onChange({ ...strategy, squareOff: value as "partial" | "complete" })} options={[{ value: "partial", label: "Partial" }, { value: "complete", label: "Complete" }]} /><Toggle checked={strategy.trailToBreakEven} onChange={value => onChange({ ...strategy, trailToBreakEven: value })} label="Trail to break-even" /><div className="legwise-cue"><Shield /><small>Stops stay inside each leg</small></div></div>}
   </div>;
 }
 
@@ -643,28 +637,7 @@ function Select({ label, value, options, onChange }: { label: string; value: str
 function NumberField({ label, value, min = 0, max, onChange }: { label: string; value: number; min?: number; max?: number; onChange: (v: number) => void }) { return <Field label={label}><input type="number" value={value} min={min} max={max} onChange={e => onChange(Number(e.target.value))} /></Field>; }
 function OptionalNumber({ label, value, onChange }: { label: string; value?: number; onChange: (v?: number) => void }) { return <Field label={label}><input type="number" min="0" step="any" value={value ?? ""} onChange={e => onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Disabled" /></Field>; }
 function Segmented({ label, value, options, onChange, disabled }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
-  const bar = useRef<HTMLDivElement>(null);
-  const pill = useRef<HTMLSpanElement>(null);
-  const movePill = useCallback((tab: HTMLButtonElement, animate: boolean) => {
-    if (!pill.current) return;
-    const previous = pill.current.style.transition;
-    if (!animate) pill.current.style.transition = "none";
-    pill.current.style.transform = `translateX(${tab.offsetLeft}px)`;
-    pill.current.style.width = `${tab.offsetWidth}px`;
-    if (!animate) {
-      void pill.current.offsetWidth;
-      pill.current.style.transition = previous;
-    }
-  }, []);
-  useEffect(() => {
-    const active = bar.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]');
-    if (!active) return;
-    movePill(active, false);
-    const observer = new ResizeObserver(() => movePill(active, false));
-    if (bar.current) observer.observe(bar.current);
-    return () => observer.disconnect();
-  }, [value, movePill]);
-  return <fieldset className="segmented-field" disabled={disabled}><legend>{label}</legend><div className="t-tabs" ref={bar} role="tablist"><span className="t-tabs-pill" ref={pill} aria-hidden="true" />{options.map(option => <button type="button" role="tab" aria-selected={value === option.value} className="t-tab" key={option.value} onClick={event => { movePill(event.currentTarget, true); onChange(option.value); }}>{option.label}</button>)}</div></fieldset>;
+  return <fieldset className="segmented-field" disabled={disabled}><legend>{label}</legend><div className="t-tabs" role="tablist" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>{options.map(option => <button type="button" role="tab" aria-selected={value === option.value} className="t-tab" key={option.value} onClick={() => onChange(option.value)}>{option.label}</button>)}</div></fieldset>;
 }
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) { return <label className="toggle-field"><span>{label}</span><button type="button" role="switch" aria-checked={checked} className={checked ? "toggle on" : "toggle"} onClick={() => onChange(!checked)}><i /></button></label>; }
 

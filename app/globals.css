@@ -158,3 +158,30 @@ svg { width:18px; height:18px; stroke-width:1.8; }
 @media (max-width:900px){.risk-diagram,.risk-stop-control{grid-column:span 12}.risk-multiple{grid-column:span 4}.live-risk-row{grid-template-columns:minmax(150px,1fr) minmax(180px,2fr) 80px}.live-risk-row>small{display:none}}
 @media (max-width:620px){.risk-mode-row{align-items:stretch;flex-direction:column}.risk-status{align-self:flex-end;margin-top:-42px}.risk-diagram{padding:16px;grid-template-columns:minmax(58px,1fr) 24px 70px 24px minmax(58px,1fr)}.risk-shield{width:66px;height:70px}.risk-stop-control{min-height:86px}.risk-stop-control input{font-size:34px;width:90px}.risk-multiple{grid-column:span 6}.risk-backup{grid-column:span 12}.legwise-row.compact{grid-template-columns:1fr}.live-risk-row{grid-template-columns:1fr 76px;gap:10px}.live-risk-row .risk-meter{grid-column:span 2;grid-row:2}.live-risk-row>small{display:none}.risk-readout{grid-column:2;grid-row:1}}
 @media (prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* Reliable segmented state: each option owns its selected surface. */
+.segmented-field>.t-tabs{display:grid;align-items:stretch;gap:4px;width:100%;min-width:0;min-height:46px;padding:4px;border:1px solid var(--line);border-radius:10px;background:#0a0f10}
+.segmented-field .t-tab{appearance:none;min-width:0;min-height:36px;height:auto;padding:6px 12px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:7px;font-size:14px;font-weight:500;line-height:1;white-space:nowrap;transition:color 180ms ease,background-color 180ms ease,border-color 180ms ease,box-shadow 180ms ease}
+.segmented-field .t-tab:not([aria-selected="true"]):hover{color:var(--text);background:rgba(255,255,255,.035)}
+.segmented-field .t-tab[aria-selected="true"]{color:var(--text);background:#202927;border-color:#34413e;box-shadow:inset 0 -2px var(--lime),0 1px 2px rgba(0,0,0,.22)}
+
+/* Compact combined-risk controls replace the oversized decorative diagram. */
+.risk-compact-grid{display:grid;grid-template-columns:minmax(260px,2fr) minmax(140px,1fr) minmax(140px,1fr) minmax(260px,2fr);grid-auto-flow:dense;gap:10px}
+.risk-compact-control,.risk-compact-stat{min-width:0;min-height:104px;border:1px solid var(--line-soft);border-radius:11px;background:rgba(8,12,13,.55);padding:14px 16px}
+.risk-compact-control{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto 1fr;column-gap:16px;align-items:center}
+.risk-compact-control>span{display:flex;align-items:center;gap:7px;color:var(--text);font-size:13px;font-weight:600}
+.risk-compact-control>span svg{width:15px;color:var(--amber)}
+.risk-compact-control>div{grid-column:2;grid-row:1/3;display:flex;align-items:baseline}
+.risk-compact-control input{width:78px;border:0;background:transparent;color:var(--text);font-size:28px;line-height:1;font-weight:650;letter-spacing:-.04em;text-align:right;outline:0}
+.risk-compact-control b{margin-left:4px;color:var(--lime);font-size:13px}
+.risk-compact-control small{align-self:start;color:var(--muted);font-size:11px;line-height:1.35}
+.risk-compact-control:focus-within{border-color:rgba(184,243,74,.42);box-shadow:0 0 0 3px rgba(184,243,74,.06)}
+.risk-compact-stat{display:grid;align-content:center;gap:2px;position:relative;overflow:hidden}
+.risk-compact-stat span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em}
+.risk-compact-stat strong{font-size:25px;line-height:1.1}
+.risk-compact-stat small{color:var(--muted-2);font-size:10px}
+.risk-compact-stat:after{content:"";position:absolute;inset:auto 0 0;height:2px;background:var(--cyan)}
+.risk-compact-stat.exit:after{background:var(--red)}
+
+@media (max-width:1000px){.risk-compact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:620px){.risk-compact-grid{grid-template-columns:1fr}.risk-compact-control,.risk-compact-stat{min-height:88px}.risk-status{align-self:auto;margin-top:0}.segmented-field .t-tab{padding-inline:8px;font-size:13px}}
