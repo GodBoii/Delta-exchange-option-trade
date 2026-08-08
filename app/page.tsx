@@ -7,7 +7,7 @@ import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
   CircleDollarSign, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
   LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw,
-  Save, ShieldCheck, SlidersHorizontal, Trash2, TrendingUp, Upload, Wallet,
+  Save, Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet,
   WifiOff, X, Zap
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
@@ -19,7 +19,8 @@ type SessionResponse = { success: boolean; authenticated: boolean; connected: bo
 type StrategyRow = { id: string; name: string; status: string; entryAt: string; exitAt: string; lastError?: string | null; createdAt: string };
 type ResolvedLeg = StrategyLeg & { productId: number; productSymbol: string; strike: number; markPrice: string | null };
 type PreviewData = { definition: StrategyDefinition; legs: ResolvedLeg[]; warnings: string[] };
-type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[] };
+type RiskStrategy = { id: string; name: string; status: string; riskState: Record<string, unknown>; monitoredAt?: string | null; triggeredAt?: string | null };
+type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[]; riskStrategies: RiskStrategy[] };
 type Tab = "builder" | "dashboard" | "runs";
 type BackendStatus = "checking" | "online" | "offline";
 
@@ -38,11 +39,15 @@ const newLeg = (overrides: Partial<StrategyLeg> = {}): StrategyLeg => ({
 });
 
 const initialStrategy = (): StrategyDefinition => ({
-  name: "BTC intraday spread",
+  name: "BTC ATM short straddle",
   instrument: { index: "BTCUSD", underlying: "BTC", underlyingFrom: "cash" },
   entry: { strategyType: "intraday", entryAt: iso(localDateTime(1)), exitAt: iso(localDateTime(8)) },
-  squareOff: "complete", trailToBreakEven: false, breakEvenScope: "all_legs",
-  legs: [newLeg(), newLeg({ position: "sell", strikeMode: "otm", strikeSteps: 2, stopLoss: 25 })],
+  squareOff: "complete", riskMode: "combined_premium", combinedStopLossPercent: 100,
+  emergencyStopLossPercent: 300, trailToBreakEven: false, breakEvenScope: "all_legs",
+  legs: [
+    newLeg({ position: "sell", optionType: "call", strikeMode: "atm" }),
+    newLeg({ position: "sell", optionType: "put", strikeMode: "atm" })
+  ],
   acknowledgement: false as true
 });
 const DRAFT_STORAGE_KEY = "delta-strategy-draft-v1";
@@ -55,6 +60,15 @@ function isStrategyDefinition(value: unknown): value is StrategyDefinition {
     && Boolean(strategy.entry && typeof strategy.entry === "object")
     && Array.isArray(strategy.legs)
     && strategy.legs.length > 0;
+}
+
+function hydrateStrategy(strategy: StrategyDefinition): StrategyDefinition {
+  return {
+    ...strategy,
+    riskMode: strategy.riskMode ?? "legwise",
+    combinedStopLossPercent: strategy.combinedStopLossPercent ?? undefined,
+    emergencyStopLossPercent: strategy.emergencyStopLossPercent ?? undefined
+  };
 }
 
 function errorMessage(error: unknown) {
@@ -414,7 +428,7 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
       if (saved) {
         const parsed = JSON.parse(saved) as unknown;
         if (isStrategyDefinition(parsed)) {
-          setStrategy(parsed);
+          setStrategy(hydrateStrategy(parsed));
           setExpanded(parsed.legs[0]?.id ?? null);
         }
       }
@@ -462,14 +476,14 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
       const parsed = JSON.parse(await file.text()) as unknown;
       const candidate = parsed && typeof parsed === "object" && "strategy" in parsed ? (parsed as { strategy: unknown }).strategy : parsed;
       if (!isStrategyDefinition(candidate)) throw new Error("This file is not a valid Delta strategy draft.");
-      setStrategy(candidate); setExpanded(candidate.legs[0]?.id ?? null); setPreview(null); setError("");
+      setStrategy(hydrateStrategy(candidate)); setExpanded(candidate.legs[0]?.id ?? null); setPreview(null); setError("");
       onNotice({ tone: "ok", text: "Strategy draft imported successfully." });
     } catch (importError) { onNotice({ tone: "error", text: errorMessage(importError) }); }
     finally { if (importInput.current) importInput.current.value = ""; }
   }
 
   return <div className="builder-page">
-    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy workspace</div><h1>Build a new strategy</h1><p>Configure every leg anywhere, then use the local trading workspace for live actions.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Browser draft</span><small>Saved automatically on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
+    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy workspace</div><h1>Two legs. One risk limit.</h1><p>Build, protect, execute.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Browser draft</span><small>Saved on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
     <div className="strategy-name-row panel" data-reveal><Field label="Strategy name"><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
     <div className="settings-grid">
       <SettingsPanel icon={<CircleDollarSign />} title="Instrument settings" description="Choose the contract family and price source.">
@@ -479,15 +493,14 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
         <Segmented label="Strategy type" value={strategy.entry.strategyType} onChange={v => setStrategy({ ...strategy, entry: { ...strategy.entry, strategyType: v as "intraday" | "btst" | "positional" } })} options={[{ value: "intraday", label: "Intraday" }, { value: "btst", label: "BTST" }, { value: "positional", label: "Positional" }]} />
         <div className="field-grid two"><Field label="Entry time"><input type="datetime-local" value={toLocal(strategy.entry.entryAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, entryAt: iso(e.target.value) } })} /></Field><Field label="Exit time"><input type="datetime-local" value={toLocal(strategy.entry.exitAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, exitAt: iso(e.target.value) } })} /></Field></div>
       </SettingsPanel>
-      <SettingsPanel wide icon={<SlidersHorizontal />} title="Legwise settings" description="Define how protection and square-off rules apply across legs.">
-        <div className="legwise-row"><Segmented label="Square off" value={strategy.squareOff} onChange={v => setStrategy({ ...strategy, squareOff: v as "partial" | "complete" })} options={[{ value: "partial", label: "Partial" }, { value: "complete", label: "Complete" }]} /><Toggle checked={strategy.trailToBreakEven} onChange={v => setStrategy({ ...strategy, trailToBreakEven: v })} label="Trail SL to break-even" /><Segmented disabled={!strategy.trailToBreakEven} label="Break-even scope" value={strategy.breakEvenScope} onChange={v => setStrategy({ ...strategy, breakEvenScope: v as "all_legs" | "stop_loss_legs" })} options={[{ value: "all_legs", label: "All legs" }, { value: "stop_loss_legs", label: "SL legs" }]} /><OptionalNumber label="Overall target" value={strategy.overallTarget} onChange={v => setStrategy({ ...strategy, overallTarget: v })} /><OptionalNumber label="Overall stop loss" value={strategy.overallStopLoss} onChange={v => setStrategy({ ...strategy, overallStopLoss: v })} /></div>
-        <p className="scheduler-note"><Activity /> Cross-leg target, stop, and break-even values are saved for review; automated monitoring is not enabled in this scheduler version.</p>
+      <SettingsPanel wide icon={<Shield />} title="Risk control" description="One trigger. One paired exit.">
+        <RiskControl strategy={strategy} onChange={setStrategy} />
       </SettingsPanel>
     </div>
     <section className="legs-panel panel" data-reveal>
-      <div className="panel-title"><div><span className="heading-icon"><Layers3 /></span><div><h2>Leg builder</h2><p>Combine up to 12 options contracts. Short legs require a stop loss.</p></div></div><button className="secondary-button" onClick={addLeg} disabled={strategy.legs.length >= 12}><Plus />Add leg <span>{strategy.legs.length}/12</span></button></div>
+      <div className="panel-title"><div><span className="heading-icon"><Layers3 /></span><div><h2>Legs</h2><p>Call + put</p></div></div><button className="secondary-button" onClick={addLeg} disabled={strategy.legs.length >= 12}><Plus />Add leg <span>{strategy.legs.length}/12</span></button></div>
       <div className="leg-list">
-        {strategy.legs.map((leg, index) => <LegRow key={leg.id} leg={leg} index={index} total={strategy.legs.length} open={expanded === leg.id} onToggle={() => setExpanded(expanded === leg.id ? null : leg.id)} onUpdate={(patch) => updateLeg(leg.id, patch)} onRemove={() => removeLeg(leg.id)} onDuplicate={() => duplicateLeg(leg.id)} onMove={d => moveLeg(index, d)} />)}
+        {strategy.legs.map((leg, index) => <LegRow key={leg.id} leg={leg} riskMode={strategy.riskMode} index={index} total={strategy.legs.length} open={expanded === leg.id} onToggle={() => setExpanded(expanded === leg.id ? null : leg.id)} onUpdate={(patch) => updateLeg(leg.id, patch)} onRemove={() => removeLeg(leg.id)} onDuplicate={() => duplicateLeg(leg.id)} onMove={d => moveLeg(index, d)} />)}
       </div>
       {strategy.legs.length === 0 && <div className="empty-state"><Layers3 /><h3>No strategy legs</h3><p>Add at least one option leg to continue.</p><button className="secondary-button" onClick={addLeg}><Plus />Add first leg</button></div>}
     </section>
@@ -505,21 +518,57 @@ function SettingsPanel({ icon, title, description, wide, children }: { icon: Rea
   return <section className={`panel settings-panel${wide ? " wide" : ""}`} data-reveal><div className="panel-title"><div><span className="heading-icon">{icon}</span><div><h2>{title}</h2><p>{description}</p></div></div></div>{children}</section>;
 }
 
-function LegRow({ leg, index, total, open, onToggle, onUpdate, onRemove, onDuplicate, onMove }: { leg: StrategyLeg; index: number; total: number; open: boolean; onToggle: () => void; onUpdate: (p: Partial<StrategyLeg>) => void; onRemove: () => void; onDuplicate: () => void; onMove: (d: -1 | 1) => void }) {
-  const body = useRef<HTMLDivElement>(null);
-  useGSAP(() => { if (!body.current || matchMedia("(prefers-reduced-motion: reduce)").matches) return; gsap.fromTo(body.current, { height: 0, opacity: 0 }, { height: "auto", opacity: 1, duration: .36, ease: "power2.out" }); }, { scope: body, dependencies: [open] });
-  return <article className={open ? "leg-row open" : "leg-row"}>
+function RiskControl({ strategy, onChange }: { strategy: StrategyDefinition; onChange: (strategy: StrategyDefinition) => void }) {
+  const combined = strategy.riskMode === "combined_premium";
+  const stop = strategy.combinedStopLossPercent ?? 100;
+  const exitMultiple = 1 + stop / 100;
+  const setMode = (mode: string) => onChange({
+    ...strategy,
+    riskMode: mode as StrategyDefinition["riskMode"],
+    squareOff: mode === "combined_premium" ? "complete" : strategy.squareOff,
+    combinedStopLossPercent: mode === "combined_premium" ? stop : strategy.combinedStopLossPercent
+  });
+  return <div className={`risk-console ${combined ? "combined" : "legwise"}`}>
+    <div className="risk-mode-row">
+      <Segmented label="Trigger" value={strategy.riskMode} onChange={setMode} options={[{ value: "combined_premium", label: "Combined" }, { value: "legwise", label: "Per leg" }]} />
+      <div className="risk-status" aria-label={combined ? "Both short legs close together" : "Each leg closes independently"}><i /><span>{combined ? "Paired exit" : "Independent"}</span></div>
+    </div>
+    {combined ? <div className="risk-bento">
+      <div className="risk-diagram">
+        <div className="risk-leg call"><span>SELL</span><strong>CALL</strong></div>
+        <div className="risk-lines" aria-hidden="true"><i /><i /></div>
+        <div className="risk-shield"><Shield /><strong>{stop}%</strong></div>
+        <div className="risk-lines out" aria-hidden="true"><i /><i /></div>
+        <div className="risk-leg put"><span>SELL</span><strong>PUT</strong></div>
+        <div className="paired-close"><span>BUY</span><strong>CALL + PUT</strong></div>
+      </div>
+      <label className="risk-stop-control">
+        <span>Combined SL</span>
+        <div><input type="number" min="1" max="1000" value={stop} onChange={event => onChange({ ...strategy, combinedStopLossPercent: Math.max(1, Number(event.target.value) || 1) })} /><b>%</b></div>
+      </label>
+      <div className="risk-multiple entry"><span>Entry</span><strong>1×</strong><i /></div>
+      <div className="risk-multiple exit"><span>Exit</span><strong>{Number.isInteger(exitMultiple) ? exitMultiple.toFixed(0) : exitMultiple.toFixed(1)}×</strong><i /></div>
+      <label className="risk-backup">
+        <ShieldCheck />
+        <span><small>Backup / leg</small><span><input type="number" min="1" max="5000" value={strategy.emergencyStopLossPercent ?? ""} onChange={event => onChange({ ...strategy, emergencyStopLossPercent: event.target.value ? Number(event.target.value) : undefined })} placeholder="Off" /><b>%</b></span></span>
+      </label>
+    </div> : <div className="legwise-row compact"><Segmented label="Square off" value={strategy.squareOff} onChange={value => onChange({ ...strategy, squareOff: value as "partial" | "complete" })} options={[{ value: "partial", label: "Partial" }, { value: "complete", label: "Complete" }]} /><Toggle checked={strategy.trailToBreakEven} onChange={value => onChange({ ...strategy, trailToBreakEven: value })} label="Trail to break-even" /><div className="legwise-cue"><span /><span /><small>Stops stay inside each leg</small></div></div>}
+  </div>;
+}
+
+function LegRow({ leg, riskMode, index, total, open, onToggle, onUpdate, onRemove, onDuplicate, onMove }: { leg: StrategyLeg; riskMode: StrategyDefinition["riskMode"]; index: number; total: number; open: boolean; onToggle: () => void; onUpdate: (p: Partial<StrategyLeg>) => void; onRemove: () => void; onDuplicate: () => void; onMove: (d: -1 | 1) => void }) {
+  return <article className={open ? "leg-row open t-acc" : "leg-row t-acc"} data-open={open}>
     <div className="leg-summary">
       <button className="drag-handle" aria-label={`Reorder leg ${index + 1}`}><GripVertical /></button>
-      <button className="leg-toggle" onClick={onToggle} aria-expanded={open}><span className="leg-number">{String(index + 1).padStart(2, "0")}</span><span className={`side ${leg.position}`}>{leg.position}</span><strong>{leg.optionType === "call" ? "Call" : "Put"}</strong><span>{leg.lots} {leg.lots === 1 ? "lot" : "lots"}</span><span>{leg.strikeMode.toUpperCase()}{leg.strikeMode !== "exact" && leg.strikeSteps ? ` ${leg.strikeSteps}` : ""}</span><span>{formatDate(leg.expiry)}</span><ChevronDown /></button>
+      <button className="leg-toggle" onClick={onToggle} aria-expanded={open}><span className="leg-number">{String(index + 1).padStart(2, "0")}</span><span className={`side ${leg.position}`}>{leg.position}</span><strong>{leg.optionType === "call" ? "Call" : "Put"}</strong><span>{leg.lots} {leg.lots === 1 ? "lot" : "lots"}</span><span>{leg.strikeMode.toUpperCase()}{leg.strikeMode !== "exact" && leg.strikeSteps ? ` ${leg.strikeSteps}` : ""}</span><span>{formatDate(leg.expiry)}</span><span className="t-acc-chevron"><ChevronDown /></span></button>
       <div className="leg-tools"><button onClick={() => onMove(-1)} disabled={index === 0} aria-label="Move leg up"><ArrowUp /></button><button onClick={() => onMove(1)} disabled={index === total - 1} aria-label="Move leg down"><ArrowDown /></button><button onClick={onDuplicate} disabled={total >= 12} aria-label="Duplicate leg"><Copy /></button><button onClick={onRemove} disabled={total === 1} aria-label="Delete leg" className="danger"><Trash2 /></button></div>
     </div>
-    {open && <div className="leg-body" ref={body}>
+    <div className="t-acc-panel" aria-hidden={!open}><div className="t-acc-panel-inner" inert={!open ? true : undefined}><div className="leg-body">
       <div className="leg-grid primary-fields"><NumberField label="Lots" min={1} value={leg.lots} onChange={v => onUpdate({ lots: v || 1 })} /><Segmented label="Position" value={leg.position} onChange={v => onUpdate({ position: v as "buy" | "sell" })} options={[{ value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }]} /><Segmented label="Option type" value={leg.optionType} onChange={v => onUpdate({ optionType: v as "call" | "put" })} options={[{ value: "call", label: "Call" }, { value: "put", label: "Put" }]} /><Field label="Expiry"><input type="date" min={new Date().toISOString().slice(0,10)} value={leg.expiry} onChange={e => onUpdate({ expiry: e.target.value })} /></Field><Select label="Strike criteria" value={leg.strikeMode} onChange={v => onUpdate({ strikeMode: v as StrategyLeg["strikeMode"] })} options={["atm", "itm", "otm", "exact"]} />{leg.strikeMode === "exact" ? <OptionalNumber label="Exact strike" value={leg.exactStrike} onChange={v => onUpdate({ exactStrike: v })} /> : <NumberField label="Strike steps" min={0} max={100} value={leg.strikeSteps} onChange={v => onUpdate({ strikeSteps: v })} />}</div>
       <div className="subsection-label">Order & protection</div>
-      <div className="leg-grid risk-fields"><Segmented label="Order type" value={leg.orderType} onChange={v => onUpdate({ orderType: v as "market_order" | "limit_order" })} options={[{ value: "market_order", label: "Market" }, { value: "limit_order", label: "Limit" }]} />{leg.orderType === "limit_order" && <Field label="Limit price"><input inputMode="decimal" value={leg.limitPrice || ""} onChange={e => onUpdate({ limitPrice: e.target.value || undefined })} placeholder="0.00" /></Field>}<OptionalNumber label="Target profit" value={leg.targetProfit} onChange={v => onUpdate({ targetProfit: v })} /><OptionalNumber label={`Stop loss${leg.position === "sell" ? " (required)" : ""}`} value={leg.stopLoss} onChange={v => onUpdate({ stopLoss: v })} /><OptionalNumber label="Trail SL" value={leg.trailStop} onChange={v => onUpdate({ trailStop: v })} /><NumberField label="Re-entry on target" min={0} max={10} value={leg.reentryOnTarget} onChange={v => onUpdate({ reentryOnTarget: v })} /><NumberField label="Re-entry on SL" min={0} max={10} value={leg.reentryOnStop} onChange={v => onUpdate({ reentryOnStop: v })} /></div>
-      <p className="scheduler-note"><Activity /> Re-entry values are saved for review but are not automatically monitored by this scheduler version.</p>
-    </div>}
+      <div className={`leg-grid risk-fields${riskMode === "combined_premium" ? " combined" : ""}`}><Segmented label="Order type" value={leg.orderType} onChange={v => onUpdate({ orderType: v as "market_order" | "limit_order" })} options={[{ value: "market_order", label: "Market" }, { value: "limit_order", label: "Limit" }]} />{leg.orderType === "limit_order" && <Field label="Limit price"><input inputMode="decimal" value={leg.limitPrice || ""} onChange={e => onUpdate({ limitPrice: e.target.value || undefined })} placeholder="0.00" /></Field>}{riskMode === "legwise" && <><OptionalNumber label="Target profit" value={leg.targetProfit} onChange={v => onUpdate({ targetProfit: v })} /><OptionalNumber label={`Stop loss${leg.position === "sell" ? " (required)" : ""}`} value={leg.stopLoss} onChange={v => onUpdate({ stopLoss: v })} /><OptionalNumber label="Trail SL" value={leg.trailStop} onChange={v => onUpdate({ trailStop: v })} /><NumberField label="Re-entry on target" min={0} max={10} value={leg.reentryOnTarget} onChange={v => onUpdate({ reentryOnTarget: v })} /><NumberField label="Re-entry on SL" min={0} max={10} value={leg.reentryOnStop} onChange={v => onUpdate({ reentryOnStop: v })} /></>}</div>
+      {riskMode === "combined_premium" && <div className="combined-leg-cue"><Shield /><span />Protected by combined trigger</div>}
+    </div></div></div>
   </article>;
 }
 
@@ -540,7 +589,7 @@ function PreviewDrawer({ preview, strategy, onClose, onNotice }: { preview: Prev
 
   return <div className="drawer-layer" ref={drawer} role="dialog" aria-modal="true" aria-labelledby="preview-title"><button className="drawer-backdrop" onClick={onClose} aria-label="Close preview" /><aside className="preview-drawer">
     <header><div><div className="eyebrow"><span /> Live contract resolution</div><h2 id="preview-title">Review before action</h2><p>Prices are a point-in-time preview and may change before fill.</p></div><button className="icon-button" onClick={onClose} aria-label="Close"><X /></button></header>
-    <div className="preview-summary"><div><span>Strategy</span><strong>{strategy.name}</strong></div><div><span>Schedule</span><strong>{formatDateTime(strategy.entry.entryAt)}</strong></div><div><span>Square-off</span><strong>{strategy.squareOff}</strong></div></div>
+    <div className="preview-summary"><div><span>Strategy</span><strong>{strategy.name}</strong></div><div><span>Schedule</span><strong>{formatDateTime(strategy.entry.entryAt)}</strong></div><div><span>Risk</span><strong>{strategy.riskMode === "combined_premium" ? `${strategy.combinedStopLossPercent}% combined` : "Per leg"}</strong></div></div>
     <div className="resolved-list"><div className="resolved-head"><span>Resolved legs</span><span>{preview.legs.length} contracts</span></div>{preview.legs.map((leg, i) => <div className="resolved-leg" key={leg.id}><span className="leg-number">{String(i + 1).padStart(2, "0")}</span><div><strong>{leg.productSymbol}</strong><span>{leg.position.toUpperCase()} {leg.lots} · {leg.orderType === "market_order" ? "Market" : `Limit ${leg.limitPrice}`}</span></div><div><small>Strike</small><strong>{leg.strike.toLocaleString()}</strong></div><div><small>Mark</small><strong>{leg.markPrice ?? "Unavailable"}</strong></div></div>)}</div>
     <div className="warning-box"><AlertTriangle /><div><strong>Execution conditions</strong>{preview.warnings.map(w => <p key={w}>{w}</p>)}</div></div>
     {error && <div className="inline-error"><AlertTriangle />{error}</div>}
@@ -556,7 +605,7 @@ function Dashboard({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; text: s
   const balance = useMemo(() => totalBalance(data?.balances || []), [data]);
   async function cancelOrder() { if (!cancel) return; try { await requestJson(`/api/orders/${cancel.id}`, { method: "DELETE", body: JSON.stringify({ productId: cancel.productId, confirm: true }) }); onNotice({ tone: "ok", text: `Order ${cancel.id} cancelled.` }); setCancel(null); void load(); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } }
   return <div className="dashboard-page"><section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Account overview</div><h1>Trading dashboard</h1><p>Live balances, positions, and outstanding Delta orders.</p></div><button className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} />Refresh</button></section>
-    {loading ? <PanelSkeleton /> : <><div className="metric-grid"><Metric icon={<Wallet />} label="Estimated balance" value={balance} note="Across returned assets" /><Metric icon={<TrendingUp />} label="Open positions" value={String(data?.positions.length || 0)} note="Live Delta positions" /><Metric icon={<Clock3 />} label="Open orders" value={String(data?.orders.length || 0)} note="Awaiting fill or cancellation" /></div><DataPanel title="Open positions" icon={<BarChart3 />} rows={data?.positions || []} empty="No open positions" /><DataPanel title="Open orders" icon={<Clock3 />} rows={data?.orders || []} empty="No open orders" action={(row) => { const id = String(row.id ?? row.order_id ?? ""); const productId = Number(row.product_id); if (id && productId) setCancel({ id, productId, symbol: String(row.product_symbol ?? row.symbol ?? id) }); }} /></>}
+    {loading ? <PanelSkeleton /> : <><div className="metric-grid"><Metric icon={<Wallet />} label="Estimated balance" value={balance} note="Across returned assets" /><Metric icon={<TrendingUp />} label="Open positions" value={String(data?.positions.length || 0)} note="Live Delta positions" /><Metric icon={<Clock3 />} label="Open orders" value={String(data?.orders.length || 0)} note="Awaiting fill or cancellation" /></div>{Boolean(data?.riskStrategies.length) && <LiveRisk strategies={data?.riskStrategies || []} />}<DataPanel title="Open positions" icon={<BarChart3 />} rows={data?.positions || []} empty="No open positions" /><DataPanel title="Open orders" icon={<Clock3 />} rows={data?.orders || []} empty="No open orders" action={(row) => { const id = String(row.id ?? row.order_id ?? ""); const productId = Number(row.product_id); if (id && productId) setCancel({ id, productId, symbol: String(row.product_symbol ?? row.symbol ?? id) }); }} /></>}
     {cancel && <ConfirmModal title="Cancel open order?" description={`Order ${cancel.symbol} will be cancelled on Delta Exchange. Filled quantities cannot be reversed.`} confirm="Cancel order" onClose={() => setCancel(null)} onConfirm={() => void cancelOrder()} />}
   </div>;
 }
@@ -570,6 +619,16 @@ function RunHistory({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; text: 
 }
 
 function Metric({ icon, label, value, note }: { icon: React.ReactNode; label: string; value: string; note: string }) { return <div className="metric panel" data-reveal><span>{icon}</span><div><small>{label}</small><strong>{value}</strong><p>{note}</p></div></div>; }
+function LiveRisk({ strategies }: { strategies: RiskStrategy[] }) {
+  return <section className="panel live-risk" data-reveal><div className="panel-title"><div><span className="heading-icon"><Shield /></span><div><h2>Combined protection</h2><p>{strategies.length} {strategies.length === 1 ? "strategy" : "strategies"}</p></div></div><span className="risk-live"><i />Live</span></div><div className="live-risk-list">{strategies.map(strategy => {
+    const state = strategy.riskState;
+    const stop = Number(state.stopPercent || 100);
+    const lossPercent = Math.max(0, Number(state.progress || 0));
+    const progress = Math.min(100, stop > 0 ? lossPercent / stop * 100 : 0);
+    const status = String(state.status || strategy.status).replaceAll("_", " ");
+    return <article className="live-risk-row" key={strategy.id}><div><strong>{strategy.name}</strong><span>{status}</span></div><div className="risk-meter" role="meter" aria-label={`${strategy.name} combined stop usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style={{ width: `${progress}%` }} /><b style={{ left: `${progress}%` }} /></div><div className="risk-readout"><strong>{Math.round(lossPercent)}%</strong><span>/ {stop}%</span></div><small>{strategy.monitoredAt ? formatClock(strategy.monitoredAt) : "—"}</small></article>;
+  })}</div></section>;
+}
 function PanelSkeleton() { return <div className="panel skeleton-wrap"><div className="skeleton wide" /><div className="skeleton" /><div className="skeleton" /><div className="skeleton short" /></div>; }
 
 function DataPanel({ title, icon, rows, empty, action }: { title: string; icon: React.ReactNode; rows: Record<string, unknown>[]; empty: string; action?: (row: Record<string, unknown>) => void }) {
@@ -583,10 +642,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) { return <Field label={label}><span className="select-wrap"><select value={value} onChange={e => onChange(e.target.value)}>{options.map(o => <option value={o} key={o}>{o.toUpperCase()}</option>)}</select><ChevronDown /></span></Field>; }
 function NumberField({ label, value, min = 0, max, onChange }: { label: string; value: number; min?: number; max?: number; onChange: (v: number) => void }) { return <Field label={label}><input type="number" value={value} min={min} max={max} onChange={e => onChange(Number(e.target.value))} /></Field>; }
 function OptionalNumber({ label, value, onChange }: { label: string; value?: number; onChange: (v?: number) => void }) { return <Field label={label}><input type="number" min="0" step="any" value={value ?? ""} onChange={e => onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Disabled" /></Field>; }
-function Segmented({ label, value, options, onChange, disabled }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) { return <fieldset className="segmented-field" disabled={disabled}><legend>{label}</legend><div>{options.map(o => <button type="button" className={value === o.value ? "active" : ""} key={o.value} onClick={() => onChange(o.value)}>{o.label}</button>)}</div></fieldset>; }
+function Segmented({ label, value, options, onChange, disabled }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
+  const bar = useRef<HTMLDivElement>(null);
+  const pill = useRef<HTMLSpanElement>(null);
+  const movePill = useCallback((tab: HTMLButtonElement, animate: boolean) => {
+    if (!pill.current) return;
+    const previous = pill.current.style.transition;
+    if (!animate) pill.current.style.transition = "none";
+    pill.current.style.transform = `translateX(${tab.offsetLeft}px)`;
+    pill.current.style.width = `${tab.offsetWidth}px`;
+    if (!animate) {
+      void pill.current.offsetWidth;
+      pill.current.style.transition = previous;
+    }
+  }, []);
+  useEffect(() => {
+    const active = bar.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+    if (!active) return;
+    movePill(active, false);
+    const observer = new ResizeObserver(() => movePill(active, false));
+    if (bar.current) observer.observe(bar.current);
+    return () => observer.disconnect();
+  }, [value, movePill]);
+  return <fieldset className="segmented-field" disabled={disabled}><legend>{label}</legend><div className="t-tabs" ref={bar} role="tablist"><span className="t-tabs-pill" ref={pill} aria-hidden="true" />{options.map(option => <button type="button" role="tab" aria-selected={value === option.value} className="t-tab" key={option.value} onClick={event => { movePill(event.currentTarget, true); onChange(option.value); }}>{option.label}</button>)}</div></fieldset>;
+}
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) { return <label className="toggle-field"><span>{label}</span><button type="button" role="switch" aria-checked={checked} className={checked ? "toggle on" : "toggle"} onClick={() => onChange(!checked)}><i /></button></label>; }
 
 function formatDate(value: string) { return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" }).format(new Date(`${value}T00:00:00`)); }
 function formatDateTime(value: string) { if (!value) return "—"; return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
+function formatClock(value: string) { return new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value)); }
 function formatCell(value: unknown) { if (value == null) return "—"; if (typeof value === "object") return JSON.stringify(value); return String(value); }
 function totalBalance(rows: unknown[]) { let total = 0; for (const item of rows) { if (item && typeof item === "object") { const r = item as Record<string, unknown>; const value = Number(r.balance ?? r.available_balance ?? r.wallet_balance ?? 0); if (Number.isFinite(value)) total += value; } } return total ? `$${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"; }
