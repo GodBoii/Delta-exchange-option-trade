@@ -43,8 +43,6 @@ class StrategyLeg(StrictModel):
             raise ValueError("Exact strike is required")
         if self.orderType == "limit_order" and not self.limitPrice:
             raise ValueError("Limit price is required")
-        if self.position == "sell" and self.stopLoss is None:
-            raise ValueError("Short option legs require a stop loss")
         return self
 
 
@@ -53,6 +51,9 @@ class StrategyDefinition(StrictModel):
     instrument: Instrument
     entry: EntrySettings
     squareOff: Literal["partial", "complete"] = "complete"
+    riskMode: Literal["legwise", "combined_premium"] = "legwise"
+    combinedStopLossPercent: float | None = Field(default=None, gt=0, le=1000)
+    emergencyStopLossPercent: float | None = Field(default=None, gt=0, le=5000)
     trailToBreakEven: bool = False
     breakEvenScope: Literal["all_legs", "stop_loss_legs"] = "all_legs"
     overallTarget: PositiveFloat | None = None
@@ -72,6 +73,14 @@ class StrategyDefinition(StrictModel):
     def validate_schedule(self) -> "StrategyDefinition":
         if self.entry.exitAt <= self.entry.entryAt:
             raise ValueError("Exit must be after entry")
+        short_legs = [leg for leg in self.legs if leg.position == "sell"]
+        if self.riskMode == "legwise" and any(leg.stopLoss is None for leg in short_legs):
+            raise ValueError("Short option legs require a stop loss in legwise mode")
+        if self.riskMode == "combined_premium":
+            if self.combinedStopLossPercent is None:
+                raise ValueError("Combined premium mode requires a combined stop loss percentage")
+            if len(short_legs) < 2:
+                raise ValueError("Combined premium mode requires at least two short legs")
         return self
 
 

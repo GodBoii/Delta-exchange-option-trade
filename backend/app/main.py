@@ -142,7 +142,21 @@ async def account_overview(request: Request, user: RequiredUser) -> dict[str, An
     account = await current_account(db, user, required=True)
     client = await delta_client_for_user(db, settings, str(user["id"]))
     try:
-        balances, orders, positions = await asyncio.gather(client.balances(), client.open_orders(), client.positions())
+        balances, orders, positions, risk_strategies = await asyncio.gather(
+            client.balances(),
+            client.open_orders(),
+            client.positions(),
+            db.select(
+                "strategies",
+                {
+                    "select": "id,name,status,risk_state,risk_monitor_at,combined_stop_triggered_at",
+                    "user_id": f"eq.{user['id']}",
+                    "status": "in.(active,executing_exit,attention)",
+                    "order": "updated_at.desc",
+                    "limit": "12",
+                },
+            ),
+        )
     finally:
         await client.close()
     return {
@@ -156,6 +170,18 @@ async def account_overview(request: Request, user: RequiredUser) -> dict[str, An
         "balanceMeta": balances.get("meta", {}),
         "orders": orders["result"],
         "positions": positions["result"],
+        "riskStrategies": [
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "status": item["status"],
+                "riskState": item.get("risk_state") or {},
+                "monitoredAt": item.get("risk_monitor_at"),
+                "triggeredAt": item.get("combined_stop_triggered_at"),
+            }
+            for item in risk_strategies
+            if (item.get("risk_state") or {}).get("mode") == "combined_premium"
+        ],
     }
 
 
