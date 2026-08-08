@@ -22,7 +22,13 @@ if (Test-Path -LiteralPath $envFile) {
 }
 
 $composeFile = Join-Path $projectRoot "docker-compose.yml"
-$currentBinding = docker compose -f $composeFile port backend 8000 2>$null | Select-Object -First 1
+$backendIsRunning = (docker compose -f $composeFile ps --status running --services 2>$null) -contains "backend"
+$currentBinding = if ($backendIsRunning) {
+    docker compose -f $composeFile port backend 8000 2>$null | Select-Object -First 1
+}
+else {
+    $null
+}
 $currentPort = if ($currentBinding -match ':(\d+)$') { [int]$Matches[1] } else { $null }
 
 if ($currentPort -and $currentPort -in $candidatePorts) {
@@ -45,7 +51,9 @@ Write-Host "Starting the Delta backend on http://localhost:$backendPort ..."
 
 Push-Location $projectRoot
 try {
-    docker compose up -d --build
+    # Recreate the service so containers retained across a Docker Desktop restart
+    # cannot keep stale DNS resolver state.
+    docker compose up -d --build --force-recreate
     if ($LASTEXITCODE -ne 0) {
         throw "Docker Compose could not start the backend."
     }
@@ -54,14 +62,18 @@ try {
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         try {
             $health = Invoke-RestMethod -Uri "http://127.0.0.1:$backendPort/health" -TimeoutSec 2
-            if ($health.success -and $health.service -eq "delta-strategy-api") {
+            $schedulerReady = -not $health.scheduler.enabled -or (
+                $health.scheduler.running -and
+                $health.scheduler.lastCompletedAt -and
+                -not $health.scheduler.lastError
+            )
+            if ($health.success -and $health.service -eq "delta-strategy-api" -and $schedulerReady) {
                 $healthy = $true
                 break
             }
         }
-        catch {
-            Start-Sleep -Milliseconds 500
-        }
+        catch {}
+        Start-Sleep -Milliseconds 500
     }
 
     if (-not $healthy) {
