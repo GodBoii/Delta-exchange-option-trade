@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from .errors import AppError
@@ -8,6 +9,23 @@ from .models import StrategyDefinition, StrategyLeg
 def delta_expiry(value: date | str) -> str:
     parsed = date.fromisoformat(value) if isinstance(value, str) else value
     return parsed.strftime("%d-%m-%Y")
+
+
+def combined_premium_metrics(legs: list[dict[str, Any]], stop_percent: Decimal) -> dict[str, Decimal]:
+    entry_credit = Decimal("0")
+    close_cost = Decimal("0")
+    for leg in legs:
+        direction = Decimal("1") if leg["side"] == "sell" else Decimal("-1")
+        weight = Decimal(str(leg["filled_size"])) * Decimal(str(leg["contract_value"]))
+        entry_credit += direction * Decimal(str(leg["entry_price"])) * weight
+        close_cost += direction * Decimal(str(leg["mark_price"])) * weight
+    trigger_close_cost = entry_credit * (Decimal("1") + stop_percent / Decimal("100"))
+    return {
+        "entry_credit": entry_credit,
+        "close_cost": close_cost,
+        "loss": close_cost - entry_credit,
+        "trigger_close_cost": trigger_close_cost,
+    }
 
 
 def resolve_leg(leg: StrategyLeg, chain: list[dict[str, Any]]) -> dict[str, Any]:
@@ -56,7 +74,7 @@ def deferred_control_warnings(definition: StrategyDefinition) -> list[str]:
     controls: list[str] = []
     if definition.overallTarget:
         controls.append("overall target")
-    if definition.overallStopLoss:
+    if definition.overallStopLoss and definition.riskMode != "combined_premium":
         controls.append("overall stop loss")
     if definition.trailToBreakEven:
         controls.append("cross-leg break-even trailing")

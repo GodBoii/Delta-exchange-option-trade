@@ -1,8 +1,10 @@
+from decimal import Decimal
+
 import pytest
 from pydantic import ValidationError
 
 from app.models import StrategyDefinition, StrategyLeg
-from app.strategy import resolve_leg
+from app.strategy import combined_premium_metrics, resolve_leg
 
 CHAIN = [
     item
@@ -84,4 +86,41 @@ def test_rejects_exit_before_entry():
 
 def test_requires_stop_loss_for_short_options():
     with pytest.raises(ValidationError):
-        base_leg(position="sell")
+        base_strategy(legs=[base_leg(position="sell").model_dump(mode="json")])
+
+
+def test_accepts_combined_premium_short_straddle_without_leg_stops():
+    strategy = base_strategy(
+        riskMode="combined_premium",
+        combinedStopLossPercent=100,
+        emergencyStopLossPercent=300,
+        legs=[
+            base_leg(id="call", position="sell", optionType="call").model_dump(mode="json"),
+            base_leg(id="put", position="sell", optionType="put").model_dump(mode="json"),
+        ],
+    )
+    assert strategy.combinedStopLossPercent == 100
+    assert all(leg.stopLoss is None for leg in strategy.legs)
+
+
+def test_combined_premium_requires_two_short_legs():
+    with pytest.raises(ValidationError):
+        base_strategy(
+            riskMode="combined_premium",
+            combinedStopLossPercent=100,
+            legs=[base_leg(position="sell").model_dump(mode="json")],
+        )
+
+
+def test_combined_premium_100_percent_triggers_at_twice_entry_credit():
+    metrics = combined_premium_metrics(
+        [
+            {"side": "sell", "filled_size": 1, "entry_price": 120, "mark_price": 210, "contract_value": 1},
+            {"side": "sell", "filled_size": 1, "entry_price": 80, "mark_price": 190, "contract_value": 1},
+        ],
+        Decimal("100"),
+    )
+    assert metrics["entry_credit"] == Decimal("200")
+    assert metrics["close_cost"] == Decimal("400")
+    assert metrics["loss"] == Decimal("200")
+    assert metrics["trigger_close_cost"] == Decimal("400")
