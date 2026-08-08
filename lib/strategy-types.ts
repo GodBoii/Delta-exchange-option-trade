@@ -29,6 +29,9 @@ export type StrategyDefinition = {
     exitAt: string;
   };
   squareOff: "partial" | "complete";
+  riskMode: "legwise" | "combined_premium";
+  combinedStopLossPercent?: number;
+  emergencyStopLossPercent?: number;
   trailToBreakEven: boolean;
   breakEvenScope: "all_legs" | "stop_loss_legs";
   overallTarget?: number;
