@@ -80,8 +80,31 @@ class DeltaClient:
     async def positions(self) -> dict[str, Any]:
         return await self.request("GET", "/v2/positions/margined", authenticated=True)
 
+    async def position(self, product_id: int) -> dict[str, Any]:
+        return await self.request(
+            "GET", "/v2/positions", query={"product_id": product_id}, authenticated=True
+        )
+
+    async def fills(self, product_ids: list[int], start_time: int | None = None) -> dict[str, Any]:
+        return await self.request(
+            "GET",
+            "/v2/fills",
+            query={
+                "product_ids": ",".join(str(product_id) for product_id in product_ids),
+                "start_time": start_time,
+                "page_size": 100,
+            },
+            authenticated=True,
+        )
+
     async def products(self, query: dict[str, Any]) -> dict[str, Any]:
         return await self.request("GET", "/v2/products", query=query)
+
+    async def product(self, symbol: str) -> dict[str, Any]:
+        return await self.request("GET", f"/v2/products/{encode_symbol(symbol)}")
+
+    async def ticker(self, symbol: str) -> dict[str, Any]:
+        return await self.request("GET", f"/v2/tickers/{encode_symbol(symbol)}")
 
     async def option_chain(self, underlying: str, expiry: str) -> dict[str, Any]:
         return await self.request(
