@@ -86,6 +86,7 @@ The market service exposes:
 - `GET /api/market/btcusd/order-book`: synchronized local Spot order book.
 - `GET /api/market/btcusd/trades`: recent Spot trades.
 - `GET /api/market/btcusd/analysis`: ATR, historical volatility, VWAP, CVD, supply/demand, market structure, order-book imbalance, and sideways probability.
+- `GET /api/market/btcusd/delta`: cached public Delta BTCUSD ticker, price bands, L2 depth, recent trades, contract specifications, and 48-hour OI/funding/mark-price histories.
 - `WS /ws/market/btcusd`: throttled real-time browser feed containing ticker, bid/ask, active candle, top-15 synchronized depth, recent aggressor-classified trades, analysis updates, and public Delta BTCUSD derivative context.
 
 The chart is available publicly at `http://localhost:3000/market` and inside the connected workspace under **BTC market**. A single server-side Binance connection fans out live updates to browsers; REST is used only for initial candle history and recovery. It supports 1-minute through daily candle views.
@@ -98,6 +99,8 @@ Below the candlestick chart, the UI keeps the sources visibly separated:
 
 - Binance Spot `BTCUSDT`: depth curve, top-10 bid/ask ladder, spread, liquidity balance, and recent aggressive trade flow.
 - Delta perpetual `BTCUSD`: open interest and its session history, mark/index prices, funding rate, turnover, Delta quotes, and Spot-to-mark basis.
+
+The expanded Delta section below the Binance analysis remains fully public and read-only. Live ticker, top-15 L2 depth, and the latest 30 public trades refresh every five seconds. Contract/margin/fee specifications and 48 hourly points each for open interest, funding rate, and mark price refresh every five minutes to keep Delta API weight controlled. Private wallet, position, order, and fill data remains in the authenticated trading workspace instead of being exposed on the public market page.
 
 ### Flexible local ports
 
