@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from .client import INTERVALS, BinanceMarketClient, BinanceMarketError
 from .config import get_settings
+from .delta_context import DeltaMarketContextClient
 from .feed import BinanceSpotFeed, replace_latest_candle
 
 settings = get_settings()
@@ -19,7 +20,8 @@ logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(leve
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     market = BinanceMarketClient(settings)
-    feed = BinanceSpotFeed(settings, market)
+    delta = DeltaMarketContextClient(settings)
+    feed = BinanceSpotFeed(settings, market, delta)
     app.state.market = market
     app.state.feed = feed
     await feed.start()
@@ -27,6 +29,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await feed.stop()
+        await delta.close()
         await market.close()
 
 
@@ -94,6 +97,9 @@ async def btcusd_market(
             "candles": candles,
             "realtime": live["realtime"],
             "analysis": live["analysis"],
+            "orderBook": live["orderBook"],
+            "recentTrades": live["recentTrades"],
+            "deltaContext": live["deltaContext"],
         },
     )
 
