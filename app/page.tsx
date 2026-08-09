@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
+import Link from "next/link";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
   CircleDollarSign, CircleStop, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import BtcMarketChart from "@/app/components/BtcMarketChart";
 
 type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" };
 type AppUser = { id: string; email?: string | null; displayName?: string | null; avatarUrl?: string | null };
@@ -19,7 +21,7 @@ type SessionResponse = { success: boolean; authenticated: boolean; connected: bo
 type StrategyRow = { id: string; name: string; status: string; entryAt: string; exitAt: string; entryExecutedAt?: string | null; lastError?: string | null; createdAt: string };
 type RiskStrategy = { id: string; name: string; status: string; riskState: Record<string, unknown>; monitoredAt?: string | null; triggeredAt?: string | null };
 type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[]; riskStrategies: RiskStrategy[] };
-type Tab = "builder" | "dashboard" | "runs";
+type Tab = "builder" | "market" | "dashboard" | "runs";
 type BackendStatus = "checking" | "online" | "offline";
 
 const today = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -229,6 +231,7 @@ export default function Home() {
             <Brand />
             <nav className={mobileNav ? "main-nav open" : "main-nav"} aria-label="Primary navigation">
               <NavButton active={tab === "builder"} icon={<Layers3 />} onClick={() => { setTab("builder"); setMobileNav(false); }}>Strategy builder</NavButton>
+              <NavButton active={tab === "market"} icon={<BarChart3 />} onClick={() => { setTab("market"); setMobileNav(false); }}>BTC market</NavButton>
               <NavButton active={tab === "dashboard"} icon={<LayoutDashboard />} onClick={() => { setTab("dashboard"); setMobileNav(false); }}>Dashboard</NavButton>
               <NavButton active={tab === "runs"} icon={<Activity />} onClick={() => { setTab("runs"); setMobileNav(false); }}>Run history</NavButton>
             </nav>
@@ -244,6 +247,7 @@ export default function Home() {
           <main className="workspace">
             {notice && <Toast tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Toast>}
             {tab === "builder" && <StrategyBuilder onNotice={setNotice} liveEnabled />}
+            {tab === "market" && <BtcMarketChart />}
             {tab === "dashboard" && <Dashboard onNotice={setNotice} />}
             {tab === "runs" && <RunHistory onNotice={setNotice} />}
           </main>
@@ -325,7 +329,7 @@ function AuthView({ onAuthenticated }: { onAuthenticated: () => Promise<void> })
   }
 
   return <main className="connect-shell auth-shell" ref={panel}>
-    <header className="connect-header"><Brand /><span className="auth-trust"><ShieldCheck /> Secure client access</span></header>
+    <header className="connect-header"><Brand /><div className="auth-header-actions"><Link href="/market"><BarChart3 /> BTC spot analysis</Link><span className="auth-trust"><ShieldCheck /> Secure client access</span></div></header>
     <div className="auth-grid">
       <section className="auth-copy">
         <div className="eyebrow"><span /> Professional strategy operations</div>
