@@ -72,9 +72,16 @@ class DeltaClient:
     async def balances(self) -> dict[str, Any]:
         return await self.request("GET", "/v2/wallet/balances", authenticated=True)
 
-    async def open_orders(self) -> dict[str, Any]:
+    async def open_orders(self, product_ids: list[int] | None = None) -> dict[str, Any]:
         return await self.request(
-            "GET", "/v2/orders", query={"state": "open,pending", "page_size": 50}, authenticated=True
+            "GET",
+            "/v2/orders",
+            query={
+                "product_ids": ",".join(str(product_id) for product_id in product_ids) if product_ids else None,
+                "states": "open,pending",
+                "page_size": 100,
+            },
+            authenticated=True,
         )
 
     async def positions(self) -> dict[str, Any]:

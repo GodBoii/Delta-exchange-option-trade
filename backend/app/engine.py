@@ -86,6 +86,13 @@ class TradingEngine:
         return {"definition": definition.model_dump(mode="json", exclude_none=True), "legs": legs, "warnings": warnings}
 
     async def save_strategy(self, user_id: str, definition: StrategyDefinition, status: str) -> dict[str, Any]:
+        if status == "scheduled":
+            now = utc_now()
+            if definition.entry.exitAt <= now:
+                raise AppError(400, "The scheduled exit time is already in the past", "exit_time_passed")
+            lateness = (now - definition.entry.entryAt).total_seconds()
+            if lateness > self.settings.max_entry_lateness_seconds:
+                raise AppError(400, "The scheduled entry time is too far in the past", "entry_time_passed")
         rows = await self.db.insert(
             "strategies",
             {
@@ -100,6 +107,20 @@ class TradingEngine:
         if not rows:
             raise AppError(500, "Could not save the strategy", "strategy_save_failed")
         return {"id": rows[0]["id"], "status": rows[0]["status"]}
+
+    async def cancel_strategy(self, strategy_id: str, user_id: str) -> None:
+        rows = await self.db.update(
+            "strategies",
+            {"status": "cancelled", "last_error": None},
+            {
+                "select": "id",
+                "id": f"eq.{strategy_id}",
+                "user_id": f"eq.{user_id}",
+                "status": "in.(draft,scheduled)",
+            },
+        )
+        if not rows:
+            raise AppError(409, "Only draft or scheduled strategies can be cancelled", "cannot_cancel")
 
     async def strategy_by_id(self, strategy_id: str) -> dict[str, Any]:
         rows = await self.db.select("strategies", {"select": "*", "id": f"eq.{strategy_id}", "limit": "1"})
@@ -123,9 +144,126 @@ class TradingEngine:
         if not rows:
             raise AppError(409, "Strategy is already running or cannot be executed", "execution_in_progress")
 
+    async def claim_exit(self, strategy_id: str) -> None:
+        rows = await self.db.update(
+            "strategies",
+            {"status": "executing_exit", "exit_execution_at": None},
+            {
+                "select": "id",
+                "id": f"eq.{strategy_id}",
+                "status": "in.(active,attention)",
+            },
+        )
+        if not rows:
+            raise AppError(409, "Strategy is already exiting or cannot be exited", "exit_in_progress")
+
     async def record_order(self, order: dict[str, Any]) -> None:
         if not await self.db.insert("execution_orders", order):
             raise AppError(500, "Could not record an order result", "order_record_failed")
+
+    async def live_position_size(self, client: DeltaClient, product_id: int) -> Decimal:
+        response = await client.position(product_id)
+        return decimal_value((response.get("result") or {}).get("size"))
+
+    async def place_reduce_only_close(
+        self,
+        client: DeltaClient,
+        product_id: int,
+        size: Decimal,
+        initial_size: Decimal,
+        client_order_id: str,
+        product_symbol: str | None = None,
+    ) -> dict[str, Any]:
+        if size <= 0 or size != size.to_integral_value():
+            raise AppError(409, "Delta position size is not a positive whole number", "invalid_close_size")
+        if initial_size == 0 or size > abs(initial_size):
+            raise AppError(409, "Close size is larger than the live position", "invalid_close_size")
+
+        payload: dict[str, Any] = {
+            "product_id": product_id,
+            "size": int(size),
+            "side": "sell" if initial_size > 0 else "buy",
+            "order_type": "market_order",
+            "reduce_only": True,
+            "client_order_id": client_order_id,
+        }
+        if product_symbol:
+            payload["product_symbol"] = product_symbol
+        order = await client.place_order(payload)
+        result = order.get("result") or {}
+        if not result.get("id"):
+            raise AppError(502, "Delta accepted no identifiable close order", "invalid_close_response")
+        return order
+
+    async def verify_position_reduction(
+        self,
+        client: DeltaClient,
+        product_id: int,
+        size: Decimal,
+        initial_size: Decimal,
+    ) -> Decimal:
+        expected_size = initial_size - (size if initial_size > 0 else -size)
+        deadline = time.monotonic() + self.settings.exit_verify_timeout_seconds
+        while True:
+            live_size = await self.live_position_size(client, product_id)
+            if live_size == 0 or (
+                expected_size != 0
+                and live_size * initial_size > 0
+                and abs(live_size) <= abs(expected_size)
+            ):
+                return live_size
+            if time.monotonic() >= deadline:
+                raise AppError(
+                    502,
+                    f"Delta did not confirm position reduction for product {product_id}",
+                    "exit_not_confirmed",
+                )
+            await asyncio.sleep(self.settings.exit_verify_poll_seconds)
+
+    async def submit_verified_close(
+        self,
+        client: DeltaClient,
+        product_id: int,
+        size: Decimal,
+        initial_size: Decimal,
+        client_order_id: str,
+        product_symbol: str | None = None,
+    ) -> tuple[dict[str, Any], Decimal]:
+        order = await self.place_reduce_only_close(
+            client, product_id, size, initial_size, client_order_id, product_symbol
+        )
+        remaining_size = await self.verify_position_reduction(client, product_id, size, initial_size)
+        return order, remaining_size
+
+    async def close_account_position(self, user_id: str, product_id: int) -> dict[str, Any]:
+        client = await self.client_for_user(user_id)
+        try:
+            open_orders = (await client.open_orders([product_id])).get("result") or []
+            for order in open_orders:
+                order_id = order.get("id")
+                if order_id is not None:
+                    await client.cancel_order(int(order_id), product_id)
+            initial_size = await self.live_position_size(client, product_id)
+            if initial_size == 0:
+                raise AppError(409, "This Delta position is already closed", "position_already_closed")
+            client_order_id = f"dp_{product_id}_{base36(int(time.time() * 1000))}"[:32]
+            order, remaining_size = await self.submit_verified_close(
+                client,
+                product_id,
+                abs(initial_size),
+                initial_size,
+                client_order_id,
+            )
+            return {
+                "orderId": str((order.get("result") or {}).get("id")),
+                "productId": product_id,
+                "closedSize": str(abs(initial_size)),
+                "remainingSize": str(remaining_size),
+                "cancelledOrders": len(open_orders),
+                "verified": True,
+            }
+        finally:
+            await client.close()
 
     async def execute_entry(self, strategy_id: str) -> dict[str, Any]:
         row = await self.strategy_by_id(strategy_id)
@@ -453,16 +591,72 @@ class TradingEngine:
 
     async def execute_exit(self, strategy_id: str, preclaimed: bool = False) -> dict[str, Any]:
         row = await self.strategy_by_id(strategy_id)
-        if row.get("exit_execution_at"):
+        if row.get("status") == "completed":
             raise AppError(409, "Strategy exit has already run", "already_exited")
         client = await self.client_for_user(str(row["user_id"]))
         try:
             recorded_orders = await self.entry_orders(strategy_id)
+            if not preclaimed:
+                await self.claim_exit(strategy_id)
+            elif row.get("status") != "executing_exit":
+                raise AppError(409, "Combined stop exit was not claimed", "exit_not_claimed")
+            executions = await self.db.insert(
+                "executions", {"strategy_id": strategy_id, "kind": "exit", "status": "running"}
+            )
+            if not executions:
+                await self.db.update(
+                    "strategies",
+                    {
+                        "status": "attention",
+                        "exit_execution_at": None,
+                        "last_error": "Could not start the exit execution record",
+                    },
+                    {"id": f"eq.{strategy_id}", "status": "eq.executing_exit"},
+                )
+                raise AppError(500, "Could not start the execution record", "execution_record_failed")
+            execution_id = str(executions[0]["id"])
+            failures: list[Exception] = []
+            submitted = 0
+            verified = 0
+
+            if not recorded_orders:
+                failures.append(AppError(409, "No recorded entry orders are available to exit", "entry_orders_missing"))
+            else:
+                product_ids = sorted({int(item["product_id"]) for item in recorded_orders})
+                try:
+                    open_responses = await asyncio.gather(
+                        *(
+                            client.open_orders(product_ids[index : index + 10])
+                            for index in range(0, len(product_ids), 10)
+                        )
+                    )
+                    open_order_ids = {
+                        str(item.get("id"))
+                        for response in open_responses
+                        for item in (response.get("result") or [])
+                        if item.get("id") is not None
+                    }
+                    for item in recorded_orders:
+                        delta_order_id = str(item.get("delta_order_id") or "")
+                        if delta_order_id and delta_order_id in open_order_ids:
+                            await client.cancel_order(int(delta_order_id), int(item["product_id"]))
+                    recorded_orders = await self.reconcile_entry_fills(client, recorded_orders)
+                except Exception as exc:
+                    failures.append(
+                        AppError(
+                            502,
+                            f"Could not cancel or reconcile outstanding entry orders: {exc}",
+                            "entry_order_cleanup_failed",
+                        )
+                    )
+
             products: dict[int, dict[str, Any]] = {}
             for item in recorded_orders:
                 product_id = int(item["product_id"])
                 filled = decimal_value(item.get("filled_size"))
-                owned_size = filled if filled > 0 else decimal_value(item["size"])
+                owned_size = filled
+                if owned_size <= 0 and str(item.get("state")) == "closed":
+                    owned_size = decimal_value(item["size"])
                 signed_size = owned_size if item["side"] == "buy" else -owned_size
                 product = products.setdefault(
                     product_id,
@@ -473,23 +667,11 @@ class TradingEngine:
                     },
                 )
                 product["signed_size"] += signed_size
-            if not preclaimed:
-                await self.claim_strategy(strategy_id, ["active"], "executing_exit", "exit_execution_at")
-            elif row.get("status") != "executing_exit":
-                raise AppError(409, "Combined stop exit was not claimed", "exit_not_claimed")
-            executions = await self.db.insert(
-                "executions", {"strategy_id": strategy_id, "kind": "exit", "status": "running"}
-            )
-            if not executions:
-                raise AppError(500, "Could not start the execution record", "execution_record_failed")
-            execution_id = str(executions[0]["id"])
-            failures: list[Exception] = []
 
             async def close_product(index: int, product_id: int, product: dict[str, Any]) -> None:
+                nonlocal submitted, verified
                 try:
-                    position_response = await client.position(product_id)
-                    position = position_response.get("result") or {}
-                    live_size = decimal_value(position.get("size"))
+                    live_size = await self.live_position_size(client, product_id)
                     owned_signed_size = decimal_value(product["signed_size"])
                     if live_size == 0 or owned_signed_size == 0:
                         return
@@ -500,22 +682,21 @@ class TradingEngine:
                             "position_direction_mismatch",
                         )
                     close_size = min(abs(live_size), abs(owned_signed_size))
-                    side = "sell" if live_size > 0 else "buy"
                     client_order_id = (
                         f"dx_{strategy_id[:8]}_{index}_{base36(int(time.time() * 1000))}"[:32]
                     )
-                    order = await client.place_order(
-                        {
-                            "product_id": product_id,
-                            "product_symbol": product["product_symbol"],
-                            "size": int(close_size),
-                            "side": side,
-                            "order_type": "market_order",
-                            "reduce_only": True,
-                            "client_order_id": client_order_id,
-                        }
+                    order = await self.place_reduce_only_close(
+                        client,
+                        product_id,
+                        close_size,
+                        live_size,
+                        client_order_id,
+                        str(product["product_symbol"]),
                     )
-                    result = order["result"]
+                    submitted += 1
+                    result = order.get("result") or {}
+                    requested_size = Decimal(int(close_size))
+                    unfilled_size = decimal_value(result.get("unfilled_size"), str(requested_size))
                     await self.record_order(
                         {
                             "execution_id": execution_id,
@@ -524,27 +705,52 @@ class TradingEngine:
                             "client_order_id": client_order_id,
                             "product_id": product_id,
                             "product_symbol": product["product_symbol"],
-                            "side": side,
+                            "side": "sell" if live_size > 0 else "buy",
                             "size": int(close_size),
+                            "filled_size": str(max(Decimal("0"), requested_size - unfilled_size)),
+                            "average_fill_price": result.get("average_fill_price"),
+                            "commission": str(
+                                decimal_value(result.get("paid_commission") or result.get("commission"))
+                            ),
                             "state": str(result.get("state") or "submitted"),
                             "response_json": order,
                         }
                     )
+                    remaining_size = await self.verify_position_reduction(
+                        client, product_id, close_size, live_size
+                    )
+                    verified += 1
+                    await self.db.update(
+                        "execution_orders",
+                        {
+                            "state": "verified_closed",
+                            "response_json": {
+                                **order,
+                                "verification": {
+                                    "initialSize": str(live_size),
+                                    "remainingSize": str(remaining_size),
+                                    "verifiedAt": iso_now(),
+                                },
+                            },
+                        },
+                        {"client_order_id": f"eq.{client_order_id}"},
+                    )
                 except Exception as exc:
                     failures.append(exc)
 
-            await asyncio.gather(
-                *(
-                    close_product(index, product_id, product)
-                    for index, (product_id, product) in enumerate(products.items())
+            if not failures:
+                await asyncio.gather(
+                    *(
+                        close_product(index, product_id, product)
+                        for index, (product_id, product) in enumerate(products.items())
+                    )
                 )
-            )
             failure = failures[0] if failures else None
             completed = iso_now()
             risk_state = dict(row.get("risk_state") or {})
             if row.get("combined_stop_triggered_at"):
-                risk_state["status"] = "attention" if failure else "exit_submitted"
-                risk_state["exitSubmittedAt"] = completed
+                risk_state["status"] = "attention" if failure else "exit_verified"
+                risk_state["exitVerifiedAt" if not failure else "exitFailedAt"] = completed
             await asyncio.gather(
                 self.db.update(
                     "executions",
@@ -559,7 +765,7 @@ class TradingEngine:
                     "strategies",
                     {
                         "status": "attention" if failure else "completed",
-                        "exit_execution_at": completed,
+                        "exit_execution_at": None if failure else completed,
                         "last_error": str(failure) if failure else None,
                         "risk_state": risk_state,
                     },
@@ -568,7 +774,12 @@ class TradingEngine:
             )
             if failure:
                 raise failure
-            return {"executionId": execution_id}
+            return {
+                "executionId": execution_id,
+                "ordersSubmitted": submitted,
+                "positionsVerified": verified,
+                "verified": True,
+            }
         finally:
             await client.close()
 
