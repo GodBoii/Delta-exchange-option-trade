@@ -10,6 +10,7 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 - **Delta credentials:** Supabase Vault, accessed only with the server-side service role.
 - **Trading API and scheduler:** Python FastAPI in the `Delta-exchange` container on a static-IP server.
 - **BTC spot analysis:** A separate read-only FastAPI service in the `Binace` container, backed by the public Binance Spot REST and WebSocket APIs. It never places orders.
+- **News analysis:** Agno and OpenRouter run only in the private `news-analyzer` container. Agno stores sessions directly in Supabase PostgreSQL through `PostgresDb`; the trading API is only an authenticated gateway.
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
@@ -25,7 +26,7 @@ backend/tests/               Python strategy safety tests
 backend/Dockerfile           Production Python image
 binance_backend/app/         Binance Spot stream, synchronized book, and analysis API
 binance_backend/tests/       Market-data, analysis, and stream-state tests
-docker-compose.yml           Two-service backend deployment
+docker-compose.yml           Three-service backend deployment
 supabase/migrations/         Database, RLS, and Vault functions
 ```
 
@@ -68,15 +69,16 @@ The Compose service reads server credentials from the ignored root `.env.local` 
 ```powershell
 docker compose up -d --build
 docker compose ps
-docker compose logs -f delta-exchange binace
+docker compose logs -f delta-exchange binace news-analyzer
 ```
 
-The Delta trading API is available at `http://localhost:8000`; the Binance Spot analysis API is available at `http://localhost:8001`. Both expose `/health` and `/docs`.
+The Delta trading API is available at `http://localhost:8000`; the Binance Spot analysis API is available at `http://localhost:8001`. The private News Analyzer listens only inside the Compose network on port 8002.
 
 Compose creates the requested containers:
 
 - `Delta-exchange`: existing authenticated Delta trading API and scheduler.
 - `Binace`: public Binance `BTCUSDT` Spot analysis API. The spelling intentionally matches the requested container name.
+- `news-analyzer`: private Agno/OpenRouter research service with Supabase PostgreSQL session persistence.
 
 The market service exposes:
 
@@ -171,7 +173,7 @@ https://delta-exchange-option-trade.vercel.app/auth/callback
 
 ### Docker backend
 
-Deploy both Docker services to an always-on VPS or container host. The Delta service still needs a stable outbound public IP. On the server, create an ignored `.env.local` containing the server variables, then run:
+Deploy all three Docker services to an always-on VPS or container host. The Delta service still needs a stable outbound public IP. On the server, create an ignored `.env.local` containing the server variables, then run:
 
 ```bash
 docker compose up -d --build
@@ -185,7 +187,7 @@ Required backend variables are documented in `backend/.env.example`. `FRONTEND_O
 https://delta-exchange-option-trade.vercel.app
 ```
 
-Run exactly one `Delta-exchange` container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design. `Binace` is isolated from Supabase and Delta credentials and only accesses public market endpoints.
+Run exactly one `Delta-exchange` container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design. `Binace` is isolated from Supabase and Delta credentials and only accesses public market endpoints. `news-analyzer` owns Agno, OpenRouter, and `SUPABASE_DB_URL`; it does not import or call Delta or Binance.
 
 Add the backend server's static public IP to the Delta API key allowlist. Vercel's IP is not used for Delta requests.
 
