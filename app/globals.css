@@ -185,3 +185,16 @@ svg { width:18px; height:18px; stroke-width:1.8; }
 
 @media (max-width:1000px){.risk-compact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:620px){.risk-compact-grid{grid-template-columns:1fr}.risk-compact-control,.risk-compact-stat{min-height:88px}.risk-status{align-self:auto;margin-top:0}.segmented-field .t-tab{padding-inline:8px;font-size:13px}}
+
+/* Validation is visible on the exact control that needs attention. */
+.field.invalid>span,.segmented-field.invalid>legend{color:#ff9d96}
+.field.invalid>input,.field.invalid .select-wrap,.segmented-field.invalid>.t-tabs,.risk-compact-control.invalid{border-color:rgba(255,118,109,.82);background:rgba(255,118,109,.055);box-shadow:0 0 0 3px rgba(255,118,109,.09)}
+.field.invalid>input:focus,.field.invalid select:focus,.segmented-field.invalid>.t-tabs:focus-within,.risk-compact-control.invalid:focus-within{border-color:var(--red);box-shadow:0 0 0 3px rgba(255,118,109,.14)}
+.leg-row.has-errors,.legs-panel.invalid{border-color:rgba(255,118,109,.62);box-shadow:0 0 0 3px rgba(255,118,109,.055)}
+.leg-row.has-errors .leg-number{border-color:rgba(255,118,109,.55);color:#ffaaa3}
+.live-execution-copy{display:flex;align-items:center;gap:10px;min-width:0}
+.live-execution-copy>svg{width:20px;color:var(--lime);flex:none}
+.live-execution-copy p{display:grid;gap:2px;margin:0}
+.live-execution-copy strong{font-size:13px}
+.live-execution-copy small{color:var(--muted);font-size:12px;line-height:1.35}
+@media (max-width:520px){.live-execution-copy small{display:none}}

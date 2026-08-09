@@ -5,9 +5,9 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
-  CircleDollarSign, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
+  CircleDollarSign, CircleStop, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
   LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw,
-  Save, Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet,
+  Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet,
   WifiOff, X, Zap
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
@@ -16,9 +16,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" };
 type AppUser = { id: string; email?: string | null; displayName?: string | null; avatarUrl?: string | null };
 type SessionResponse = { success: boolean; authenticated: boolean; connected: boolean; user: AppUser | null; account: Account | null; message?: string; error?: string };
-type StrategyRow = { id: string; name: string; status: string; entryAt: string; exitAt: string; lastError?: string | null; createdAt: string };
-type ResolvedLeg = StrategyLeg & { productId: number; productSymbol: string; strike: number; markPrice: string | null };
-type PreviewData = { definition: StrategyDefinition; legs: ResolvedLeg[]; warnings: string[] };
+type StrategyRow = { id: string; name: string; status: string; entryAt: string; exitAt: string; entryExecutedAt?: string | null; lastError?: string | null; createdAt: string };
 type RiskStrategy = { id: string; name: string; status: string; riskState: Record<string, unknown>; monitoredAt?: string | null; triggeredAt?: string | null };
 type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[]; riskStrategies: RiskStrategy[] };
 type Tab = "builder" | "dashboard" | "runs";
@@ -30,7 +28,7 @@ const localDateTime = (offsetHours: number) => {
   date.setMinutes(Math.ceil(date.getMinutes() / 5) * 5, 0, 0);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
-const iso = (value: string) => new Date(value).toISOString();
+const iso = (value: string) => value ? new Date(value).toISOString() : "";
 const uid = () => globalThis.crypto?.randomUUID?.().slice(0, 12) ?? Math.random().toString(36).slice(2, 14);
 
 const newLeg = (overrides: Partial<StrategyLeg> = {}): StrategyLeg => ({
@@ -48,7 +46,7 @@ const initialStrategy = (): StrategyDefinition => ({
     newLeg({ position: "sell", optionType: "call", strikeMode: "atm" }),
     newLeg({ position: "sell", optionType: "put", strikeMode: "atm" })
   ],
-  acknowledgement: false as true
+  acknowledgement: true
 });
 const DRAFT_STORAGE_KEY = "delta-strategy-draft-v1";
 
@@ -65,10 +63,37 @@ function isStrategyDefinition(value: unknown): value is StrategyDefinition {
 function hydrateStrategy(strategy: StrategyDefinition): StrategyDefinition {
   return {
     ...strategy,
+    acknowledgement: true,
     riskMode: strategy.riskMode ?? "legwise",
     combinedStopLossPercent: strategy.combinedStopLossPercent ?? undefined,
     emergencyStopLossPercent: strategy.emergencyStopLossPercent ?? undefined
   };
+}
+
+function strategyValidation(strategy: StrategyDefinition) {
+  const fields = new Set<string>();
+  let firstLegId: string | null = null;
+  if (strategy.name.trim().length < 2) fields.add("name");
+  const entryAt = new Date(strategy.entry.entryAt).getTime();
+  const exitAt = new Date(strategy.entry.exitAt).getTime();
+  if (!Number.isFinite(entryAt)) fields.add("entryAt");
+  if (!Number.isFinite(exitAt) || (Number.isFinite(entryAt) && exitAt <= entryAt)) fields.add("exitAt");
+  if (!strategy.legs.length) fields.add("legs");
+
+  for (const leg of strategy.legs) {
+    const mark = (field: string) => { fields.add(`leg.${leg.id}.${field}`); firstLegId ??= leg.id; };
+    if (!Number.isFinite(leg.lots) || leg.lots < 1) mark("lots");
+    if (!leg.expiry || Number.isNaN(new Date(`${leg.expiry}T00:00:00`).getTime())) mark("expiry");
+    if (leg.strikeMode === "exact" && (!leg.exactStrike || leg.exactStrike <= 0)) mark("exactStrike");
+    if (leg.orderType === "limit_order" && (!leg.limitPrice || !/^\d+(\.\d+)?$/.test(leg.limitPrice))) mark("limitPrice");
+    if (strategy.riskMode === "legwise" && leg.position === "sell" && (!leg.stopLoss || leg.stopLoss <= 0)) mark("stopLoss");
+  }
+
+  if (strategy.riskMode === "combined_premium") {
+    if (!strategy.combinedStopLossPercent || strategy.combinedStopLossPercent <= 0) fields.add("combinedStopLossPercent");
+    if (strategy.legs.filter(leg => leg.position === "sell").length < 2) fields.add("riskMode");
+  }
+  return { fields, firstLegId };
 }
 
 function errorMessage(error: unknown) {
@@ -366,7 +391,7 @@ function DesignWorkspace({ user, notice, onNotice, onClearNotice, onRetry, onSig
     </header>
     <main className="workspace">
       {notice && <Toast tone={notice.tone} onClose={onClearNotice}>{notice.text}</Toast>}
-      <section className="backend-banner" role="status"><WifiOff /><div><strong>Trading backend is not connected</strong><p>You can design and export strategies here. Start Docker and open the local frontend to preview contracts, connect Delta, schedule, or execute.</p></div><button className="secondary-button" onClick={() => void onRetry()}><RefreshCw />Retry connection</button></section>
+      <section className="backend-banner" role="status"><WifiOff /><div><strong>Trading backend is not connected</strong><p>You can design and export strategies here. Start Docker and open the local frontend to resolve contracts, connect Delta, schedule, or execute.</p></div><button className="secondary-button" onClick={() => void onRetry()}><RefreshCw />Retry connection</button></section>
       <StrategyBuilder onNotice={onNotice} liveEnabled={false} />
     </main>
   </>;
@@ -401,13 +426,13 @@ function ConnectView({ user, onConnected, onSignOut }: { user: AppUser; onConnec
       </section>
       <form className="connect-card" onSubmit={connect} aria-label="Connect Delta Exchange account">
         <div className="card-heading"><span className="heading-icon"><KeyRound /></span><div><h2>Connect Delta Exchange</h2><p>Verify trading access to continue.</p></div></div>
-        <div className="production-warning"><AlertTriangle /><p><strong>Live Delta Exchange India connection.</strong><br />Orders are submitted only after preview and explicit confirmation.</p></div>
+        <div className="production-warning"><AlertTriangle /><p><strong>Live Delta Exchange India connection.</strong><br />Orders are submitted when you choose Execute strategy.</p></div>
         <Field label="API key"><input value={apiKey} onChange={e => setApiKey(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Paste your API key" minLength={16} required /></Field>
         <Field label="API secret"><input type="password" value={apiSecret} onChange={e => setApiSecret(e.target.value)} autoComplete="new-password" placeholder="Paste your API secret" minLength={24} required /></Field>
         {error && <div className="inline-error" role="alert"><AlertTriangle />{error}</div>}
         <div className="security-note"><ShieldCheck /><p><strong>Trading access is verified before connection.</strong><br />Use a dedicated key with only the permissions this workstation needs.</p></div>
         <button className="primary-button full" disabled={busy}>{busy ? <><LoaderCircle className="spin" />Verifying connection</> : <><Zap />Connect securely</>}</button>
-        <p className="terms">Connecting does not place an order. Every execution requires a reviewed preview and explicit confirmation.</p>
+        <p className="terms">Connecting does not place an order. Execution begins only from the strategy workspace.</p>
       </form>
     </div>
   </main>;
@@ -416,9 +441,9 @@ function ConnectView({ user, onConnected, onSignOut }: { user: AppUser; onConnec
 function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok" | "error"; text: string }) => void; liveEnabled: boolean }) {
   const [strategy, setStrategy] = useState<StrategyDefinition>(initialStrategy);
   const [expanded, setExpanded] = useState<string | null>(strategy.legs[0].id);
-  const [preview, setPreview] = useState<PreviewData | null>(null);
-  const [previewing, setPreviewing] = useState(false);
+  const [executing, setExecuting] = useState(false);
   const [error, setError] = useState("");
+  const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [draftReady, setDraftReady] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
 
@@ -440,23 +465,40 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
     if (draftReady) localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(strategy));
   }, [draftReady, strategy]);
 
+  useEffect(() => {
+    if (invalidFields.size) setInvalidFields(strategyValidation(strategy).fields);
+  }, [strategy, invalidFields.size]);
+
   const updateLeg = (id: string, patch: Partial<StrategyLeg>) => setStrategy(s => ({ ...s, legs: s.legs.map(l => l.id === id ? { ...l, ...patch } : l) }));
   const removeLeg = (id: string) => setStrategy(s => ({ ...s, legs: s.legs.filter(l => l.id !== id) }));
   const duplicateLeg = (id: string) => setStrategy(s => s.legs.length >= 12 ? s : ({ ...s, legs: s.legs.flatMap(l => l.id === id ? [l, { ...l, id: uid() }] : [l]) }));
   const moveLeg = (index: number, direction: -1 | 1) => setStrategy(s => { const legs = [...s.legs]; const target = index + direction; if (target < 0 || target >= legs.length) return s; [legs[index], legs[target]] = [legs[target], legs[index]]; return { ...s, legs }; });
   const addLeg = () => { if (strategy.legs.length >= 12) return; const leg = newLeg({ expiry: strategy.legs[0]?.expiry || today() }); setStrategy(s => ({ ...s, legs: [...s.legs, leg] })); setExpanded(leg.id); };
 
-  async function openPreview() {
+  async function scheduleStrategy() {
     if (!liveEnabled) {
-      setError("Start the Docker backend and use the local frontend to resolve live contracts.");
+      setError("Start the Docker backend before scheduling a live strategy.");
       return;
     }
-    setPreviewing(true); setError("");
+    const validation = strategyValidation(strategy);
+    if (validation.fields.size) {
+      setInvalidFields(validation.fields);
+      setError(`Complete the ${validation.fields.size} highlighted ${validation.fields.size === 1 ? "field" : "fields"} before scheduling.`);
+      if (validation.firstLegId) setExpanded(validation.firstLegId);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const invalid = document.querySelector<HTMLElement>(".field.invalid, .segmented-field.invalid, .risk-compact-control.invalid, .legs-panel.invalid, .leg-row.has-errors");
+        invalid?.scrollIntoView({ behavior: "smooth", block: "center" });
+        invalid?.querySelector<HTMLElement>("input, select, button")?.focus();
+      }));
+      return;
+    }
+    setExecuting(true); setError(""); setInvalidFields(new Set());
     try {
-      const data = await requestJson<{ success: true } & PreviewData>("/api/strategies/preview", { method: "POST", body: JSON.stringify(strategy) });
-      setPreview(data);
+      const liveStrategy = { ...strategy, acknowledgement: true as const };
+      await requestJson<{ result: { id: string } }>("/api/strategies", { method: "POST", body: JSON.stringify({ strategy: liveStrategy, status: "scheduled" }) });
+      onNotice({ tone: "ok", text: `Strategy scheduled for ${formatDateTime(strategy.entry.entryAt)}. It will not execute before that time.` });
     } catch (err) { setError(errorMessage(err)); }
-    finally { setPreviewing(false); }
+    finally { setExecuting(false); }
   }
 
   function exportDraft() {
@@ -476,7 +518,7 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
       const parsed = JSON.parse(await file.text()) as unknown;
       const candidate = parsed && typeof parsed === "object" && "strategy" in parsed ? (parsed as { strategy: unknown }).strategy : parsed;
       if (!isStrategyDefinition(candidate)) throw new Error("This file is not a valid Delta strategy draft.");
-      setStrategy(hydrateStrategy(candidate)); setExpanded(candidate.legs[0]?.id ?? null); setPreview(null); setError("");
+      setStrategy(hydrateStrategy(candidate)); setExpanded(candidate.legs[0]?.id ?? null); setInvalidFields(new Set()); setError("");
       onNotice({ tone: "ok", text: "Strategy draft imported successfully." });
     } catch (importError) { onNotice({ tone: "error", text: errorMessage(importError) }); }
     finally { if (importInput.current) importInput.current.value = ""; }
@@ -484,41 +526,44 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
 
   return <div className="builder-page">
     <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy workspace</div><h1>Two legs. One risk limit.</h1><p>Build, protect, execute.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Browser draft</span><small>Saved on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
-    <div className="strategy-name-row panel" data-reveal><Field label="Strategy name"><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
+    <div className="strategy-name-row panel" data-reveal><Field label="Strategy name" invalid={invalidFields.has("name")}><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
     <div className="settings-grid">
       <SettingsPanel icon={<CircleDollarSign />} title="Instrument settings" description="Choose the contract family and price source.">
         <div className="field-grid two"><Select label="Index" value={strategy.instrument.index} onChange={v => setStrategy({ ...strategy, instrument: { ...strategy.instrument, index: v as "BTCUSD" | "ETHUSD", underlying: v === "BTCUSD" ? "BTC" : "ETH" } })} options={["BTCUSD", "ETHUSD"]} /><Segmented label="Underlying from" value={strategy.instrument.underlyingFrom} onChange={v => setStrategy({ ...strategy, instrument: { ...strategy.instrument, underlyingFrom: v as "cash" | "futures" } })} options={[{ value: "cash", label: "Cash" }, { value: "futures", label: "Futures" }]} /></div>
       </SettingsPanel>
       <SettingsPanel icon={<Clock3 />} title="Entry settings" description="Set the strategy lifecycle and schedule.">
         <Segmented label="Strategy type" value={strategy.entry.strategyType} onChange={v => setStrategy({ ...strategy, entry: { ...strategy.entry, strategyType: v as "intraday" | "btst" | "positional" } })} options={[{ value: "intraday", label: "Intraday" }, { value: "btst", label: "BTST" }, { value: "positional", label: "Positional" }]} />
-        <div className="field-grid two"><Field label="Entry time"><input type="datetime-local" value={toLocal(strategy.entry.entryAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, entryAt: iso(e.target.value) } })} /></Field><Field label="Exit time"><input type="datetime-local" value={toLocal(strategy.entry.exitAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, exitAt: iso(e.target.value) } })} /></Field></div>
+        <div className="field-grid two"><Field label="Entry time" invalid={invalidFields.has("entryAt")}><input type="datetime-local" value={toLocal(strategy.entry.entryAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, entryAt: iso(e.target.value) } })} /></Field><Field label="Exit time" invalid={invalidFields.has("exitAt")}><input type="datetime-local" value={toLocal(strategy.entry.exitAt)} onChange={e => setStrategy({ ...strategy, entry: { ...strategy.entry, exitAt: iso(e.target.value) } })} /></Field></div>
       </SettingsPanel>
       <SettingsPanel wide icon={<Shield />} title="Risk control" description="Set how loss protection closes the position.">
-        <RiskControl strategy={strategy} onChange={setStrategy} />
+        <RiskControl strategy={strategy} onChange={setStrategy} invalidFields={invalidFields} />
       </SettingsPanel>
     </div>
-    <section className="legs-panel panel" data-reveal>
+    <section className={`legs-panel panel${invalidFields.has("legs") ? " invalid" : ""}`} data-reveal>
       <div className="panel-title"><div><span className="heading-icon"><Layers3 /></span><div><h2>Legs</h2><p>Call + put</p></div></div><button className="secondary-button" onClick={addLeg} disabled={strategy.legs.length >= 12}><Plus />Add leg <span>{strategy.legs.length}/12</span></button></div>
       <div className="leg-list">
-        {strategy.legs.map((leg, index) => <LegRow key={leg.id} leg={leg} riskMode={strategy.riskMode} index={index} total={strategy.legs.length} open={expanded === leg.id} onToggle={() => setExpanded(expanded === leg.id ? null : leg.id)} onUpdate={(patch) => updateLeg(leg.id, patch)} onRemove={() => removeLeg(leg.id)} onDuplicate={() => duplicateLeg(leg.id)} onMove={d => moveLeg(index, d)} />)}
+        {strategy.legs.map((leg, index) => <LegRow key={leg.id} leg={leg} riskMode={strategy.riskMode} index={index} total={strategy.legs.length} open={expanded === leg.id} invalidFields={invalidFields} onToggle={() => setExpanded(expanded === leg.id ? null : leg.id)} onUpdate={(patch) => updateLeg(leg.id, patch)} onRemove={() => removeLeg(leg.id)} onDuplicate={() => duplicateLeg(leg.id)} onMove={d => moveLeg(index, d)} />)}
       </div>
       {strategy.legs.length === 0 && <div className="empty-state"><Layers3 /><h3>No strategy legs</h3><p>Add at least one option leg to continue.</p><button className="secondary-button" onClick={addLeg}><Plus />Add first leg</button></div>}
     </section>
     <footer className="builder-actions" data-reveal>
-      <label className="acknowledgement"><input type="checkbox" checked={strategy.acknowledgement} onChange={e => setStrategy({ ...strategy, acknowledgement: e.target.checked as true })} /><span><Check /></span><p><strong>I understand the execution risk.</strong><small>Legs are submitted sequentially and market prices can change after preview.</small></p></label>
-      <div>{error && <span className="action-error"><AlertTriangle />{error}</span>}<button className={liveEnabled ? "primary-button" : "secondary-button"} disabled={previewing || !liveEnabled || !strategy.acknowledgement || strategy.legs.length === 0} onClick={openPreview}>{previewing ? <LoaderCircle className="spin" /> : liveEnabled ? <Zap /> : <WifiOff />}{previewing ? "Resolving contracts" : liveEnabled ? "Preview strategy" : "Local backend required"}</button></div>
+      <div className="live-execution-copy"><ShieldCheck /><p><strong>Scheduled execution</strong><small>Orders are sent only when the configured entry time is reached.</small></p></div>
+      <div>{error && <span className="action-error" role="alert"><AlertTriangle />{error}</span>}<button className={liveEnabled ? "primary-button" : "secondary-button"} disabled={executing || !liveEnabled} onClick={scheduleStrategy}>{executing ? <LoaderCircle className="spin" /> : liveEnabled ? <Clock3 /> : <WifiOff />}{executing ? "Scheduling strategy" : liveEnabled ? "Schedule strategy" : "Local backend required"}</button></div>
     </footer>
-    {preview && <PreviewDrawer preview={preview} strategy={strategy} onClose={() => setPreview(null)} onNotice={onNotice} />}
   </div>;
 }
 
-const toLocal = (value: string) => new Date(new Date(value).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+const toLocal = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
 
 function SettingsPanel({ icon, title, description, wide, children }: { icon: React.ReactNode; title: string; description: string; wide?: boolean; children: React.ReactNode }) {
   return <section className={`panel settings-panel${wide ? " wide" : ""}`} data-reveal><div className="panel-title"><div><span className="heading-icon">{icon}</span><div><h2>{title}</h2><p>{description}</p></div></div></div>{children}</section>;
 }
 
-function RiskControl({ strategy, onChange }: { strategy: StrategyDefinition; onChange: (strategy: StrategyDefinition) => void }) {
+function RiskControl({ strategy, onChange, invalidFields }: { strategy: StrategyDefinition; onChange: (strategy: StrategyDefinition) => void; invalidFields: Set<string> }) {
   const combined = strategy.riskMode === "combined_premium";
   const stop = strategy.combinedStopLossPercent ?? 100;
   const exitMultiple = 1 + stop / 100;
@@ -530,11 +575,11 @@ function RiskControl({ strategy, onChange }: { strategy: StrategyDefinition; onC
   });
   return <div className={`risk-console ${combined ? "combined" : "legwise"}`}>
     <div className="risk-mode-row">
-      <Segmented label="Trigger" value={strategy.riskMode} onChange={setMode} options={[{ value: "combined_premium", label: "Combined" }, { value: "legwise", label: "Per leg" }]} />
+      <Segmented label="Trigger" value={strategy.riskMode} onChange={setMode} invalid={invalidFields.has("riskMode")} options={[{ value: "combined_premium", label: "Combined" }, { value: "legwise", label: "Per leg" }]} />
       <div className="risk-status" aria-label={combined ? "Both short legs close together" : "Each leg closes independently"}><i /><span>{combined ? "Paired exit" : "Independent"}</span></div>
     </div>
     {combined ? <div className="risk-compact-grid">
-      <label className="risk-compact-control risk-stop-compact">
+      <label className={`risk-compact-control risk-stop-compact${invalidFields.has("combinedStopLossPercent") ? " invalid" : ""}`}>
         <span>Combined stop loss</span>
         <div><input aria-label="Combined stop loss percent" type="number" min="1" max="1000" value={stop} onChange={event => onChange({ ...strategy, combinedStopLossPercent: Math.max(1, Number(event.target.value) || 1) })} /><b>%</b></div>
         <small>Closes both legs at this total premium loss.</small>
@@ -550,66 +595,44 @@ function RiskControl({ strategy, onChange }: { strategy: StrategyDefinition; onC
   </div>;
 }
 
-function LegRow({ leg, riskMode, index, total, open, onToggle, onUpdate, onRemove, onDuplicate, onMove }: { leg: StrategyLeg; riskMode: StrategyDefinition["riskMode"]; index: number; total: number; open: boolean; onToggle: () => void; onUpdate: (p: Partial<StrategyLeg>) => void; onRemove: () => void; onDuplicate: () => void; onMove: (d: -1 | 1) => void }) {
-  return <article className={open ? "leg-row open t-acc" : "leg-row t-acc"} data-open={open}>
+function LegRow({ leg, riskMode, index, total, open, invalidFields, onToggle, onUpdate, onRemove, onDuplicate, onMove }: { leg: StrategyLeg; riskMode: StrategyDefinition["riskMode"]; index: number; total: number; open: boolean; invalidFields: Set<string>; onToggle: () => void; onUpdate: (p: Partial<StrategyLeg>) => void; onRemove: () => void; onDuplicate: () => void; onMove: (d: -1 | 1) => void }) {
+  const invalid = (field: string) => invalidFields.has(`leg.${leg.id}.${field}`);
+  const hasErrors = Array.from(invalidFields).some(field => field.startsWith(`leg.${leg.id}.`));
+  return <article className={`${open ? "leg-row open t-acc" : "leg-row t-acc"}${hasErrors ? " has-errors" : ""}`} data-open={open}>
     <div className="leg-summary">
       <button className="drag-handle" aria-label={`Reorder leg ${index + 1}`}><GripVertical /></button>
       <button className="leg-toggle" onClick={onToggle} aria-expanded={open}><span className="leg-number">{String(index + 1).padStart(2, "0")}</span><span className={`side ${leg.position}`}>{leg.position}</span><strong>{leg.optionType === "call" ? "Call" : "Put"}</strong><span>{leg.lots} {leg.lots === 1 ? "lot" : "lots"}</span><span>{leg.strikeMode.toUpperCase()}{leg.strikeMode !== "exact" && leg.strikeSteps ? ` ${leg.strikeSteps}` : ""}</span><span>{formatDate(leg.expiry)}</span><span className="t-acc-chevron"><ChevronDown /></span></button>
       <div className="leg-tools"><button onClick={() => onMove(-1)} disabled={index === 0} aria-label="Move leg up"><ArrowUp /></button><button onClick={() => onMove(1)} disabled={index === total - 1} aria-label="Move leg down"><ArrowDown /></button><button onClick={onDuplicate} disabled={total >= 12} aria-label="Duplicate leg"><Copy /></button><button onClick={onRemove} disabled={total === 1} aria-label="Delete leg" className="danger"><Trash2 /></button></div>
     </div>
     <div className="t-acc-panel" aria-hidden={!open}><div className="t-acc-panel-inner" inert={!open ? true : undefined}><div className="leg-body">
-      <div className="leg-grid primary-fields"><NumberField label="Lots" min={1} value={leg.lots} onChange={v => onUpdate({ lots: v || 1 })} /><Segmented label="Position" value={leg.position} onChange={v => onUpdate({ position: v as "buy" | "sell" })} options={[{ value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }]} /><Segmented label="Option type" value={leg.optionType} onChange={v => onUpdate({ optionType: v as "call" | "put" })} options={[{ value: "call", label: "Call" }, { value: "put", label: "Put" }]} /><Field label="Expiry"><input type="date" min={new Date().toISOString().slice(0,10)} value={leg.expiry} onChange={e => onUpdate({ expiry: e.target.value })} /></Field><Select label="Strike criteria" value={leg.strikeMode} onChange={v => onUpdate({ strikeMode: v as StrategyLeg["strikeMode"] })} options={["atm", "itm", "otm", "exact"]} />{leg.strikeMode === "exact" ? <OptionalNumber label="Exact strike" value={leg.exactStrike} onChange={v => onUpdate({ exactStrike: v })} /> : <NumberField label="Strike steps" min={0} max={100} value={leg.strikeSteps} onChange={v => onUpdate({ strikeSteps: v })} />}</div>
+      <div className="leg-grid primary-fields"><NumberField label="Lots" min={1} value={leg.lots} invalid={invalid("lots")} onChange={v => onUpdate({ lots: v })} /><Segmented label="Position" value={leg.position} onChange={v => onUpdate({ position: v as "buy" | "sell" })} options={[{ value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }]} /><Segmented label="Option type" value={leg.optionType} onChange={v => onUpdate({ optionType: v as "call" | "put" })} options={[{ value: "call", label: "Call" }, { value: "put", label: "Put" }]} /><Field label="Expiry" invalid={invalid("expiry")}><input type="date" min={new Date().toISOString().slice(0,10)} value={leg.expiry} onChange={e => onUpdate({ expiry: e.target.value })} /></Field><Select label="Strike criteria" value={leg.strikeMode} onChange={v => onUpdate({ strikeMode: v as StrategyLeg["strikeMode"] })} options={["atm", "itm", "otm", "exact"]} />{leg.strikeMode === "exact" ? <OptionalNumber label="Exact strike" value={leg.exactStrike} invalid={invalid("exactStrike")} onChange={v => onUpdate({ exactStrike: v })} /> : <NumberField label="Strike steps" min={0} max={100} value={leg.strikeSteps} onChange={v => onUpdate({ strikeSteps: v })} />}</div>
       <div className="subsection-label">Order & protection</div>
-      <div className={`leg-grid risk-fields${riskMode === "combined_premium" ? " combined" : ""}`}><Segmented label="Order type" value={leg.orderType} onChange={v => onUpdate({ orderType: v as "market_order" | "limit_order" })} options={[{ value: "market_order", label: "Market" }, { value: "limit_order", label: "Limit" }]} />{leg.orderType === "limit_order" && <Field label="Limit price"><input inputMode="decimal" value={leg.limitPrice || ""} onChange={e => onUpdate({ limitPrice: e.target.value || undefined })} placeholder="0.00" /></Field>}{riskMode === "legwise" && <><OptionalNumber label="Target profit" value={leg.targetProfit} onChange={v => onUpdate({ targetProfit: v })} /><OptionalNumber label={`Stop loss${leg.position === "sell" ? " (required)" : ""}`} value={leg.stopLoss} onChange={v => onUpdate({ stopLoss: v })} /><OptionalNumber label="Trail SL" value={leg.trailStop} onChange={v => onUpdate({ trailStop: v })} /><NumberField label="Re-entry on target" min={0} max={10} value={leg.reentryOnTarget} onChange={v => onUpdate({ reentryOnTarget: v })} /><NumberField label="Re-entry on SL" min={0} max={10} value={leg.reentryOnStop} onChange={v => onUpdate({ reentryOnStop: v })} /></>}</div>
+      <div className={`leg-grid risk-fields${riskMode === "combined_premium" ? " combined" : ""}`}><Segmented label="Order type" value={leg.orderType} onChange={v => onUpdate({ orderType: v as "market_order" | "limit_order" })} options={[{ value: "market_order", label: "Market" }, { value: "limit_order", label: "Limit" }]} />{leg.orderType === "limit_order" && <Field label="Limit price" invalid={invalid("limitPrice")}><input inputMode="decimal" value={leg.limitPrice || ""} onChange={e => onUpdate({ limitPrice: e.target.value || undefined })} placeholder="0.00" /></Field>}{riskMode === "legwise" && <><OptionalNumber label="Target profit" value={leg.targetProfit} onChange={v => onUpdate({ targetProfit: v })} /><OptionalNumber label={`Stop loss${leg.position === "sell" ? " (required)" : ""}`} value={leg.stopLoss} invalid={invalid("stopLoss")} onChange={v => onUpdate({ stopLoss: v })} /><OptionalNumber label="Trail SL" value={leg.trailStop} onChange={v => onUpdate({ trailStop: v })} /><NumberField label="Re-entry on target" min={0} max={10} value={leg.reentryOnTarget} onChange={v => onUpdate({ reentryOnTarget: v })} /><NumberField label="Re-entry on SL" min={0} max={10} value={leg.reentryOnStop} onChange={v => onUpdate({ reentryOnStop: v })} /></>}</div>
       {riskMode === "combined_premium" && <div className="combined-leg-cue"><Shield /><span />Protected by combined trigger</div>}
     </div></div></div>
   </article>;
 }
 
-function PreviewDrawer({ preview, strategy, onClose, onNotice }: { preview: PreviewData; strategy: StrategyDefinition; onClose: () => void; onNotice: (n: { tone: "ok" | "error"; text: string }) => void }) {
-  const drawer = useRef<HTMLDivElement>(null); const [busy, setBusy] = useState<string | null>(null); const [confirmExecute, setConfirmExecute] = useState(false); const [confirmText, setConfirmText] = useState(""); const [error, setError] = useState("");
-  useGSAP(() => { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; gsap.from(".drawer-backdrop", { opacity: 0, duration: .25 }); gsap.from(".preview-drawer", { xPercent: 100, duration: .5, ease: "power3.out" }); }, { scope: drawer });
-  useEffect(() => { const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; addEventListener("keydown", handler); return () => removeEventListener("keydown", handler); }, [onClose]);
-
-  async function save(status: "draft" | "scheduled", execute = false) {
-    setBusy(execute ? "execute" : status); setError("");
-    try {
-      const saved = await requestJson<{ result: { id: string } }>("/api/strategies", { method: "POST", body: JSON.stringify({ strategy, status }) });
-      if (execute) await requestJson(`/api/strategies/${saved.result.id}/execute`, { method: "POST" });
-      onNotice({ tone: "ok", text: execute ? "Execution submitted. Monitor fills in Dashboard." : status === "scheduled" ? "Strategy scheduled successfully." : "Draft saved successfully." }); onClose();
-    } catch (err) { setError(errorMessage(err)); }
-    finally { setBusy(null); }
-  }
-
-  return <div className="drawer-layer" ref={drawer} role="dialog" aria-modal="true" aria-labelledby="preview-title"><button className="drawer-backdrop" onClick={onClose} aria-label="Close preview" /><aside className="preview-drawer">
-    <header><div><div className="eyebrow"><span /> Live contract resolution</div><h2 id="preview-title">Review before action</h2><p>Prices are a point-in-time preview and may change before fill.</p></div><button className="icon-button" onClick={onClose} aria-label="Close"><X /></button></header>
-    <div className="preview-summary"><div><span>Strategy</span><strong>{strategy.name}</strong></div><div><span>Schedule</span><strong>{formatDateTime(strategy.entry.entryAt)}</strong></div><div><span>Risk</span><strong>{strategy.riskMode === "combined_premium" ? `${strategy.combinedStopLossPercent}% combined` : "Per leg"}</strong></div></div>
-    <div className="resolved-list"><div className="resolved-head"><span>Resolved legs</span><span>{preview.legs.length} contracts</span></div>{preview.legs.map((leg, i) => <div className="resolved-leg" key={leg.id}><span className="leg-number">{String(i + 1).padStart(2, "0")}</span><div><strong>{leg.productSymbol}</strong><span>{leg.position.toUpperCase()} {leg.lots} · {leg.orderType === "market_order" ? "Market" : `Limit ${leg.limitPrice}`}</span></div><div><small>Strike</small><strong>{leg.strike.toLocaleString()}</strong></div><div><small>Mark</small><strong>{leg.markPrice ?? "Unavailable"}</strong></div></div>)}</div>
-    <div className="warning-box"><AlertTriangle /><div><strong>Execution conditions</strong>{preview.warnings.map(w => <p key={w}>{w}</p>)}</div></div>
-    {error && <div className="inline-error"><AlertTriangle />{error}</div>}
-    {confirmExecute && <div className="execute-confirm"><ShieldCheck /><div><strong>Confirm live execution</strong><p>This saves the strategy and immediately begins sequential order submission. In Production, this places orders using real funds. Type <b>EXECUTE</b> to continue.</p><input aria-label="Type EXECUTE to confirm" value={confirmText} onChange={e => setConfirmText(e.target.value.toUpperCase())} placeholder="Type EXECUTE" autoComplete="off" /><div><button className="ghost-button" onClick={() => { setConfirmExecute(false); setConfirmText(""); }}>Go back</button><button className="danger-button" onClick={() => void save("draft", true)} disabled={Boolean(busy) || confirmText !== "EXECUTE"}>{busy === "execute" ? <LoaderCircle className="spin" /> : <Zap />}Confirm & execute</button></div></div></div>}
-    <footer><button className="ghost-button" onClick={() => void save("draft")} disabled={Boolean(busy)}>{busy === "draft" ? <LoaderCircle className="spin" /> : <Save />}Save draft</button><button className="secondary-button" onClick={() => void save("scheduled")} disabled={Boolean(busy)}>{busy === "scheduled" ? <LoaderCircle className="spin" /> : <Clock3 />}Schedule</button><button className="primary-button" onClick={() => setConfirmExecute(true)} disabled={Boolean(busy) || confirmExecute}><Zap />Execute now</button></footer>
-  </aside></div>;
-}
-
 function Dashboard({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; text: string }) => void }) {
-  const [data, setData] = useState<Overview | null>(null); const [loading, setLoading] = useState(true); const [cancel, setCancel] = useState<{ id: string; productId: number; symbol: string } | null>(null);
+  const [data, setData] = useState<Overview | null>(null); const [loading, setLoading] = useState(true); const [cancel, setCancel] = useState<{ id: string; productId: number; symbol: string } | null>(null); const [close, setClose] = useState<{ productId: number; symbol: string; size: string } | null>(null);
   const load = useCallback(async () => { setLoading(true); try { setData(await requestJson<Overview>("/api/account/overview")); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } finally { setLoading(false); } }, [onNotice]);
   useEffect(() => { void load(); }, [load]);
   const balance = useMemo(() => totalBalance(data?.balances || []), [data]);
   async function cancelOrder() { if (!cancel) return; try { await requestJson(`/api/orders/${cancel.id}`, { method: "DELETE", body: JSON.stringify({ productId: cancel.productId, confirm: true }) }); onNotice({ tone: "ok", text: `Order ${cancel.id} cancelled.` }); setCancel(null); void load(); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } }
+  async function closePosition() { if (!close) return; try { await requestJson(`/api/positions/${close.productId}/close`, { method: "POST", body: JSON.stringify({ confirm: true }) }); onNotice({ tone: "ok", text: `${close.symbol} position closed and verified on Delta.` }); setClose(null); void load(); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } }
   return <div className="dashboard-page"><section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Account overview</div><h1>Trading dashboard</h1><p>Live balances, positions, and outstanding Delta orders.</p></div><button className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw className={loading ? "spin" : ""} />Refresh</button></section>
-    {loading ? <PanelSkeleton /> : <><div className="metric-grid"><Metric icon={<Wallet />} label="Estimated balance" value={balance} note="Across returned assets" /><Metric icon={<TrendingUp />} label="Open positions" value={String(data?.positions.length || 0)} note="Live Delta positions" /><Metric icon={<Clock3 />} label="Open orders" value={String(data?.orders.length || 0)} note="Awaiting fill or cancellation" /></div>{Boolean(data?.riskStrategies.length) && <LiveRisk strategies={data?.riskStrategies || []} />}<DataPanel title="Open positions" icon={<BarChart3 />} rows={data?.positions || []} empty="No open positions" /><DataPanel title="Open orders" icon={<Clock3 />} rows={data?.orders || []} empty="No open orders" action={(row) => { const id = String(row.id ?? row.order_id ?? ""); const productId = Number(row.product_id); if (id && productId) setCancel({ id, productId, symbol: String(row.product_symbol ?? row.symbol ?? id) }); }} /></>}
+    {loading ? <PanelSkeleton /> : <><div className="metric-grid"><Metric icon={<Wallet />} label="Estimated balance" value={balance} note="Across returned assets" /><Metric icon={<TrendingUp />} label="Open positions" value={String(data?.positions.length || 0)} note="Live Delta positions" /><Metric icon={<Clock3 />} label="Open orders" value={String(data?.orders.length || 0)} note="Awaiting fill or cancellation" /></div>{Boolean(data?.riskStrategies.length) && <LiveRisk strategies={data?.riskStrategies || []} />}<DataPanel title="Open positions" icon={<BarChart3 />} rows={data?.positions || []} empty="No open positions" actionLabel="Close" action={(row) => { const productId = Number(row.product_id); if (productId) setClose({ productId, symbol: String(row.product_symbol ?? row.symbol ?? productId), size: String(row.size ?? "") }); }} /><DataPanel title="Open orders" icon={<Clock3 />} rows={data?.orders || []} empty="No open orders" actionLabel="Cancel" action={(row) => { const id = String(row.id ?? row.order_id ?? ""); const productId = Number(row.product_id); if (id && productId) setCancel({ id, productId, symbol: String(row.product_symbol ?? row.symbol ?? id) }); }} /></>}
     {cancel && <ConfirmModal title="Cancel open order?" description={`Order ${cancel.symbol} will be cancelled on Delta Exchange. Filled quantities cannot be reversed.`} confirm="Cancel order" onClose={() => setCancel(null)} onConfirm={() => void cancelOrder()} />}
+    {close && <ConfirmModal title="Close entire position?" description={`${close.symbol} size ${close.size} will be closed with a reduce-only market order. All open orders for this contract will be cancelled first, and the live position will be verified afterward.`} confirm="Close position" onClose={() => setClose(null)} onConfirm={() => void closePosition()} />}
   </div>;
 }
 
 function RunHistory({ onNotice }: { onNotice: (n: { tone: "ok" | "error"; text: string }) => void }) {
-  const [rows, setRows] = useState<StrategyRow[]>([]); const [loading, setLoading] = useState(true); const [cancel, setCancel] = useState<StrategyRow | null>(null);
+  const [rows, setRows] = useState<StrategyRow[]>([]); const [loading, setLoading] = useState(true); const [action, setAction] = useState<{ row: StrategyRow; kind: "cancel" | "exit" } | null>(null);
   const load = useCallback(async () => { setLoading(true); try { const data = await requestJson<{ result: StrategyRow[] }>("/api/strategies"); setRows(data.result); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } finally { setLoading(false); } }, [onNotice]);
   useEffect(() => { void load(); }, [load]);
-  async function cancelStrategy() { if (!cancel) return; try { await requestJson(`/api/strategies/${cancel.id}`, { method: "DELETE" }); onNotice({ tone: "ok", text: `${cancel.name} cancelled.` }); setCancel(null); void load(); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } }
-  return <div><section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy operations</div><h1>Run history</h1><p>Review scheduled, active, completed, and attention-required strategies.</p></div><button className="secondary-button" onClick={() => void load()}><RefreshCw className={loading ? "spin" : ""} />Refresh</button></section><section className="panel run-panel" data-reveal>{loading ? <PanelSkeleton /> : rows.length ? <div className="run-list">{rows.map(row => <article className="run-row" key={row.id}><span className={`status-dot ${row.status}`} /><div><strong>{row.name}</strong><span>Created {formatDateTime(row.createdAt)}</span></div><span className={`status-chip ${row.status}`}>{row.status.replaceAll("_", " ")}</span><div><small>Entry</small><strong>{formatDateTime(row.entryAt)}</strong></div><div><small>Exit</small><strong>{formatDateTime(row.exitAt)}</strong></div>{row.lastError && <span className="row-error" title={row.lastError}><AlertTriangle />Needs attention</span>}<button className="icon-button danger" disabled={!['draft','scheduled'].includes(row.status)} onClick={() => setCancel(row)} aria-label={`Cancel ${row.name}`}><Trash2 /></button></article>)}</div> : <div className="empty-state"><Activity /><h3>No strategy runs yet</h3><p>Saved and scheduled strategies will appear here.</p></div>}</section>{cancel && <ConfirmModal title="Cancel strategy?" description={`${cancel.name} will no longer run. Existing fills, if any, are not reversed.`} confirm="Cancel strategy" onClose={() => setCancel(null)} onConfirm={() => void cancelStrategy()} />}</div>;
+  async function runAction() { if (!action) return; const { row, kind } = action; try { if (kind === "cancel") { await requestJson(`/api/strategies/${row.id}`, { method: "DELETE" }); onNotice({ tone: "ok", text: `${row.name} cancelled before entry.` }); } else { await requestJson(`/api/strategies/${row.id}/exit`, { method: "POST", body: JSON.stringify({ confirm: true }) }); onNotice({ tone: "ok", text: `${row.name} exited and verified on Delta.` }); } setAction(null); void load(); } catch (e) { onNotice({ tone: "error", text: errorMessage(e) }); } }
+  return <div><section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy operations</div><h1>Run history</h1><p>Review scheduled, active, completed, and attention-required strategies.</p></div><button className="secondary-button" onClick={() => void load()}><RefreshCw className={loading ? "spin" : ""} />Refresh</button></section><section className="panel run-panel" data-reveal>{loading ? <PanelSkeleton /> : rows.length ? <div className="run-list">{rows.map(row => { const canCancel = ["draft", "scheduled"].includes(row.status); const canExit = row.status === "active" || (row.status === "attention" && Boolean(row.entryExecutedAt)); return <article className="run-row" key={row.id}><span className={`status-dot ${row.status}`} /><div><strong>{row.name}</strong><span>Created {formatDateTime(row.createdAt)}</span></div><span className={`status-chip ${row.status}`}>{row.status.replaceAll("_", " ")}</span><div><small>Entry</small><strong>{formatDateTime(row.entryAt)}</strong></div><div><small>Exit</small><strong>{formatDateTime(row.exitAt)}</strong></div>{row.lastError && <span className="row-error" title={row.lastError}><AlertTriangle />Needs attention</span>}<button className="icon-button danger" disabled={!canCancel && !canExit} onClick={() => setAction({ row, kind: canCancel ? "cancel" : "exit" })} aria-label={`${canCancel ? "Cancel" : "Exit"} ${row.name}`}>{canExit ? <CircleStop /> : <Trash2 />}</button></article>; })}</div> : <div className="empty-state"><Activity /><h3>No strategy runs yet</h3><p>Saved and scheduled strategies will appear here.</p></div>}</section>{action && <ConfirmModal title={action.kind === "cancel" ? "Cancel scheduled strategy?" : "Exit live strategy?"} description={action.kind === "cancel" ? `${action.row.name} will be cancelled before entry and no orders will be placed.` : `${action.row.name} will cancel its still-open entry orders, submit reduce-only market closes for recorded fills, and verify the live Delta positions.`} confirm={action.kind === "cancel" ? "Cancel strategy" : "Exit strategy"} onClose={() => setAction(null)} onConfirm={() => void runAction()} />}</div>;
 }
 
 function Metric({ icon, label, value, note }: { icon: React.ReactNode; label: string; value: string; note: string }) { return <div className="metric panel" data-reveal><span>{icon}</span><div><small>{label}</small><strong>{value}</strong><p>{note}</p></div></div>; }
@@ -625,24 +648,24 @@ function LiveRisk({ strategies }: { strategies: RiskStrategy[] }) {
 }
 function PanelSkeleton() { return <div className="panel skeleton-wrap"><div className="skeleton wide" /><div className="skeleton" /><div className="skeleton" /><div className="skeleton short" /></div>; }
 
-function DataPanel({ title, icon, rows, empty, action }: { title: string; icon: React.ReactNode; rows: Record<string, unknown>[]; empty: string; action?: (row: Record<string, unknown>) => void }) {
+function DataPanel({ title, icon, rows, empty, action, actionLabel = "Action" }: { title: string; icon: React.ReactNode; rows: Record<string, unknown>[]; empty: string; action?: (row: Record<string, unknown>) => void; actionLabel?: string }) {
   const columns = rows.length ? Object.keys(rows[0]).filter(k => ["symbol","product_symbol","side","size","entry_price","mark_price","limit_price","state","unrealized_pnl","id"].includes(k)).slice(0, 6) : [];
-  return <section className="panel data-panel" data-reveal><div className="panel-title"><div><span className="heading-icon">{icon}</span><div><h2>{title}</h2><p>{rows.length} live {rows.length === 1 ? "record" : "records"}</p></div></div></div>{rows.length ? <div className="table-scroll"><table><thead><tr>{columns.map(c => <th key={c}>{c.replaceAll("_", " ")}</th>)}{action && <th>Action</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map(c => <td key={c}>{formatCell(row[c])}</td>)}{action && <td><button className="text-danger" onClick={() => action(row)}>Cancel</button></td>}</tr>)}</tbody></table></div> : <div className="empty-state compact"><Activity /><h3>{empty}</h3><p>Delta will report new activity here.</p></div>}</section>;
+  return <section className="panel data-panel" data-reveal><div className="panel-title"><div><span className="heading-icon">{icon}</span><div><h2>{title}</h2><p>{rows.length} live {rows.length === 1 ? "record" : "records"}</p></div></div></div>{rows.length ? <div className="table-scroll"><table><thead><tr>{columns.map(c => <th key={c}>{c.replaceAll("_", " ")}</th>)}{action && <th>Action</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map(c => <td key={c}>{formatCell(row[c])}</td>)}{action && <td><button className="text-danger" onClick={() => action(row)}>{actionLabel}</button></td>}</tr>)}</tbody></table></div> : <div className="empty-state compact"><Activity /><h3>{empty}</h3><p>Delta will report new activity here.</p></div>}</section>;
 }
 
 function ConfirmModal({ title, description, confirm, onClose, onConfirm }: { title: string; description: string; confirm: string; onClose: () => void; onConfirm: () => void }) { return <div className="modal-layer" role="dialog" aria-modal="true"><button className="drawer-backdrop" onClick={onClose} aria-label="Close confirmation" /><div className="confirm-modal"><span className="danger-icon"><AlertTriangle /></span><h2>{title}</h2><p>{description}</p><div><button className="ghost-button" onClick={onClose}>Keep it</button><button className="danger-button" onClick={onConfirm}>{confirm}</button></div></div></div>; }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
-function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) { return <Field label={label}><span className="select-wrap"><select value={value} onChange={e => onChange(e.target.value)}>{options.map(o => <option value={o} key={o}>{o.toUpperCase()}</option>)}</select><ChevronDown /></span></Field>; }
-function NumberField({ label, value, min = 0, max, onChange }: { label: string; value: number; min?: number; max?: number; onChange: (v: number) => void }) { return <Field label={label}><input type="number" value={value} min={min} max={max} onChange={e => onChange(Number(e.target.value))} /></Field>; }
-function OptionalNumber({ label, value, onChange }: { label: string; value?: number; onChange: (v?: number) => void }) { return <Field label={label}><input type="number" min="0" step="any" value={value ?? ""} onChange={e => onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Disabled" /></Field>; }
-function Segmented({ label, value, options, onChange, disabled }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
-  return <fieldset className="segmented-field" disabled={disabled}><legend>{label}</legend><div className="t-tabs" role="tablist" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>{options.map(option => <button type="button" role="tab" aria-selected={value === option.value} className="t-tab" key={option.value} onClick={() => onChange(option.value)}>{option.label}</button>)}</div></fieldset>;
+function Field({ label, children, invalid = false }: { label: string; children: React.ReactNode; invalid?: boolean }) { return <label className={`field${invalid ? " invalid" : ""}`} aria-invalid={invalid || undefined}><span>{label}</span>{children}</label>; }
+function Select({ label, value, options, onChange, invalid = false }: { label: string; value: string; options: string[]; onChange: (v: string) => void; invalid?: boolean }) { return <Field label={label} invalid={invalid}><span className="select-wrap"><select value={value} onChange={e => onChange(e.target.value)}>{options.map(o => <option value={o} key={o}>{o.toUpperCase()}</option>)}</select><ChevronDown /></span></Field>; }
+function NumberField({ label, value, min = 0, max, onChange, invalid = false }: { label: string; value: number; min?: number; max?: number; onChange: (v: number) => void; invalid?: boolean }) { return <Field label={label} invalid={invalid}><input type="number" value={value} min={min} max={max} onChange={e => onChange(Number(e.target.value))} /></Field>; }
+function OptionalNumber({ label, value, onChange, invalid = false }: { label: string; value?: number; onChange: (v?: number) => void; invalid?: boolean }) { return <Field label={label} invalid={invalid}><input type="number" min="0" step="any" value={value ?? ""} onChange={e => onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Disabled" /></Field>; }
+function Segmented({ label, value, options, onChange, disabled, invalid = false }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean; invalid?: boolean }) {
+  return <fieldset className={`segmented-field${invalid ? " invalid" : ""}`} aria-invalid={invalid || undefined} disabled={disabled}><legend>{label}</legend><div className="t-tabs" role="tablist" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>{options.map(option => <button type="button" role="tab" aria-selected={value === option.value} className="t-tab" key={option.value} onClick={() => onChange(option.value)}>{option.label}</button>)}</div></fieldset>;
 }
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) { return <label className="toggle-field"><span>{label}</span><button type="button" role="switch" aria-checked={checked} className={checked ? "toggle on" : "toggle"} onClick={() => onChange(!checked)}><i /></button></label>; }
 
-function formatDate(value: string) { return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" }).format(new Date(`${value}T00:00:00`)); }
-function formatDateTime(value: string) { if (!value) return "—"; return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
+function formatDate(value: string) { const date = new Date(`${value}T00:00:00`); return Number.isNaN(date.getTime()) ? "No expiry" : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" }).format(date); }
+function formatDateTime(value: string) { const date = new Date(value); if (!value || Number.isNaN(date.getTime())) return "—"; return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(date); }
 function formatClock(value: string) { return new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value)); }
 function formatCell(value: unknown) { if (value == null) return "—"; if (typeof value === "object") return JSON.stringify(value); return String(value); }
 function totalBalance(rows: unknown[]) { let total = 0; for (const item of rows) { if (item && typeof item === "object") { const r = item as Record<string, unknown>; const value = Number(r.balance ?? r.available_balance ?? r.wallet_balance ?? 0); if (Number.isFinite(value)) total += value; } } return total ? `$${total.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"; }
