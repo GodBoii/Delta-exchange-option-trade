@@ -11,3 +11,8 @@ https://docs.agno.com/tools/creating-tools/overview
 https://docs.agno.com/tools/creating-tools/python-functions
 https://docs.agno.com/input-output/structured-output/agent
 https://docs.agno.com/tools/creating-tools/toolkits
+https://docs.agno.com/database/session-storage
+https://docs.agno.com/database/chat-history
+https://docs.agno.com/database/providers/overview
+https://docs.agno.com/database/overview
+https://docs.agno.com/database/providers/json/overview

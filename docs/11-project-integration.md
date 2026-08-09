@@ -10,6 +10,13 @@ This file documents observed behavior in the current codebase, not intended futu
 - Delta REST/signing client: `backend/app/delta.py`
 - Strike resolution: `backend/app/strategy.py`
 - Entry/exit scheduler and execution: `backend/app/engine.py`
+- Reusable strategy library migration: `supabase/migrations/003_saved_strategy_library.sql`
+
+## Strategy persistence model
+
+Reusable builder definitions live in `public.saved_strategies` and are protected by per-user RLS policies. Names are labels and are deliberately reusable. The browser reads and writes this library with the signed-in Supabase session, so it remains available when the Python trading backend is offline.
+
+Execution records remain in `public.strategies`. Scheduling always inserts a new immutable run UUID and stores the originating reusable definition in `saved_strategy_id`. Deleting a reusable definition sets that link to null and never deletes execution, order, or run history. A browser-local copy of the selected definition is recovery state, not the canonical multi-strategy library.
 
 The backend uses `Settings.delta_production_url`, signs exact compact JSON, sends a `User-Agent`, and exposes products, option ticker discovery, orders, balances, positions, and cancellation.
 
@@ -71,4 +78,3 @@ Alternatively, if the exact intended payoff is available as one live `move_optio
 - No persistent post-entry strategy risk loop exists.
 - No deadman-switch integration is present.
 - The initial UI strategy is currently a long ATM call plus short OTM call, named “BTC intraday spread,” not a short ATM straddle.
-
