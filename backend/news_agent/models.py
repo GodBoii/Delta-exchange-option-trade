@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _normalize_volatility_label(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip().lower().replace("_", "-").replace(" ", "-")
+    return {"medium": "moderate", "medium-high": "high"}.get(normalized, value)
 
 
 class StrictModel(BaseModel):
@@ -81,6 +88,13 @@ class EventAssessment(StrictModel):
     source_urls: list[str] = Field(min_length=1, max_length=10)
     uncertainties: list[str] = Field(default_factory=list, max_length=10)
 
+    @field_validator("volatility_impact", mode="before")
+    @classmethod
+    def normalize_medium_volatility(cls, value: object) -> object:
+        # Smaller free models commonly use the plain-English synonym even when
+        # the generated JSON schema names the middle bucket "moderate".
+        return _normalize_volatility_label(value)
+
 
 class NewsAnalysisReport(StrictModel):
     query: str = Field(min_length=1, max_length=1_000)
@@ -97,3 +111,8 @@ class NewsAnalysisReport(StrictModel):
         default="News analysis is probabilistic research, not a trade instruction or execution signal.",
         max_length=500,
     )
+
+    @field_validator("aggregate_volatility_risk", mode="before")
+    @classmethod
+    def normalize_medium_volatility(cls, value: object) -> object:
+        return _normalize_volatility_label(value)
