@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = 2.0
     max_entry_lateness_seconds: int = 60
+    exit_verify_timeout_seconds: float = 10.0
+    exit_verify_poll_seconds: float = 0.5
     frontend_origins: str = "http://localhost:3000,https://delta-exchange-option-trade.vercel.app"
     frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
     log_level: str = "INFO"
@@ -22,6 +24,16 @@ class Settings(BaseSettings):
     @classmethod
     def validate_poll_interval(cls, value: float) -> float:
         return max(1.0, value)
+
+    @field_validator("exit_verify_timeout_seconds")
+    @classmethod
+    def validate_exit_timeout(cls, value: float) -> float:
+        return max(1.0, value)
+
+    @field_validator("exit_verify_poll_seconds")
+    @classmethod
+    def validate_exit_poll_interval(cls, value: float) -> float:
+        return max(0.1, value)
 
     @property
     def allowed_origins(self) -> list[str]:
