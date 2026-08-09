@@ -159,6 +159,18 @@ async def btcusd_analysis(request: Request) -> dict[str, Any]:
     return response_envelope(None, {"analysis": live["analysis"], "realtime": live["realtime"]})
 
 
+@app.get("/api/market/btcusd/delta")
+async def btcusd_delta_context(request: Request) -> dict[str, Any]:
+    """Return the cached public Delta BTCUSD execution-market snapshot."""
+    live = request.app.state.feed.snapshot()
+    return {
+        "success": True,
+        "symbol": settings.delta_symbol,
+        "source": "Delta Exchange",
+        "deltaContext": live["deltaContext"],
+    }
+
+
 @app.websocket("/ws/market/btcusd")
 async def btcusd_stream(websocket: WebSocket) -> None:
     origin = websocket.headers.get("origin")

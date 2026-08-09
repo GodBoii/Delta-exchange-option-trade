@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     delta_public_base_url: str = "https://api.india.delta.exchange"
     delta_symbol: str = "BTCUSD"
     delta_context_seconds: float = Field(default=5.0, ge=1, le=60)
+    delta_history_seconds: float = Field(default=300.0, ge=60, le=3600)
     market_cache_seconds: float = Field(default=2.0, ge=0.5, le=60)
     market_broadcast_seconds: float = Field(default=0.25, ge=0.1, le=2)
     cvd_window_seconds: int = Field(default=900, ge=60, le=86_400)
