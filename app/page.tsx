@@ -7,12 +7,13 @@ import Link from "next/link";
 import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
   CircleDollarSign, CircleStop, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
-  LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw,
-  Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet,
+  LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw, Save,
+  Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet, FolderOpen,
   WifiOff, X, Zap
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { Json, SavedStrategyRow as SavedStrategyDatabaseRow } from "@/lib/supabase/types";
 import BtcMarketChart from "@/app/components/BtcMarketChart";
 
 type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" };
@@ -21,6 +22,8 @@ type SessionResponse = { success: boolean; authenticated: boolean; connected: bo
 type StrategyRow = { id: string; name: string; status: string; entryAt: string; exitAt: string; entryExecutedAt?: string | null; lastError?: string | null; createdAt: string };
 type RiskStrategy = { id: string; name: string; status: string; riskState: Record<string, unknown>; monitoredAt?: string | null; triggeredAt?: string | null };
 type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[]; riskStrategies: RiskStrategy[] };
+type SavedStrategy = { id: string; name: string; definition: StrategyDefinition; createdAt: string; updatedAt: string };
+type LibraryState = "loading" | "local" | "unsaved" | "saving" | "saved" | "error";
 type Tab = "builder" | "market" | "dashboard" | "runs";
 type BackendStatus = "checking" | "online" | "offline";
 
@@ -51,6 +54,7 @@ const initialStrategy = (): StrategyDefinition => ({
   acknowledgement: true
 });
 const DRAFT_STORAGE_KEY = "delta-strategy-draft-v1";
+const DRAFT_ID_STORAGE_KEY = "delta-strategy-draft-id-v1";
 
 function isStrategyDefinition(value: unknown): value is StrategyDefinition {
   if (!value || typeof value !== "object") return false;
@@ -69,6 +73,40 @@ function hydrateStrategy(strategy: StrategyDefinition): StrategyDefinition {
     riskMode: strategy.riskMode ?? "legwise",
     combinedStopLossPercent: strategy.combinedStopLossPercent ?? undefined,
     emergencyStopLossPercent: strategy.emergencyStopLossPercent ?? undefined
+  };
+}
+
+function refreshExpiredSchedule(strategy: StrategyDefinition): StrategyDefinition {
+  const now = Date.now();
+  const entryAt = new Date(strategy.entry.entryAt).getTime();
+  const exitAt = new Date(strategy.entry.exitAt).getTime();
+  if (Number.isFinite(entryAt) && Number.isFinite(exitAt) && entryAt > now && exitAt > entryAt) return strategy;
+  const freshEntryAt = iso(localDateTime(1));
+  const freshEntryMs = new Date(freshEntryAt).getTime();
+  const previousDuration = Number.isFinite(entryAt) && Number.isFinite(exitAt) && exitAt > entryAt
+    ? exitAt - entryAt
+    : 7 * 3600000;
+  return {
+    ...strategy,
+    entry: {
+      ...strategy.entry,
+      entryAt: freshEntryAt,
+      exitAt: new Date(freshEntryMs + Math.max(previousDuration, 3600000)).toISOString()
+    }
+  };
+}
+
+const strategyFingerprint = (strategy: StrategyDefinition) => JSON.stringify(strategy);
+
+function savedStrategyFromRow(row: SavedStrategyDatabaseRow): SavedStrategy | null {
+  const definition = row.definition_json as unknown;
+  if (!isStrategyDefinition(definition)) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    definition: hydrateStrategy(definition),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }
 
@@ -246,7 +284,7 @@ export default function Home() {
           </header>
           <main className="workspace">
             {notice && <Toast tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Toast>}
-            {tab === "builder" && <StrategyBuilder onNotice={setNotice} liveEnabled />}
+            {tab === "builder" && <StrategyBuilder userId={user!.id} onNotice={setNotice} liveEnabled />}
             {tab === "market" && <BtcMarketChart />}
             {tab === "dashboard" && <Dashboard onNotice={setNotice} />}
             {tab === "runs" && <RunHistory onNotice={setNotice} />}
@@ -396,7 +434,7 @@ function DesignWorkspace({ user, notice, onNotice, onClearNotice, onRetry, onSig
     <main className="workspace">
       {notice && <Toast tone={notice.tone} onClose={onClearNotice}>{notice.text}</Toast>}
       <section className="backend-banner" role="status"><WifiOff /><div><strong>Trading backend is not connected</strong><p>You can design and export strategies here. Start Docker and open the local frontend to resolve contracts, connect Delta, schedule, or execute.</p></div><button className="secondary-button" onClick={() => void onRetry()}><RefreshCw />Retry connection</button></section>
-      <StrategyBuilder onNotice={onNotice} liveEnabled={false} />
+      <StrategyBuilder userId={user.id} onNotice={onNotice} liveEnabled={false} />
     </main>
   </>;
 }
@@ -442,14 +480,70 @@ function ConnectView({ user, onConnected, onSignOut }: { user: AppUser; onConnec
   </main>;
 }
 
-function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok" | "error"; text: string }) => void; liveEnabled: boolean }) {
+function StrategyBuilder({ userId, onNotice, liveEnabled }: { userId: string; onNotice: (n: { tone: "ok" | "error"; text: string }) => void; liveEnabled: boolean }) {
   const [strategy, setStrategy] = useState<StrategyDefinition>(initialStrategy);
   const [expanded, setExpanded] = useState<string | null>(strategy.legs[0].id);
+  const [confirmNewStrategy, setConfirmNewStrategy] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState("");
   const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
   const [draftReady, setDraftReady] = useState(false);
+  const [libraryReady, setLibraryReady] = useState(false);
+  const [savedStrategies, setSavedStrategies] = useState<SavedStrategy[]>([]);
+  const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
+  const [lastSavedFingerprint, setLastSavedFingerprint] = useState("");
+  const [libraryState, setLibraryState] = useState<LibraryState>("loading");
+  const [confirmDeleteStrategy, setConfirmDeleteStrategy] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
+
+  const persistStrategyDefinition = useCallback(async (
+    definition: StrategyDefinition,
+    savedId: string | null,
+    notify = false
+  ): Promise<SavedStrategy | null> => {
+    const trimmedName = definition.name.trim();
+    if (trimmedName.length < 2) {
+      setInvalidFields(fields => new Set(fields).add("name"));
+      setError("Enter a strategy name with at least 2 characters before saving.");
+      setLibraryState("unsaved");
+      return null;
+    }
+    const normalized = { ...definition, name: trimmedName };
+    setLibraryState("saving");
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const fields = "id,user_id,name,definition_json,source_run_id,created_at,updated_at";
+      const { data, error: saveError } = savedId
+        ? await supabase.from("saved_strategies")
+          .update({ name: trimmedName, definition_json: normalized as unknown as Json })
+          .eq("id", savedId)
+          .eq("user_id", userId)
+          .select(fields)
+          .single()
+        : await supabase.from("saved_strategies")
+          .insert({ user_id: userId, name: trimmedName, definition_json: normalized as unknown as Json })
+          .select(fields)
+          .single();
+      if (saveError) throw saveError;
+      const saved = savedStrategyFromRow(data as SavedStrategyDatabaseRow);
+      if (!saved) throw new Error("Supabase returned an invalid saved strategy.");
+      setSavedStrategies(current => [saved, ...current.filter(item => item.id !== saved.id)]
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
+      setActiveSavedId(saved.id);
+      setLastSavedFingerprint(strategyFingerprint(saved.definition));
+      setLibraryState("saved");
+      setError("");
+      if (trimmedName !== definition.name) setStrategy(normalized);
+      if (notify) onNotice({ tone: "ok", text: `${trimmedName} saved to your strategy library.` });
+      return saved;
+    } catch (saveError) {
+      const message = `Could not save the strategy library: ${errorMessage(saveError)}`;
+      setLibraryState("error");
+      setError(message);
+      if (notify) onNotice({ tone: "error", text: message });
+      return null;
+    }
+  }, [onNotice, userId]);
 
   useEffect(() => {
     try {
@@ -470,6 +564,84 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
   }, [draftReady, strategy]);
 
   useEffect(() => {
+    if (!draftReady) return;
+    let cancelled = false;
+    async function loadSavedStrategies() {
+      setLibraryState("loading");
+      try {
+        const pageSize = 500;
+        const allRows: SavedStrategyDatabaseRow[] = [];
+        for (let from = 0; ; from += pageSize) {
+          const { data, error: loadError } = await getSupabaseBrowserClient()
+            .from("saved_strategies")
+            .select("id,user_id,name,definition_json,source_run_id,created_at,updated_at")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false })
+            .range(from, from + pageSize - 1);
+          if (loadError) throw loadError;
+          const page = (data ?? []) as SavedStrategyDatabaseRow[];
+          allRows.push(...page);
+          if (page.length < pageSize) break;
+        }
+        if (cancelled) return;
+        const rows = allRows
+          .map(savedStrategyFromRow)
+          .filter((item): item is SavedStrategy => item !== null);
+        setSavedStrategies(rows);
+        const cachedId = localStorage.getItem(DRAFT_ID_STORAGE_KEY);
+        const selected = rows.find(item => item.id === cachedId) ?? rows[0];
+        if (selected) {
+          const cached = localStorage.getItem(DRAFT_STORAGE_KEY);
+          let cachedDefinition: StrategyDefinition | null = null;
+          if (cachedId === selected.id && cached) {
+            try {
+              const parsed = JSON.parse(cached) as unknown;
+              if (isStrategyDefinition(parsed)) cachedDefinition = hydrateStrategy(parsed);
+            } catch { /* The local draft effect already handles invalid cache data. */ }
+          }
+          const selectedDefinition = refreshExpiredSchedule(cachedDefinition ?? selected.definition);
+          setActiveSavedId(selected.id);
+          setStrategy(selectedDefinition);
+          setExpanded(selectedDefinition.legs[0]?.id ?? null);
+          setLastSavedFingerprint(strategyFingerprint(selected.definition));
+          setLibraryState(strategyFingerprint(selectedDefinition) === strategyFingerprint(selected.definition) ? "saved" : "unsaved");
+        } else {
+          setLibraryState("local");
+        }
+      } catch (loadError) {
+        if (cancelled) return;
+        setLibraryState("error");
+        onNotice({ tone: "error", text: `Saved strategies are unavailable. Run migration 003, then retry: ${errorMessage(loadError)}` });
+      } finally {
+        if (!cancelled) setLibraryReady(true);
+      }
+    }
+    void loadSavedStrategies();
+    return () => { cancelled = true; };
+  }, [draftReady, onNotice, userId]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    if (activeSavedId) localStorage.setItem(DRAFT_ID_STORAGE_KEY, activeSavedId);
+    else localStorage.removeItem(DRAFT_ID_STORAGE_KEY);
+  }, [activeSavedId, draftReady]);
+
+  useEffect(() => {
+    if (!libraryReady || !activeSavedId) return;
+    const fingerprint = strategyFingerprint(strategy);
+    if (fingerprint === lastSavedFingerprint) {
+      setLibraryState("saved");
+      return;
+    }
+    setLibraryState("unsaved");
+    if (strategy.name.trim().length < 2) return;
+    const timer = window.setTimeout(() => {
+      void persistStrategyDefinition(strategy, activeSavedId);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [activeSavedId, lastSavedFingerprint, libraryReady, persistStrategyDefinition, strategy]);
+
+  useEffect(() => {
     if (invalidFields.size) setInvalidFields(strategyValidation(strategy).fields);
   }, [strategy, invalidFields.size]);
 
@@ -478,6 +650,88 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
   const duplicateLeg = (id: string) => setStrategy(s => s.legs.length >= 12 ? s : ({ ...s, legs: s.legs.flatMap(l => l.id === id ? [l, { ...l, id: uid() }] : [l]) }));
   const moveLeg = (index: number, direction: -1 | 1) => setStrategy(s => { const legs = [...s.legs]; const target = index + direction; if (target < 0 || target >= legs.length) return s; [legs[index], legs[target]] = [legs[target], legs[index]]; return { ...s, legs }; });
   const addLeg = () => { if (strategy.legs.length >= 12) return; const leg = newLeg({ expiry: strategy.legs[0]?.expiry || today() }); setStrategy(s => ({ ...s, legs: [...s.legs, leg] })); setExpanded(leg.id); };
+
+  async function startNewStrategy() {
+    if (activeSavedId && strategyFingerprint(strategy) !== lastSavedFingerprint) {
+      const currentSaved = await persistStrategyDefinition(strategy, activeSavedId);
+      if (!currentSaved) return;
+    }
+    const freshStrategy = initialStrategy();
+    const saved = await persistStrategyDefinition(freshStrategy, null);
+    if (!saved) return;
+    setStrategy(freshStrategy);
+    setExpanded(freshStrategy.legs[0]?.id ?? null);
+    setInvalidFields(new Set());
+    setError("");
+    setConfirmNewStrategy(false);
+    onNotice({ tone: "ok", text: "New strategy created and saved. Strategy names can be reused." });
+  }
+
+  async function saveCurrentStrategy(notify = true) {
+    return await persistStrategyDefinition(strategy, activeSavedId, notify);
+  }
+
+  async function switchSavedStrategy(savedId: string) {
+    if (savedId === activeSavedId) return;
+    if (activeSavedId && strategyFingerprint(strategy) !== lastSavedFingerprint) {
+      const currentSaved = await persistStrategyDefinition(strategy, activeSavedId);
+      if (!currentSaved) return;
+    } else if (!activeSavedId && strategy.name.trim().length >= 2) {
+      const localSaved = await persistStrategyDefinition(strategy, null);
+      if (!localSaved) return;
+    }
+    const selected = savedStrategies.find(item => item.id === savedId);
+    if (!selected) return;
+    const selectedDefinition = refreshExpiredSchedule(selected.definition);
+    setActiveSavedId(selected.id);
+    setStrategy(selectedDefinition);
+    setExpanded(selectedDefinition.legs[0]?.id ?? null);
+    setInvalidFields(new Set());
+    setError("");
+    setLastSavedFingerprint(strategyFingerprint(selected.definition));
+    setLibraryState(strategyFingerprint(selectedDefinition) === strategyFingerprint(selected.definition) ? "saved" : "unsaved");
+  }
+
+  async function deleteCurrentSavedStrategy() {
+    if (!activeSavedId) return;
+    const deletedId = activeSavedId;
+    setLibraryState("saving");
+    try {
+      const { error: deleteError } = await getSupabaseBrowserClient()
+        .from("saved_strategies")
+        .delete()
+        .eq("id", deletedId)
+        .eq("user_id", userId);
+      if (deleteError) throw deleteError;
+      const remaining = savedStrategies.filter(item => item.id !== deletedId);
+      setSavedStrategies(remaining);
+      const next = remaining[0];
+      if (next) {
+        const nextDefinition = refreshExpiredSchedule(next.definition);
+        setActiveSavedId(next.id);
+        setStrategy(nextDefinition);
+        setExpanded(nextDefinition.legs[0]?.id ?? null);
+        setLastSavedFingerprint(strategyFingerprint(next.definition));
+        setLibraryState(strategyFingerprint(nextDefinition) === strategyFingerprint(next.definition) ? "saved" : "unsaved");
+      } else {
+        const freshStrategy = initialStrategy();
+        setActiveSavedId(null);
+        setStrategy(freshStrategy);
+        setExpanded(freshStrategy.legs[0]?.id ?? null);
+        setLastSavedFingerprint("");
+        setLibraryState("local");
+      }
+      setConfirmDeleteStrategy(false);
+      setInvalidFields(new Set());
+      setError("");
+      onNotice({ tone: "ok", text: "Saved strategy deleted. Its run history was not changed." });
+    } catch (deleteError) {
+      const message = `Could not delete the saved strategy: ${errorMessage(deleteError)}`;
+      setLibraryState("error");
+      setError(message);
+      onNotice({ tone: "error", text: message });
+    }
+  }
 
   async function scheduleStrategy() {
     if (!liveEnabled) {
@@ -498,9 +752,11 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
     }
     setExecuting(true); setError(""); setInvalidFields(new Set());
     try {
-      const liveStrategy = { ...strategy, acknowledgement: true as const };
-      await requestJson<{ result: { id: string } }>("/api/strategies", { method: "POST", body: JSON.stringify({ strategy: liveStrategy, status: "scheduled" }) });
-      onNotice({ tone: "ok", text: `Strategy scheduled for ${formatDateTime(strategy.entry.entryAt)}. It will not execute before that time.` });
+      const saved = await saveCurrentStrategy(false);
+      if (!saved) return;
+      const liveStrategy = { ...saved.definition, acknowledgement: true as const };
+      await requestJson<{ result: { id: string } }>("/api/strategies", { method: "POST", body: JSON.stringify({ strategy: liveStrategy, status: "scheduled", savedStrategyId: saved.id }) });
+      onNotice({ tone: "ok", text: `Strategy scheduled for ${formatDateTime(liveStrategy.entry.entryAt)}. It will not execute before that time.` });
     } catch (err) { setError(errorMessage(err)); }
     finally { setExecuting(false); }
   }
@@ -522,15 +778,30 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
       const parsed = JSON.parse(await file.text()) as unknown;
       const candidate = parsed && typeof parsed === "object" && "strategy" in parsed ? (parsed as { strategy: unknown }).strategy : parsed;
       if (!isStrategyDefinition(candidate)) throw new Error("This file is not a valid Delta strategy draft.");
-      setStrategy(hydrateStrategy(candidate)); setExpanded(candidate.legs[0]?.id ?? null); setInvalidFields(new Set()); setError("");
-      onNotice({ tone: "ok", text: "Strategy draft imported successfully." });
+      const imported = hydrateStrategy(candidate);
+      setActiveSavedId(null); setLastSavedFingerprint(""); setLibraryState("local");
+      setStrategy(imported); setExpanded(imported.legs[0]?.id ?? null); setInvalidFields(new Set()); setError("");
+      onNotice({ tone: "ok", text: "Strategy imported as a new local draft. Choose Save strategy to add it to your library." });
     } catch (importError) { onNotice({ tone: "error", text: errorMessage(importError) }); }
     finally { if (importInput.current) importInput.current.value = ""; }
   }
 
+  const activeSavedStrategy = savedStrategies.find(item => item.id === activeSavedId) ?? null;
+  const libraryStatus = libraryState === "loading" ? "Loading library"
+    : libraryState === "saving" ? "Saving to Supabase"
+      : libraryState === "saved" ? "Saved to Supabase"
+        : libraryState === "unsaved" ? "Unsaved changes"
+          : libraryState === "error" ? "Library error"
+            : "Local draft only";
+
   return <div className="builder-page">
-    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy configuration</div><h1>Strategy builder</h1><p>Configure positions, timing, and risk controls.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Local draft</span><small>Saved on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
-    <div className="strategy-name-row panel" data-reveal><Field label="Strategy name" invalid={invalidFields.has("name")}><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
+    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy configuration</div><h1>Strategy builder</h1><p>Create, save, switch, and schedule reusable option strategies.</p></div><div className="draft-toolbar"><div className="draft-state"><span>{libraryStatus}</span><small>Browser recovery copy enabled</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
+    <section className="strategy-library panel" data-reveal>
+      <div className="library-heading"><span className="heading-icon"><FolderOpen /></span><div><h2>Saved strategies</h2><p>{savedStrategies.length} {savedStrategies.length === 1 ? "strategy" : "strategies"} in your private Supabase library</p></div></div>
+      <label className="library-select"><span>Current strategy</span><span className="select-wrap"><select aria-label="Current saved strategy" value={activeSavedId ?? ""} disabled={libraryState === "loading" || libraryState === "saving"} onChange={event => void switchSavedStrategy(event.target.value)}>{!activeSavedId && <option value="">Unsaved local draft</option>}{savedStrategies.map(item => <option key={item.id} value={item.id}>{item.name} · {formatDateTime(item.updatedAt)}</option>)}</select><ChevronDown /></span></label>
+      <div className="library-actions"><span className={`library-status ${libraryState}`}><i />{libraryStatus}</span><button className="ghost-button" onClick={() => setConfirmDeleteStrategy(true)} disabled={!activeSavedStrategy || libraryState === "saving"}><Trash2 />Delete</button><button className="secondary-button" onClick={() => void saveCurrentStrategy()} disabled={libraryState === "loading" || libraryState === "saving"}><Save />Save strategy</button><button className="primary-button" onClick={() => setConfirmNewStrategy(true)} disabled={libraryState === "loading" || libraryState === "saving" || executing}><Plus />New strategy</button></div>
+    </section>
+    <div className="strategy-name-row panel" data-reveal><Field label="Strategy name" hint="Names can be reused. Every schedule creates a separate strategy run." invalid={invalidFields.has("name")}><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
     <div className="settings-grid">
       <SettingsPanel icon={<CircleDollarSign />} title="Instrument settings" description="Choose the contract family and price source.">
         <div className="field-grid two"><Select label="Index" value={strategy.instrument.index} onChange={v => setStrategy({ ...strategy, instrument: { ...strategy.instrument, index: v as "BTCUSD" | "ETHUSD", underlying: v === "BTCUSD" ? "BTC" : "ETH" } })} options={["BTCUSD", "ETHUSD"]} /><Segmented label="Underlying from" value={strategy.instrument.underlyingFrom} onChange={v => setStrategy({ ...strategy, instrument: { ...strategy.instrument, underlyingFrom: v as "cash" | "futures" } })} options={[{ value: "cash", label: "Cash" }, { value: "futures", label: "Futures" }]} /></div>
@@ -554,6 +825,8 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
       <div className="live-execution-copy"><ShieldCheck /><p><strong>Scheduled execution</strong><small>Orders are sent only when the configured entry time is reached.</small></p></div>
       <div>{error && <span className="action-error" role="alert"><AlertTriangle />{error}</span>}<button className={liveEnabled ? "primary-button" : "secondary-button"} disabled={executing || !liveEnabled} onClick={scheduleStrategy}>{executing ? <LoaderCircle className="spin" /> : liveEnabled ? <Clock3 /> : <WifiOff />}{executing ? "Scheduling strategy" : liveEnabled ? "Schedule strategy" : "Local backend required"}</button></div>
     </footer>
+    {confirmNewStrategy && <ConfirmModal tone="neutral" title="Create a new strategy?" description="Your current saved strategy is kept, and a new short-straddle strategy with fresh entry and exit times is added to the library. Strategy names may be reused." cancel="Keep editing" confirm="Create strategy" onClose={() => setConfirmNewStrategy(false)} onConfirm={() => void startNewStrategy()} />}
+    {confirmDeleteStrategy && activeSavedStrategy && <ConfirmModal title="Delete saved strategy?" description={`${activeSavedStrategy.name} will be removed from your reusable library. Scheduled, active, and historical runs remain unchanged.`} cancel="Keep strategy" confirm="Delete saved strategy" onClose={() => setConfirmDeleteStrategy(false)} onConfirm={() => void deleteCurrentSavedStrategy()} />}
   </div>;
 }
 
@@ -657,9 +930,9 @@ function DataPanel({ title, icon, rows, empty, action, actionLabel = "Action" }:
   return <section className="panel data-panel" data-reveal><div className="panel-title"><div><span className="heading-icon">{icon}</span><div><h2>{title}</h2><p>{rows.length} live {rows.length === 1 ? "record" : "records"}</p></div></div></div>{rows.length ? <div className="table-scroll"><table><thead><tr>{columns.map(c => <th key={c}>{c.replaceAll("_", " ")}</th>)}{action && <th>Action</th>}</tr></thead><tbody>{rows.map((row, index) => <tr key={String(row.id ?? index)}>{columns.map(c => <td key={c}>{formatCell(row[c])}</td>)}{action && <td><button className="text-danger" onClick={() => action(row)}>{actionLabel}</button></td>}</tr>)}</tbody></table></div> : <div className="empty-state compact"><Activity /><h3>{empty}</h3><p>Delta will report new activity here.</p></div>}</section>;
 }
 
-function ConfirmModal({ title, description, confirm, onClose, onConfirm }: { title: string; description: string; confirm: string; onClose: () => void; onConfirm: () => void }) { return <div className="modal-layer" role="dialog" aria-modal="true"><button className="drawer-backdrop" onClick={onClose} aria-label="Close confirmation" /><div className="confirm-modal"><span className="danger-icon"><AlertTriangle /></span><h2>{title}</h2><p>{description}</p><div><button className="ghost-button" onClick={onClose}>Keep it</button><button className="danger-button" onClick={onConfirm}>{confirm}</button></div></div></div>; }
+function ConfirmModal({ title, description, confirm, cancel = "Keep it", tone = "danger", onClose, onConfirm }: { title: string; description: string; confirm: string; cancel?: string; tone?: "danger" | "neutral"; onClose: () => void; onConfirm: () => void }) { return <div className="modal-layer" role="dialog" aria-modal="true"><button className="drawer-backdrop" onClick={onClose} aria-label="Close confirmation" /><div className="confirm-modal"><span className={tone === "danger" ? "danger-icon" : "neutral-icon"}>{tone === "danger" ? <AlertTriangle /> : <Plus />}</span><h2>{title}</h2><p>{description}</p><div><button className="ghost-button" onClick={onClose}>{cancel}</button><button className={tone === "danger" ? "danger-button" : "primary-button"} onClick={onConfirm}>{confirm}</button></div></div></div>; }
 
-function Field({ label, children, invalid = false }: { label: string; children: React.ReactNode; invalid?: boolean }) { return <label className={`field${invalid ? " invalid" : ""}`} aria-invalid={invalid || undefined}><span>{label}</span>{children}</label>; }
+function Field({ label, hint, children, invalid = false }: { label: string; hint?: string; children: React.ReactNode; invalid?: boolean }) { return <label className={`field${invalid ? " invalid" : ""}`} aria-invalid={invalid || undefined}><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>; }
 function Select({ label, value, options, onChange, invalid = false }: { label: string; value: string; options: string[]; onChange: (v: string) => void; invalid?: boolean }) { return <Field label={label} invalid={invalid}><span className="select-wrap"><select value={value} onChange={e => onChange(e.target.value)}>{options.map(o => <option value={o} key={o}>{o.toUpperCase()}</option>)}</select><ChevronDown /></span></Field>; }
 function NumberField({ label, value, min = 0, max, onChange, invalid = false }: { label: string; value: number; min?: number; max?: number; onChange: (v: number) => void; invalid?: boolean }) { return <Field label={label} invalid={invalid}><input type="number" value={value} min={min} max={max} onChange={e => onChange(Number(e.target.value))} /></Field>; }
 function OptionalNumber({ label, value, onChange, invalid = false }: { label: string; value?: number; onChange: (v?: number) => void; invalid?: boolean }) { return <Field label={label} invalid={invalid}><input type="number" min="0" step="any" value={value ?? ""} onChange={e => onChange(e.target.value === "" ? undefined : Number(e.target.value))} placeholder="Disabled" /></Field>; }
