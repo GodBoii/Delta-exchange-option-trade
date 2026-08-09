@@ -231,7 +231,7 @@ export default function Home() {
             <Brand />
             <nav className={mobileNav ? "main-nav open" : "main-nav"} aria-label="Primary navigation">
               <NavButton active={tab === "builder"} icon={<Layers3 />} onClick={() => { setTab("builder"); setMobileNav(false); }}>Strategy builder</NavButton>
-              <NavButton active={tab === "market"} icon={<BarChart3 />} onClick={() => { setTab("market"); setMobileNav(false); }}>BTC market</NavButton>
+              <NavButton active={tab === "market"} icon={<BarChart3 />} onClick={() => { setTab("market"); setMobileNav(false); }}>Market analysis</NavButton>
               <NavButton active={tab === "dashboard"} icon={<LayoutDashboard />} onClick={() => { setTab("dashboard"); setMobileNav(false); }}>Dashboard</NavButton>
               <NavButton active={tab === "runs"} icon={<Activity />} onClick={() => { setTab("runs"); setMobileNav(false); }}>Run history</NavButton>
             </nav>
@@ -329,7 +329,7 @@ function AuthView({ onAuthenticated }: { onAuthenticated: () => Promise<void> })
   }
 
   return <main className="connect-shell auth-shell" ref={panel}>
-    <header className="connect-header"><Brand /><div className="auth-header-actions"><Link href="/market"><BarChart3 /> BTC spot analysis</Link><span className="auth-trust"><ShieldCheck /> Secure client access</span></div></header>
+    <header className="connect-header"><Brand /><div className="auth-header-actions"><Link href="/market"><BarChart3 /> Market analysis</Link><span className="auth-trust"><ShieldCheck /> Secure client access</span></div></header>
     <div className="auth-grid">
       <section className="auth-copy">
         <div className="eyebrow"><span /> Professional strategy operations</div>
@@ -360,7 +360,7 @@ function AuthView({ onAuthenticated }: { onAuthenticated: () => Promise<void> })
 }
 
 function Brand() {
-  return <div className="brand" aria-label="Delta Strategy Desk"><span className="brand-mark"><i /><i /><i /></span><span><strong>Delta</strong><small>Strategy Desk</small></span></div>;
+  return <div className="brand" aria-label="Trade Cognition"><span className="brand-mark"><i /><i /><i /></span><span><strong>Trade Cognition</strong><small>Delta workspace</small></span></div>;
 }
 
 function LoadingScreen() {
@@ -529,7 +529,7 @@ function StrategyBuilder({ onNotice, liveEnabled }: { onNotice: (n: { tone: "ok"
   }
 
   return <div className="builder-page">
-    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy workspace</div><h1>Two legs. One risk limit.</h1><p>Build, protect, execute.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Browser draft</span><small>Saved on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
+    <section className="page-heading" data-reveal><div><div className="eyebrow"><span /> Strategy configuration</div><h1>Strategy builder</h1><p>Configure positions, timing, and risk controls.</p></div><div className="draft-toolbar"><div className="draft-state"><span>Local draft</span><small>Saved on this device</small></div><div><button className="ghost-button" onClick={() => importInput.current?.click()}><Upload />Import</button><button className="secondary-button" onClick={exportDraft}><Download />Export</button><input ref={importInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={event => void importDraft(event.target.files?.[0])} /></div></div></section>
     <div className="strategy-name-row panel" data-reveal><Field label="Strategy name" invalid={invalidFields.has("name")}><input value={strategy.name} maxLength={80} onChange={e => setStrategy({ ...strategy, name: e.target.value })} /></Field><div className="builder-summary"><span><strong>{strategy.legs.length}</strong> legs</span><span><strong>{strategy.legs.reduce((n, l) => n + l.lots, 0)}</strong> total lots</span><span><strong>{strategy.instrument.index}</strong> index</span></div></div>
     <div className="settings-grid">
       <SettingsPanel icon={<CircleDollarSign />} title="Instrument settings" description="Choose the contract family and price source.">
