@@ -211,9 +211,9 @@ export default function BtcMarketChart() {
   return <div className="market-page">
     <section className="page-heading market-heading" data-reveal>
       <div>
-        <div className="eyebrow"><span /> Binance Spot · real-time analysis</div>
-        <h1>BTC spot intelligence</h1>
-        <p>Streaming trades, liquidity, candles, volatility, and market structure for Delta trade analysis.</p>
+        <div className="eyebrow"><span /> Deep data analysis</div>
+        <h1>Market analysis</h1>
+        <p>Order flow, liquidity, volatility, and market structure in real time.</p>
       </div>
       <button className="secondary-button" onClick={() => void load()} disabled={loading}>
         <RefreshCw className={loading ? "spin" : ""} />Refresh
