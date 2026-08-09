@@ -8,13 +8,14 @@ import {
   Activity, AlertTriangle, ArrowDown, ArrowUp, BarChart3, Bell, Check, ChevronDown,
   CircleDollarSign, CircleStop, Clock3, Copy, Download, GripVertical, KeyRound, Layers3,
   LayoutDashboard, LoaderCircle, LockKeyhole, LogOut, Menu, Plus, RefreshCw, Save,
-  Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet, FolderOpen,
+  Shield, ShieldCheck, Trash2, TrendingUp, Upload, Wallet, FolderOpen, Newspaper,
   WifiOff, X, Zap
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { Json, SavedStrategyRow as SavedStrategyDatabaseRow } from "@/lib/supabase/types";
 import BtcMarketChart from "@/app/components/BtcMarketChart";
+import NewsAnalysis from "@/app/components/NewsAnalysis";
 
 type Account = { id: string; accountName?: string | null; email?: string | null; environment: "production" };
 type AppUser = { id: string; email?: string | null; displayName?: string | null; avatarUrl?: string | null };
@@ -24,7 +25,7 @@ type RiskStrategy = { id: string; name: string; status: string; riskState: Recor
 type Overview = { balances: unknown[]; orders: Record<string, unknown>[]; positions: Record<string, unknown>[]; riskStrategies: RiskStrategy[] };
 type SavedStrategy = { id: string; name: string; definition: StrategyDefinition; createdAt: string; updatedAt: string };
 type LibraryState = "loading" | "local" | "unsaved" | "saving" | "saved" | "error";
-type Tab = "builder" | "market" | "dashboard" | "runs";
+type Tab = "builder" | "market" | "news" | "dashboard" | "runs";
 type BackendStatus = "checking" | "online" | "offline";
 
 const today = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -270,6 +271,7 @@ export default function Home() {
             <nav className={mobileNav ? "main-nav open" : "main-nav"} aria-label="Primary navigation">
               <NavButton active={tab === "builder"} icon={<Layers3 />} onClick={() => { setTab("builder"); setMobileNav(false); }}>Strategy builder</NavButton>
               <NavButton active={tab === "market"} icon={<BarChart3 />} onClick={() => { setTab("market"); setMobileNav(false); }}>Market analysis</NavButton>
+              <NavButton active={tab === "news"} icon={<Newspaper />} onClick={() => { setTab("news"); setMobileNav(false); }}>News intelligence</NavButton>
               <NavButton active={tab === "dashboard"} icon={<LayoutDashboard />} onClick={() => { setTab("dashboard"); setMobileNav(false); }}>Dashboard</NavButton>
               <NavButton active={tab === "runs"} icon={<Activity />} onClick={() => { setTab("runs"); setMobileNav(false); }}>Run history</NavButton>
             </nav>
@@ -286,6 +288,7 @@ export default function Home() {
             {notice && <Toast tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Toast>}
             {tab === "builder" && <StrategyBuilder userId={user!.id} onNotice={setNotice} liveEnabled />}
             {tab === "market" && <BtcMarketChart />}
+            {tab === "news" && <NewsAnalysis request={requestJson} />}
             {tab === "dashboard" && <Dashboard onNotice={setNotice} />}
             {tab === "runs" && <RunHistory onNotice={setNotice} />}
           </main>
