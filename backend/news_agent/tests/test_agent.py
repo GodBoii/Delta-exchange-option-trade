@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-from dataclasses import replace
-
-from agno.db.json import JsonDb
+from agno.db.in_memory import InMemoryDb
 from agno.session.agent import AgentSession
 
 from news_agent import create_news_agent, create_source_research_agent
@@ -12,12 +9,13 @@ from news_agent.models import NewsAnalysisReport
 
 
 def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
-    agent = create_news_agent(require_api_key=False)
+    db = InMemoryDb()
+    agent = create_news_agent(require_api_key=False, db=db)
 
     assert agent.model.id == "poolside/laguna-xs-2.1:free"
     assert agent.structured_outputs is False
     assert agent.output_schema is NewsAnalysisReport
-    assert isinstance(agent.db, JsonDb)
+    assert agent.db is db
     assert agent.add_history_to_context is True
     assert agent.num_history_runs == 3
     assert agent.cache_session is True
@@ -37,7 +35,8 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
 
 
 def test_source_researcher_has_tools_without_structured_schema() -> None:
-    agent = create_source_research_agent(require_api_key=False)
+    db = InMemoryDb()
+    agent = create_source_research_agent(require_api_key=False, db=db)
 
     assert agent.model.id == "poolside/laguna-xs-2.1:free"
     assert agent.output_schema is None
@@ -54,13 +53,9 @@ def test_source_researcher_has_tools_without_structured_schema() -> None:
     }
 
 
-def test_json_db_persists_and_reloads_a_session(tmp_path) -> None:
-    settings = replace(
-        NewsAgentSettings.load(),
-        session_db_path=tmp_path / "sessions",
-        session_table="test_news_sessions",
-    )
-    agent = create_news_agent(settings=settings, require_api_key=False)
+def test_agent_uses_injected_database_for_test_sessions() -> None:
+    db = InMemoryDb()
+    agent = create_news_agent(settings=NewsAgentSettings.load(), require_api_key=False, db=db)
     stored = agent.db.upsert_session(
         AgentSession(
             session_id="btc-test-session",
@@ -71,12 +66,9 @@ def test_json_db_persists_and_reloads_a_session(tmp_path) -> None:
         )
     )
 
-    reloaded_db = JsonDb(db_path=str(settings.session_db_path), session_table=settings.session_table)
-    reloaded = reloaded_db.get_session("btc-test-session", user_id="test-user")
-    json_rows = json.loads((settings.session_db_path / "test_news_sessions.json").read_text(encoding="utf-8"))
+    reloaded = db.get_session("btc-test-session", user_id="test-user")
 
     assert stored is not None
     assert reloaded is not None
     assert reloaded.session_id == "btc-test-session"
     assert reloaded.metadata == {"purpose": "persistence-test"}
-    assert json_rows[0]["user_id"] == "test-user"

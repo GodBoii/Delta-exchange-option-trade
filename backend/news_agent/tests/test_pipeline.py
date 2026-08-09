@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+from agno.db.in_memory import InMemoryDb
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 
@@ -41,7 +42,7 @@ def test_pipeline_uses_separate_persisted_session_ids(monkeypatch) -> None:
     monkeypatch.setattr("news_agent.pipeline.create_source_research_agent", lambda **_: researcher)
     monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
 
-    result = run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice")
+    result = run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice", db=InMemoryDb())
 
     assert result.report is report
     assert result.research_tools == ["search_news"]
