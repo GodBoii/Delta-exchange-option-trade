@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, field_validator, model_validator
 
@@ -98,6 +99,7 @@ class ConnectRequest(StrictModel):
 class SaveStrategyRequest(StrictModel):
     strategy: StrategyDefinition
     status: Literal["draft", "scheduled"]
+    savedStrategyId: UUID | None = None
 
 
 class CancelOrderRequest(StrictModel):

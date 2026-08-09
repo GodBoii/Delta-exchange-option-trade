@@ -85,7 +85,13 @@ class TradingEngine:
             )
         return {"definition": definition.model_dump(mode="json", exclude_none=True), "legs": legs, "warnings": warnings}
 
-    async def save_strategy(self, user_id: str, definition: StrategyDefinition, status: str) -> dict[str, Any]:
+    async def save_strategy(
+        self,
+        user_id: str,
+        definition: StrategyDefinition,
+        status: str,
+        saved_strategy_id: str | None = None,
+    ) -> dict[str, Any]:
         if status == "scheduled":
             now = utc_now()
             if definition.entry.exitAt <= now:
@@ -93,10 +99,23 @@ class TradingEngine:
             lateness = (now - definition.entry.entryAt).total_seconds()
             if lateness > self.settings.max_entry_lateness_seconds:
                 raise AppError(400, "The scheduled entry time is too far in the past", "entry_time_passed")
+        if saved_strategy_id:
+            saved = await self.db.select(
+                "saved_strategies",
+                {
+                    "select": "id",
+                    "id": f"eq.{saved_strategy_id}",
+                    "user_id": f"eq.{user_id}",
+                    "limit": "1",
+                },
+            )
+            if not saved:
+                raise AppError(404, "Saved strategy not found", "saved_strategy_not_found")
         rows = await self.db.insert(
             "strategies",
             {
                 "user_id": user_id,
+                "saved_strategy_id": saved_strategy_id,
                 "name": definition.name,
                 "status": status,
                 "definition_json": definition.model_dump(mode="json", exclude_none=True),
