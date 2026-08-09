@@ -1,6 +1,6 @@
 # News intelligence system
 
-Status: **design specification; not implemented**  
+Status: **prototype implemented; production data-provider expansion pending**
 Verified: **2026-08-09**
 
 This document defines how the project should collect, normalize, interpret, store, test, and use market-moving news. It is intentionally separate from the trade execution code. The goal is to create reliable news-derived features for BTCUSD market analysis, not to let a language model place trades from headlines.
@@ -21,6 +21,8 @@ The news system should answer questions such as:
 The system must not answer only `bullish` or `bearish`. A headline can be directionally ambiguous while still having a high probability of increasing volatility. It can also be important for equities but irrelevant to BTC. News interpretation must therefore produce separate estimates for relevance, volatility impact, directional impact, novelty, reliability, and expected duration.
 
 The LLM is an event extraction and reasoning component. It must not receive Delta credentials, call the execution API, construct unrestricted orders, override risk controls, or monitor live stop losses. Its output is untrusted until it passes schema validation and deterministic policy checks.
+
+The implemented prototype runs in a separate `news-analyzer` Docker container. It uses Agno `PostgresDb` with the server-only `SUPABASE_DB_URL`; Agno automatically creates the configured schema and session table in Supabase PostgreSQL. The authenticated Delta API only proxies user-scoped news requests, while the current News intelligence tab performs read-only session retrieval and exposes no agent-run controls.
 
 ## 2. Core design principles
 
