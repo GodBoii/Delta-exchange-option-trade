@@ -12,7 +12,7 @@ This is an isolated, read-only prototype. It is not imported by the Delta FastAP
 - Pydantic-validated `NewsAnalysisReport` output when the model follows the prompted schema.
 - SSRF protections that block localhost, private/reserved addresses, credentials, and nonstandard ports.
 
-The configured `poolside/laguna-xs-2.1:free` model is text-only. Images are returned as URLs and metadata for display; the agent is explicitly prohibited from claiming visual analysis.
+The configured `xiaomi/mimo-v2.5` model supports multimodal input. This prototype currently returns images as URLs and metadata for display but does not download or send image pixels to the model, so the agent is prohibited from claiming visual analysis.
 
 ## Install
 
@@ -61,7 +61,7 @@ Tests do not require an OpenRouter key or live internet access.
 
 ```text
 OPENROUTER_API_KEY=
-NEWS_AGENT_MODEL=poolside/laguna-xs-2.1:free
+NEWS_AGENT_MODEL=xiaomi/mimo-v2.5
 NEWS_AGENT_APP_NAME=Delta News Intelligence Prototype
 NEWS_AGENT_HTTP_REFERER=
 NEWS_AGENT_SEARCH_BACKEND=auto
@@ -80,4 +80,4 @@ When `NEWS_AGENT_ALLOWED_DOMAINS` is non-empty, the article reader only fetches 
 
 Search results and scraped pages can be incomplete, stale, copyrighted, adversarial, or incorrect. Website terms and robots policies remain applicable. The URL validator reduces SSRF risk but does not turn this prototype into a hardened public scraping proxy. Use an explicit domain allowlist before exposing it as a public service.
 
-OpenRouter free model availability and rate limits can change. The selected model currently advertises tool calling but not native structured outputs, so Agno includes the Pydantic schema in the prompt and parses the final JSON locally. The CLI warns when validation fails.
+OpenRouter model availability, provider routing, pricing, and rate limits can change. The selected model currently advertises tool calling and native response formatting, so Agno requests the Pydantic output schema from the provider. The CLI warns if the returned content does not validate.

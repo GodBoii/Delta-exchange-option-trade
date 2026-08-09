@@ -7,7 +7,8 @@ from news_agent.models import NewsAnalysisReport
 def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     agent = create_news_agent(require_api_key=False)
 
-    assert agent.model.id == "poolside/laguna-xs-2.1:free"
+    assert agent.model.id == "xiaomi/mimo-v2.5"
+    assert agent.structured_outputs is True
     assert agent.output_schema is NewsAnalysisReport
     assert [type(toolkit).__name__ for toolkit in agent.tools] == ["WebSearchTools", "NewsResearchTools"]
 
