@@ -1,0 +1,11 @@
+# Isolated Agno news-agent dependencies. This file is intentionally separate
+# from requirements.txt so the existing Delta API deployment is unchanged.
+agno==2.8.7
+openai>=1.99,<3
+ddgs>=9,<10
+beautifulsoup4>=4.13,<5
+lxml>=5.4,<7
+httpx>=0.28,<1
+pydantic>=2.11,<3
+python-dotenv>=1.1,<2
+tzdata>=2025.2
