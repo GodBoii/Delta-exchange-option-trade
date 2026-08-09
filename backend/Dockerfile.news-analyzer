@@ -1,0 +1,24 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN addgroup --system app && adduser --system --ingroup app app
+
+COPY requirements-news-agent.txt requirements-news-analyzer.txt ./
+RUN pip install --no-cache-dir -r requirements-news-analyzer.txt
+
+COPY news_agent ./news_agent
+COPY news_analyzer ./news_analyzer
+RUN chown -R app:app /app
+
+USER app
+EXPOSE 8002
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)); assert data['success'] and data['service'] == 'news-analyzer'"
+
+CMD ["uvicorn", "news_analyzer.main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]
