@@ -63,6 +63,47 @@ type MarketAnalysis = {
   sidewaysProbability: number;
 };
 
+type OrderBookSnapshot = {
+  lastUpdateId: number;
+  eventTime: number;
+  bids: [number, number][];
+  asks: [number, number][];
+};
+
+type RecentTrade = {
+  id: number;
+  price: number;
+  quantity: number;
+  quoteQuantity: number;
+  time: number;
+  side: "buy" | "sell";
+  buyerIsMaker: boolean;
+};
+
+type OpenInterestPoint = { time: number; valueUsd: number; valueBtc: number };
+
+type DeltaContext = {
+  available: boolean;
+  source?: string;
+  symbol?: string;
+  instrumentType?: string;
+  lastPrice?: number;
+  markPrice?: number;
+  indexPrice?: number;
+  openInterestBtc?: number;
+  openInterestUsd?: number;
+  volume24hBtc?: number;
+  turnover24hUsd?: number;
+  fundingRatePercent?: number;
+  bestBid?: number;
+  bestAsk?: number;
+  bidSizeContracts?: number;
+  askSizeContracts?: number;
+  receivedAt?: number;
+  lastError?: string | null;
+  openInterestHistory: OpenInterestPoint[];
+};
+
 type MarketResponse = {
   success: boolean;
   symbol: string;
@@ -74,6 +115,9 @@ type MarketResponse = {
   candles: Candle[];
   realtime: RealtimeStatus;
   analysis: MarketAnalysis;
+  orderBook: OrderBookSnapshot;
+  recentTrades: RecentTrade[];
+  deltaContext: DeltaContext;
   error?: { message?: string };
 };
 
@@ -87,6 +131,9 @@ type MarketUpdate = {
   candles: Record<string, Candle>;
   realtime: RealtimeStatus;
   analysis: MarketAnalysis;
+  orderBook: OrderBookSnapshot;
+  recentTrades: RecentTrade[];
+  deltaContext: DeltaContext;
 };
 
 type FeedState = "connecting" | "live" | "reconnecting" | "offline";
@@ -183,6 +230,9 @@ export default function BtcMarketChart() {
               candles: liveCandle ? mergeCandle(current.candles, liveCandle, 240) : current.candles,
               realtime: update.realtime,
               analysis: update.analysis,
+              orderBook: update.orderBook,
+              recentTrades: update.recentTrades,
+              deltaContext: update.deltaContext,
             };
           });
         } catch { setFeedError("The live feed returned an unreadable update"); }
@@ -304,8 +354,15 @@ export default function BtcMarketChart() {
 
       {data?.analysis && <AnalysisGrid analysis={data.analysis} />}
 
+      {data && <MarketDetails
+        orderBook={data.orderBook}
+        trades={data.recentTrades}
+        delta={data.deltaContext}
+        spotPrice={data.ticker.lastPrice}
+      />}
+
       <footer className="market-footer">
-        <span><i /> Source: Binance Spot · BTCUSDT · public WebSocket · analysis only</span>
+        <span><i /> Binance Spot BTCUSDT analysis · Delta BTCUSD derivative context</span>
         <span>{updatedAt ? `Updated ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"}</span>
       </footer>
     </section>
@@ -404,6 +461,160 @@ function AnalysisMetric({ label, value, note, tone }: { label: string; value: st
   return <div className="analysis-metric"><small>{label}</small><strong className={tone}>{value}</strong><span>{note}</span></div>;
 }
 
+function MarketDetails({ orderBook, trades, delta, spotPrice }: {
+  orderBook: OrderBookSnapshot;
+  trades: RecentTrade[];
+  delta: DeltaContext;
+  spotPrice: number;
+}) {
+  const bids = cumulativeLevels(orderBook.bids);
+  const asks = cumulativeLevels(orderBook.asks);
+  const bidLiquidity = bids.at(-1)?.total || 0;
+  const askLiquidity = asks.at(-1)?.total || 0;
+  const totalLiquidity = bidLiquidity + askLiquidity;
+  const bidShare = totalLiquidity ? bidLiquidity / totalLiquidity * 100 : 50;
+  const bestBid = orderBook.bids[0]?.[0] || 0;
+  const bestAsk = orderBook.asks[0]?.[0] || 0;
+  const spread = bestBid && bestAsk ? bestAsk - bestBid : 0;
+  const buyVolume = trades.filter(trade => trade.side === "buy").reduce((sum, trade) => sum + trade.quantity, 0);
+  const sellVolume = trades.filter(trade => trade.side === "sell").reduce((sum, trade) => sum + trade.quantity, 0);
+  const flowTotal = buyVolume + sellVolume;
+  const buyShare = flowTotal ? buyVolume / flowTotal * 100 : 50;
+
+  return <section className="market-detail-grid" aria-label="Liquidity, order book, trades, and open interest">
+    <article className="market-detail-card liquidity-panel">
+      <DetailHeader eyebrow="BINANCE SPOT" title="Liquidity depth & order book" meta="Top 15 synchronized levels · 100 ms updates" />
+      <div className="depth-summary">
+        <div><small>Best bid</small><strong className="up">{bookPrice(bestBid)}</strong></div>
+        <div className="spread-stat"><small>Spread</small><strong>${spread.toFixed(2)}</strong></div>
+        <div><small>Best ask</small><strong className="down">{bookPrice(bestAsk)}</strong></div>
+      </div>
+      <DepthChart bids={bids} asks={asks} midpoint={spotPrice} />
+      <div className="liquidity-balance" aria-label={`${bidShare.toFixed(1)} percent bid liquidity`}>
+        <span className="bid-balance" style={{ width: `${bidShare}%` }} />
+        <span className="ask-balance" style={{ width: `${100 - bidShare}%` }} />
+      </div>
+      <div className="balance-labels"><span>Bid depth {compact(bidLiquidity)} BTC</span><span>Ask depth {compact(askLiquidity)} BTC</span></div>
+      <OrderBookTable bids={bids.slice(0, 10)} asks={asks.slice(0, 10)} />
+    </article>
+
+    <article className="market-detail-card delta-panel">
+      <DetailHeader eyebrow="DELTA EXCHANGE" title="BTCUSD derivative context" meta="Execution-market reference · 5s refresh" />
+      {delta.available ? <>
+        <div className="oi-hero">
+          <small>Open interest</small>
+          <strong>{currencyCompact(delta.openInterestUsd || 0)}</strong>
+          <span>{compact(delta.openInterestBtc || 0)} BTC outstanding</span>
+        </div>
+        <OiSparkline points={delta.openInterestHistory || []} />
+        <div className="delta-metrics">
+          <ContextMetric label="Mark price" value={money(delta.markPrice || 0)} />
+          <ContextMetric label="Index price" value={money(delta.indexPrice || 0)} />
+          <ContextMetric label="Funding rate" value={`${(delta.fundingRatePercent || 0).toFixed(4)}%`} />
+          <ContextMetric label="24h turnover" value={currencyCompact(delta.turnover24hUsd || 0)} />
+          <ContextMetric label="Delta bid" value={money(delta.bestBid || 0)} />
+          <ContextMetric label="Delta ask" value={money(delta.bestAsk || 0)} />
+        </div>
+        <div className="basis-row"><span>Spot / mark basis</span><strong className={(delta.markPrice || 0) >= spotPrice ? "up" : "down"}>{signedMoney((delta.markPrice || 0) - spotPrice)}</strong></div>
+      </> : <div className="detail-empty"><WifiOff /><p>{delta.lastError || "Waiting for Delta public OI data"}</p></div>}
+      <p className="source-note">OI, mark, funding, and Delta quotes belong to the Delta BTCUSD perpetual. They are not Binance Spot values.</p>
+    </article>
+
+    <article className="market-detail-card trades-panel">
+      <DetailHeader eyebrow="BINANCE SPOT" title="Recent trade flow" meta="Buyer/seller aggressor classification" />
+      <div className="trade-flow-summary">
+        <div><small>Aggressive buys</small><strong className="up">{buyVolume.toFixed(3)} BTC</strong></div>
+        <div className="flow-bar"><span className="buy-flow" style={{ width: `${buyShare}%` }} /><span className="sell-flow" style={{ width: `${100 - buyShare}%` }} /></div>
+        <div><small>Aggressive sells</small><strong className="down">{sellVolume.toFixed(3)} BTC</strong></div>
+      </div>
+      <div className="recent-trades-grid" role="table" aria-label="Latest Binance Spot trades">
+        {trades.slice(0, 12).map(trade => <div className="trade-tile" role="row" key={`${trade.id}-${trade.time}`}>
+          <span className={trade.side === "buy" ? "up" : "down"}>{price(trade.price)}</span>
+          <strong>{trade.quantity.toFixed(4)} BTC</strong>
+          <time>{new Date(trade.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+        </div>)}
+      </div>
+    </article>
+  </section>;
+}
+
+type CumulativeLevel = { price: number; quantity: number; total: number };
+
+function cumulativeLevels(levels: [number, number][]): CumulativeLevel[] {
+  let total = 0;
+  return levels.map(([levelPrice, quantity]) => {
+    total += quantity;
+    return { price: levelPrice, quantity, total };
+  });
+}
+
+function DepthChart({ bids, asks, midpoint }: { bids: CumulativeLevel[]; asks: CumulativeLevel[]; midpoint: number }) {
+  const width = 640;
+  const height = 176;
+  const center = width / 2;
+  const maxDepth = Math.max(1, bids.at(-1)?.total || 0, asks.at(-1)?.total || 0);
+  const chartBottom = 142;
+  const chartTop = 18;
+  const y = (value: number) => chartBottom - value / maxDepth * (chartBottom - chartTop);
+  const bidPoints = bids.map((level, index) => ({ x: center - 8 - index * ((center - 26) / Math.max(1, bids.length - 1)), y: y(level.total) })).reverse();
+  const askPoints = asks.map((level, index) => ({ x: center + 8 + index * ((center - 26) / Math.max(1, asks.length - 1)), y: y(level.total) }));
+  const bidLine = bidPoints.map(point => `${point.x},${point.y}`).join(" ");
+  const askLine = askPoints.map(point => `${point.x},${point.y}`).join(" ");
+  const bidArea = bidPoints.length ? `10,${chartBottom} ${bidLine} ${center - 8},${chartBottom}` : "";
+  const askArea = askPoints.length ? `${center + 8},${chartBottom} ${askLine} ${width - 10},${chartBottom}` : "";
+  return <svg className="depth-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Cumulative Binance Spot bid and ask depth">
+    <line className="depth-midline" x1={center} x2={center} y1="8" y2={chartBottom} />
+    <polygon className="bid-depth-area" points={bidArea} />
+    <polygon className="ask-depth-area" points={askArea} />
+    <polyline className="bid-depth-line" points={bidLine} />
+    <polyline className="ask-depth-line" points={askLine} />
+    <text x="12" y="168">BIDS</text><text className="depth-mid-label" x={center} y="168">{price(midpoint)}</text><text x={width - 12} y="168" textAnchor="end">ASKS</text>
+  </svg>;
+}
+
+function OrderBookTable({ bids, asks }: { bids: CumulativeLevel[]; asks: CumulativeLevel[] }) {
+  const maxQuantity = Math.max(1, ...bids.map(level => level.quantity), ...asks.map(level => level.quantity));
+  return <div className="order-book-table">
+    <div className="book-side">
+      <div className="book-head"><span>Bid price</span><span>Size BTC</span><span>Total</span></div>
+      {bids.map(level => <div className="book-row" key={`bid-${level.price}`}>
+        <i className="bid-level" style={{ width: `${level.quantity / maxQuantity * 100}%` }} />
+        <span className="up">{bookPrice(level.price)}</span><span>{level.quantity.toFixed(4)}</span><span>{level.total.toFixed(3)}</span>
+      </div>)}
+    </div>
+    <div className="book-side">
+      <div className="book-head"><span>Ask price</span><span>Size BTC</span><span>Total</span></div>
+      {asks.map(level => <div className="book-row" key={`ask-${level.price}`}>
+        <i className="ask-level" style={{ width: `${level.quantity / maxQuantity * 100}%` }} />
+        <span className="down">{bookPrice(level.price)}</span><span>{level.quantity.toFixed(4)}</span><span>{level.total.toFixed(3)}</span>
+      </div>)}
+    </div>
+  </div>;
+}
+
+function OiSparkline({ points }: { points: OpenInterestPoint[] }) {
+  const values = points.map(point => point.valueUsd).filter(value => value > 0);
+  if (values.length < 2) return <div className="oi-chart-empty">Collecting OI history…</div>;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(1, max - min);
+  const coordinates = values.map((value, index) => `${index / (values.length - 1) * 300},${72 - (value - min) / range * 58}`).join(" ");
+  return <div className="oi-chart-wrap">
+    <svg className="oi-chart" viewBox="0 0 300 84" preserveAspectRatio="none" role="img" aria-label="Delta open interest history since service start">
+      <polyline points={coordinates} />
+    </svg>
+    <span>Session OI range {currencyCompact(min)} – {currencyCompact(max)}</span>
+  </div>;
+}
+
+function DetailHeader({ eyebrow, title, meta }: { eyebrow: string; title: string; meta: string }) {
+  return <header className="detail-header"><div><small>{eyebrow}</small><h3>{title}</h3></div><span>{meta}</span></header>;
+}
+
+function ContextMetric({ label, value }: { label: string; value: string }) {
+  return <div><small>{label}</small><strong>{value}</strong></div>;
+}
+
 function ChartLoading() {
   return <div className="chart-loading"><BarChart3 /><span>Loading BTCUSDT candles…</span><i /></div>;
 }
@@ -416,8 +627,20 @@ function money(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 1 }).format(value);
 }
 
+function signedMoney(value: number) {
+  return `${value >= 0 ? "+" : "-"}$${Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 1 })}`;
+}
+
+function currencyCompact(value: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 }).format(value);
+}
+
 function price(value: number) {
   return value.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function bookPrice(value: number) {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function compact(value: number) {
