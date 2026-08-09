@@ -84,6 +84,19 @@ def test_rejects_exit_before_entry():
         )
 
 
+def test_rejects_schedule_without_timezone():
+    with pytest.raises(ValidationError):
+        StrategyDefinition.model_validate(
+            base_strategy(
+                entry={
+                    "strategyType": "intraday",
+                    "entryAt": "2026-08-08T04:00:00",
+                    "exitAt": "2026-08-08T10:00:00",
+                }
+            )
+        )
+
+
 def test_requires_stop_loss_for_short_options():
     with pytest.raises(ValidationError):
         base_strategy(legs=[base_leg(position="sell").model_dump(mode="json")])
