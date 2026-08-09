@@ -33,6 +33,9 @@ __pycache__/
 .env.production
 *.env
 !.env.example
+/.env.example
+/backend/.env.example
+/binance_backend/.env.example
 *.pem
 *.key
 *.crt
