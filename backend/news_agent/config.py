@@ -25,9 +25,11 @@ def _csv_env(name: str) -> tuple[str, ...]:
     return tuple(value.strip().lower() for value in os.getenv(name, "").split(",") if value.strip())
 
 
-def _env_path(name: str, default: str) -> Path:
-    value = Path(os.getenv(name, default)).expanduser()
-    return value.resolve() if value.is_absolute() else (BACKEND_DIR / value).resolve()
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +46,9 @@ class NewsAgentSettings:
     max_download_bytes: int
     max_redirects: int
     allowed_domains: tuple[str, ...]
-    session_db_path: Path
+    supabase_db_url: str | None
+    session_db_schema: str
+    session_db_create_schema: bool
     session_table: str
     default_session_id: str
     default_user_id: str
@@ -66,7 +70,9 @@ class NewsAgentSettings:
             max_download_bytes=_env_int("NEWS_AGENT_MAX_DOWNLOAD_BYTES", 2_000_000, 100_000, 8_000_000),
             max_redirects=_env_int("NEWS_AGENT_MAX_REDIRECTS", 3, 0, 5),
             allowed_domains=_csv_env("NEWS_AGENT_ALLOWED_DOMAINS"),
-            session_db_path=_env_path("NEWS_AGENT_SESSION_DB_PATH", "news_agent/data/json_db"),
+            supabase_db_url=os.getenv("SUPABASE_DB_URL") or None,
+            session_db_schema=os.getenv("NEWS_AGENT_DB_SCHEMA", "ai"),
+            session_db_create_schema=_env_bool("NEWS_AGENT_DB_CREATE_SCHEMA", True),
             session_table=os.getenv("NEWS_AGENT_SESSION_TABLE", "news_agent_sessions"),
             default_session_id=os.getenv("NEWS_AGENT_DEFAULT_SESSION_ID", "news-research-default"),
             default_user_id=os.getenv("NEWS_AGENT_DEFAULT_USER_ID", "local-user"),
@@ -79,3 +85,15 @@ class NewsAgentSettings:
                 f"OPENROUTER_API_KEY is missing. Add it to {ENV_FILE} before running the news agent."
             )
         return self.openrouter_api_key
+
+    def require_database_url(self) -> str:
+        if not self.supabase_db_url:
+            raise RuntimeError(
+                "SUPABASE_DB_URL is missing. Copy the PostgreSQL connection URI from Supabase Connect "
+                "and use the postgresql+psycopg:// scheme."
+            )
+        if self.supabase_db_url.startswith("postgres://"):
+            return self.supabase_db_url.replace("postgres://", "postgresql+psycopg://", 1)
+        if self.supabase_db_url.startswith("postgresql://"):
+            return self.supabase_db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.supabase_db_url

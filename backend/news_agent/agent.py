@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.base import BaseDb
 from agno.models.openrouter import OpenRouter
 from agno.tools.websearch import WebSearchTools
 
 from .config import NewsAgentSettings
+from .database import create_session_db
 from .models import NewsAnalysisReport
 from .tools import NewsResearchTools
 
@@ -33,13 +34,6 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> tuple[O
     return model, supports_native_structured_outputs
 
 
-def _create_session_db(settings: NewsAgentSettings) -> JsonDb:
-    return JsonDb(
-        db_path=str(settings.session_db_path),
-        session_table=settings.session_table,
-    )
-
-
 def _create_research_tools(settings: NewsAgentSettings) -> list:
     web_search = WebSearchTools(
         backend=settings.search_backend,
@@ -53,6 +47,7 @@ def _create_research_tools(settings: NewsAgentSettings) -> list:
 def create_source_research_agent(
     settings: NewsAgentSettings | None = None,
     *,
+    db: BaseDb | None = None,
     require_api_key: bool = True,
     debug_mode: bool = False,
 ) -> Agent:
@@ -74,7 +69,7 @@ def create_source_research_agent(
             "Never recommend or execute trades and never call Delta or Binance.",
         ],
         expected_output="A sourced text dossier for a separate structured analysis agent.",
-        db=_create_session_db(settings),
+        db=db or create_session_db(settings),
         add_history_to_context=True,
         num_history_runs=settings.history_runs,
         cache_session=True,
@@ -95,6 +90,7 @@ def create_source_research_agent(
 def create_news_agent(
     settings: NewsAgentSettings | None = None,
     *,
+    db: BaseDb | None = None,
     require_api_key: bool = True,
     debug_mode: bool = False,
 ) -> Agent:
@@ -140,7 +136,7 @@ def create_news_agent(
         expected_output=(
             "A validated NewsAnalysisReport containing evidence, events, uncertainty, sources, and image references."
         ),
-        db=_create_session_db(settings),
+        db=db or create_session_db(settings),
         add_history_to_context=True,
         num_history_runs=settings.history_runs,
         cache_session=True,
