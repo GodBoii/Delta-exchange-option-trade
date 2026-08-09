@@ -11,6 +11,7 @@ from websockets.asyncio.client import connect
 from .analysis import calculate_analysis
 from .client import BinanceMarketClient, normalize_stream_candle, normalize_ticker, number
 from .config import Settings
+from .delta_context import DeltaMarketContextClient
 
 logger = logging.getLogger(__name__)
 STREAM_INTERVALS = ("1m", "5m", "15m", "1h", "4h", "1d")
@@ -23,7 +24,12 @@ class OrderBookSequenceGap(RuntimeError):
 class BinanceSpotFeed:
     """Maintains one shared Binance Spot stream and publishes normalized snapshots."""
 
-    def __init__(self, settings: Settings, rest: BinanceMarketClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        rest: BinanceMarketClient,
+        delta: DeltaMarketContextClient | None = None,
+    ) -> None:
         self.settings = settings
         self.rest = rest
         self.connected = False
@@ -40,11 +46,17 @@ class BinanceSpotFeed:
         self.asks: dict[float, float] = {}
         self.book_update_id = 0
         self.trade_deltas: deque[tuple[int, float]] = deque()
+        self.recent_trades: deque[dict[str, Any]] = deque(maxlen=60)
+        self.delta = delta
+        self.delta_context: dict[str, Any] = {}
+        self.delta_context_error: str | None = None
+        self.delta_oi_history: deque[dict[str, float | int]] = deque(maxlen=720)
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._dirty = asyncio.Event()
         self._stopping = asyncio.Event()
         self._runner: asyncio.Task[None] | None = None
         self._publisher: asyncio.Task[None] | None = None
+        self._delta_runner: asyncio.Task[None] | None = None
         self._analysis: dict[str, Any] = {}
         self._analysis_at = 0.0
 
@@ -52,10 +64,12 @@ class BinanceSpotFeed:
         await self._seed()
         self._runner = asyncio.create_task(self._run_forever(), name="binance-spot-stream")
         self._publisher = asyncio.create_task(self._publish_forever(), name="binance-market-publisher")
+        if self.delta:
+            self._delta_runner = asyncio.create_task(self._refresh_delta_forever(), name="delta-public-context")
 
     async def stop(self) -> None:
         self._stopping.set()
-        tasks = [task for task in (self._runner, self._publisher) if task]
+        tasks = [task for task in (self._runner, self._publisher, self._delta_runner) if task]
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -89,6 +103,30 @@ class BinanceSpotFeed:
                 logger.warning("Binance Spot stream reconnecting: %s", error)
                 await asyncio.sleep(delay)
                 delay = min(15.0, delay * 2)
+
+    async def _refresh_delta_forever(self) -> None:
+        if not self.delta:
+            return
+        while not self._stopping.is_set():
+            try:
+                context = await self.delta.ticker()
+                observed_at = int(time.time() * 1000)
+                context["receivedAt"] = observed_at
+                self.delta_context = context
+                self.delta_context_error = None
+                self.delta_oi_history.append(
+                    {
+                        "time": observed_at,
+                        "valueUsd": context["openInterestUsd"],
+                        "valueBtc": context["openInterestBtc"],
+                    }
+                )
+                self._dirty.set()
+            except Exception as error:
+                self.delta_context_error = str(error)
+                logger.warning("Delta public context refresh failed: %s", error)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=self.settings.delta_context_seconds)
 
     async def _stream_once(self) -> None:
         symbol = self.settings.binance_symbol.lower()
@@ -205,6 +243,17 @@ class BinanceSpotFeed:
         trade_time = int(data.get("T") or data.get("E") or int(time.time() * 1000))
         signed_quantity = -quantity if data.get("m") else quantity
         self.trade_deltas.append((trade_time, signed_quantity))
+        self.recent_trades.appendleft(
+            {
+                "id": int(data.get("t") or 0),
+                "price": price,
+                "quantity": quantity,
+                "quoteQuantity": price * quantity,
+                "time": trade_time,
+                "side": "sell" if data.get("m") else "buy",
+                "buyerIsMaker": bool(data.get("m")),
+            }
+        )
         self.last_trade_at = trade_time
         self.ticker["lastPrice"] = price
         self.ticker["closeTime"] = trade_time
@@ -263,6 +312,19 @@ class BinanceSpotFeed:
             "source": "Binance Spot",
             "ticker": dict(self.ticker),
             "candles": {interval: dict(candle) for interval, candle in self.current_candles.items()},
+            "orderBook": {
+                "lastUpdateId": self.book_update_id,
+                "eventTime": self.last_event_at,
+                "bids": bids[:15],
+                "asks": asks[:15],
+            },
+            "recentTrades": list(self.recent_trades)[:30],
+            "deltaContext": {
+                **self.delta_context,
+                "available": bool(self.delta_context),
+                "lastError": self.delta_context_error,
+                "openInterestHistory": list(self.delta_oi_history),
+            },
             "realtime": self.status(),
             "analysis": self._analysis,
         }

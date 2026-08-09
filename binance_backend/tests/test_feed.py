@@ -62,3 +62,26 @@ def test_replaces_open_candle_without_growing_history() -> None:
     replace_latest_candle(candles, {"openTime": 3, "close": 13.0}, 2)
 
     assert candles == [{"openTime": 2, "close": 12.0}, {"openTime": 3, "close": 13.0}]
+
+
+def test_exposes_synchronized_depth_and_recent_aggressor_trades() -> None:
+    market_feed = feed()
+    market_feed.connected = True
+    market_feed.book_synced = True
+    market_feed.book_update_id = 44
+    market_feed.bids = {64_800.0: 1.5}
+    market_feed.asks = {64_801.0: 2.5}
+    market_feed._handle_trade({"t": 7, "p": "64800.5", "q": "0.25", "T": 1_000, "m": False})
+    market_feed._handle_trade({"t": 8, "p": "64800.0", "q": "0.10", "T": 1_001, "m": True})
+
+    snapshot = market_feed.snapshot()
+
+    assert snapshot["orderBook"] == {
+        "lastUpdateId": 44,
+        "eventTime": 0,
+        "bids": [[64_800.0, 1.5]],
+        "asks": [[64_801.0, 2.5]],
+    }
+    assert snapshot["recentTrades"][0]["side"] == "sell"
+    assert snapshot["recentTrades"][1]["side"] == "buy"
+    assert snapshot["analysis"]["cvd"]["baseVolume"] == pytest.approx(0.15)
