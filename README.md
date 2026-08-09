@@ -13,7 +13,7 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
-The frontend also supports a backend-optional design mode. Supabase sign-in, strategy configuration, automatic browser draft storage, and JSON export/import work without the Python service. Delta connection, live contract preview, scheduling, execution, dashboard data, and run history require the local Docker backend.
+The frontend also supports a backend-optional design mode. Supabase sign-in, the persistent saved-strategy library, strategy configuration, automatic browser recovery storage, and JSON export/import work without the Python service. Delta connection, live contract preview, scheduling, execution, dashboard data, and run history require the local Docker backend.
 
 ## Repository layout
 
@@ -51,6 +51,16 @@ npm install
 npm run dev
 ```
 
+### Apply the saved-strategy library migration
+
+If migrations `001` and `002` are already installed in your Supabase project, open **Supabase Dashboard → SQL Editor**, paste the entire contents of:
+
+```text
+supabase/migrations/003_saved_strategy_library.sql
+```
+
+and choose **Run** once. The migration creates the private `saved_strategies` table, RLS ownership policies, the optional link from execution runs to their saved definition, indexes, and grants. It also backfills every existing strategy run into the saved library without changing or deleting run history. Reusable strategy names are intentionally not unique.
+
 ## Local Python backend with Docker
 
 The Compose service reads server credentials from the ignored root `.env.local` file.
@@ -76,13 +86,18 @@ The market service exposes:
 - `GET /api/market/btcusd/order-book`: synchronized local Spot order book.
 - `GET /api/market/btcusd/trades`: recent Spot trades.
 - `GET /api/market/btcusd/analysis`: ATR, historical volatility, VWAP, CVD, supply/demand, market structure, order-book imbalance, and sideways probability.
-- `WS /ws/market/btcusd`: throttled real-time browser feed containing ticker, bid/ask, active candle, order-book summary, and analysis updates.
+- `WS /ws/market/btcusd`: throttled real-time browser feed containing ticker, bid/ask, active candle, top-15 synchronized depth, recent aggressor-classified trades, analysis updates, and public Delta BTCUSD derivative context.
 
 The chart is available publicly at `http://localhost:3000/market` and inside the connected workspace under **BTC market**. A single server-side Binance connection fans out live updates to browsers; REST is used only for initial candle history and recovery. It supports 1-minute through daily candle views.
 
 No Binance API key is required because this service consumes public market data only. Delta remains the sole venue for credentials, order submission, positions, and execution. `BTCUSDT` is deliberately shown everywhere in the analysis UI so it is not confused with Delta's separate `BTCUSD` contract price.
 
-The `Binace` service subscribes to public trade, best bid/ask, 100 ms diff-depth, 24-hour ticker, and kline streams. Set `BINANCE_BASE_URL`, `BINANCE_WS_URL`, `BINANCE_SYMBOL`, `MARKET_BROADCAST_SECONDS`, or `CVD_WINDOW_SECONDS` only when overriding their documented defaults in `binance_backend/.env.example`. The Docker health check requires a connected stream, a synchronized order book, and an event newer than 30 seconds.
+The `Binace` service subscribes to public trade, best bid/ask, 100 ms diff-depth, 24-hour ticker, and kline streams. It also reads the unauthenticated Delta `BTCUSD` ticker every five seconds for open interest, mark/index prices, funding, turnover, and Delta bid/ask context. Set `BINANCE_BASE_URL`, `BINANCE_WS_URL`, `BINANCE_SYMBOL`, `DELTA_PUBLIC_BASE_URL`, `DELTA_SYMBOL`, `DELTA_CONTEXT_SECONDS`, `MARKET_BROADCAST_SECONDS`, or `CVD_WINDOW_SECONDS` only when overriding their documented defaults in `binance_backend/.env.example`. The Docker health check requires a connected Binance stream, a synchronized order book, and an event newer than 30 seconds.
+
+Below the candlestick chart, the UI keeps the sources visibly separated:
+
+- Binance Spot `BTCUSDT`: depth curve, top-10 bid/ask ladder, spread, liquidity balance, and recent aggressive trade flow.
+- Delta perpetual `BTCUSD`: open interest and its session history, mark/index prices, funding rate, turnover, Delta quotes, and Spot-to-mark basis.
 
 ### Flexible local ports
 
@@ -173,15 +188,29 @@ Add the backend server's static public IP to the Delta API key allowlist. Vercel
 
 ## Scheduling behavior
 
-1. The authenticated user previews and schedules a strategy.
-2. The strategy is stored in Supabase.
-3. The Python scheduler finds due entries every two seconds.
-4. It resolves current option contracts and submits legs sequentially to Delta.
-5. At the configured exit time, it cancels any still-open recorded entry orders and sends reduce-only market orders for the recorded fills.
-6. It checks Delta's real-time per-product position endpoint and marks the strategy complete only after the reduction is confirmed.
-7. Every execution and order response is recorded in Supabase. Failed or unconfirmed exits remain `attention` and can be retried from Run history.
+1. The authenticated user creates or selects a reusable definition from `saved_strategies`.
+2. Builder changes are saved to Supabase; the browser also keeps a recovery copy.
+3. The user previews and schedules the selected definition.
+4. A separate immutable run is inserted into `strategies` and linked through `saved_strategy_id`.
+5. The Python scheduler finds due entries every two seconds.
+6. It resolves current option contracts and submits legs sequentially to Delta.
+7. At the configured exit time, it cancels any still-open recorded entry orders and sends reduce-only market orders for the recorded fills.
+8. It checks Delta's real-time per-product position endpoint and marks the strategy complete only after the reduction is confirmed.
+9. Every execution and order response is recorded in Supabase. Failed or unconfirmed exits remain `attention` and can be retried from Run history.
 
 The builder's **Schedule strategy** action stores a scheduled run; it does not place orders immediately. Use **Exit strategy** in Run history to close a live or attention-required strategy early. The Dashboard's **Close** action closes the entire live position for one product after first cancelling that product's open orders. Both close actions use reduce-only market orders and verify the live position before reporting success.
+
+Every scheduled strategy is a separate run identified by its generated UUID. Strategy names are labels and may be reused.
+
+## Saved strategy library
+
+- **Current strategy** switches between reusable definitions already saved in Supabase.
+- **New strategy** saves a fresh short-straddle definition with new entry/exit times and selects it without modifying the previous strategy.
+- Builder edits are saved automatically after a short delay. **Save strategy** is available for an immediate explicit save.
+- Switching or scheduling first flushes pending changes, so the selected definition and the scheduled run use the same snapshot.
+- **Delete** removes only the reusable definition. The foreign key uses `on delete set null`, so scheduled, active, completed, and attention-required run history remains intact.
+- Imported JSON opens as a new local draft and is added to the library only when saved or scheduled.
+- When an older saved strategy has expired entry times, selecting it refreshes the schedule while retaining its configured duration.
 
 Entries more than `MAX_ENTRY_LATENESS_SECONDS` late are not submitted. They are marked `attention` instead, preventing a restarted server from placing an unexpectedly stale trade. The default is 60 seconds. Late exits are still attempted to reduce open risk.
 
@@ -192,13 +221,14 @@ Delta cannot atomically submit option legs with different product IDs. A later l
 On `https://delta-exchange-option-trade.vercel.app` without the Docker service:
 
 - Email/password and configured Google authentication continue to work through Supabase.
+- Saved strategies can be created, edited, deleted, and switched through Supabase RLS.
 - The full leg and strategy builder remains usable.
-- Draft changes are saved automatically in that browser's local storage.
+- The current strategy is also cached automatically in browser storage for recovery.
 - Use **Export** to download a strategy JSON file.
 
 At home, start Docker and the local frontend, sign in, and use **Import** to load that JSON file. You can then connect Delta, preview live contracts, schedule, or execute.
 
-Browser storage is isolated by website origin, so the deployed site and `localhost` cannot directly share local storage. Export/import is the deliberate transfer mechanism.
+The Supabase strategy library follows the signed-in user across origins and devices. Browser recovery storage is still isolated by website origin; export/import remains available for portable files and offline recovery.
 
 ## Validation
 
