@@ -151,8 +151,11 @@ Add the backend server's static public IP to the Delta API key allowlist. Vercel
 2. The strategy is stored in Supabase.
 3. The Python scheduler finds due entries every two seconds.
 4. It resolves current option contracts and submits legs sequentially to Delta.
-5. At the configured exit time, it sends reduce-only market orders for the recorded products.
-6. Every execution and order response is recorded in Supabase.
+5. At the configured exit time, it cancels any still-open recorded entry orders and sends reduce-only market orders for the recorded fills.
+6. It checks Delta's real-time per-product position endpoint and marks the strategy complete only after the reduction is confirmed.
+7. Every execution and order response is recorded in Supabase. Failed or unconfirmed exits remain `attention` and can be retried from Run history.
+
+The builder's **Schedule strategy** action stores a scheduled run; it does not place orders immediately. Use **Exit strategy** in Run history to close a live or attention-required strategy early. The Dashboard's **Close** action closes the entire live position for one product after first cancelling that product's open orders. Both close actions use reduce-only market orders and verify the live position before reporting success.
 
 Entries more than `MAX_ENTRY_LATENESS_SECONDS` late are not submitted. They are marked `attention` instead, preventing a restarted server from placing an unexpectedly stale trade. The default is 60 seconds. Late exits are still attempted to reduce open risk.
 
