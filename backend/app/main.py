@@ -269,7 +269,12 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
 @app.post("/api/strategies", status_code=201)
 async def save_strategy(request: Request, body: SaveStrategyRequest, user: RequiredUser) -> dict[str, Any]:
     await current_account(request.app.state.db, user, required=True)
-    result = await request.app.state.engine.save_strategy(str(user["id"]), body.strategy, body.status)
+    result = await request.app.state.engine.save_strategy(
+        str(user["id"]),
+        body.strategy,
+        body.status,
+        str(body.savedStrategyId) if body.savedStrategyId else None,
+    )
     return {"success": True, "result": result}
 
 

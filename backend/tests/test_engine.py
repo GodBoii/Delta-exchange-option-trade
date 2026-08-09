@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 from app.delta import DeltaClient
 from app.engine import TradingEngine
 from app.errors import AppError
+from app.models import StrategyDefinition
 
 
 class FakeDB:
@@ -119,6 +121,83 @@ def settings(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+@pytest.mark.asyncio
+async def test_same_name_creates_independent_strategy_runs() -> None:
+    class SaveDB:
+        def __init__(self) -> None:
+            self.strategies: list[dict] = []
+
+        async def select(self, table: str, query: dict) -> list[dict]:
+            assert table == "saved_strategies"
+            return [{"id": "saved-1"}] if query["id"] == "eq.saved-1" and query["user_id"] == "eq.user-1" else []
+
+        async def insert(self, table: str, value: dict) -> list[dict]:
+            assert table == "strategies"
+            row = {"id": f"strategy-{len(self.strategies) + 1}", **deepcopy(value)}
+            self.strategies.append(row)
+            return [deepcopy(row)]
+
+    entry_at = datetime.now(UTC) + timedelta(hours=1)
+    definition = StrategyDefinition.model_validate(
+        {
+            "name": "BTC ATM short straddle",
+            "instrument": {"index": "BTCUSD", "underlying": "BTC", "underlyingFrom": "cash"},
+            "entry": {
+                "strategyType": "intraday",
+                "entryAt": entry_at.isoformat(),
+                "exitAt": (entry_at + timedelta(hours=7)).isoformat(),
+            },
+            "squareOff": "complete",
+            "riskMode": "combined_premium",
+            "combinedStopLossPercent": 100,
+            "legs": [
+                {
+                    "id": "call-leg",
+                    "lots": 1,
+                    "position": "sell",
+                    "optionType": "call",
+                    "expiry": (entry_at + timedelta(days=1)).date().isoformat(),
+                    "strikeMode": "atm",
+                    "strikeSteps": 0,
+                    "orderType": "market_order",
+                    "reentryOnTarget": 0,
+                    "reentryOnStop": 0,
+                },
+                {
+                    "id": "put-leg",
+                    "lots": 1,
+                    "position": "sell",
+                    "optionType": "put",
+                    "expiry": (entry_at + timedelta(days=1)).date().isoformat(),
+                    "strikeMode": "atm",
+                    "strikeSteps": 0,
+                    "orderType": "market_order",
+                    "reentryOnTarget": 0,
+                    "reentryOnStop": 0,
+                },
+            ],
+            "acknowledgement": True,
+        }
+    )
+    db = SaveDB()
+    engine = TradingEngine(db, settings())  # type: ignore[arg-type]
+
+    first = await engine.save_strategy("user-1", definition, "scheduled")
+    second = await engine.save_strategy("user-1", definition, "scheduled")
+
+    assert first["id"] != second["id"]
+    assert [row["name"] for row in db.strategies] == [definition.name, definition.name]
+    assert [row["status"] for row in db.strategies] == ["scheduled", "scheduled"]
+
+    linked = await engine.save_strategy("user-1", definition, "scheduled", "saved-1")
+    assert linked["id"] == "strategy-3"
+    assert db.strategies[-1]["saved_strategy_id"] == "saved-1"
+
+    with pytest.raises(AppError) as missing:
+        await engine.save_strategy("user-1", definition, "scheduled", "saved-by-another-user")
+    assert missing.value.code == "saved_strategy_not_found"
 
 
 @pytest.mark.asyncio
