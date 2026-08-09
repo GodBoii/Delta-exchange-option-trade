@@ -6,5 +6,6 @@ __pycache__/
 tests/
 .env
 .env.*
+news_agent/data/json_db/
 *.pem
 *.key
