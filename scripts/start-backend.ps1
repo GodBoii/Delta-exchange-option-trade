@@ -1,7 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$candidatePorts = @(8000, 8585, 8085, 8011, 8001)
+$candidatePorts = @(8000, 8585, 8085, 8011)
+$binancePort = if ($env:BINANCE_PORT -match '^\d{2,5}$') { [int]$env:BINANCE_PORT } else { 8001 }
 $envFile = Join-Path $projectRoot ".env.local"
 
 if (Test-Path -LiteralPath $envFile) {
@@ -16,15 +17,15 @@ if (Test-Path -LiteralPath $envFile) {
             ForEach-Object { [int]$_ }
 
         if ($configuredPorts.Count -gt 0) {
-            $candidatePorts = @($configuredPorts)
+            $candidatePorts = @($configuredPorts | Where-Object { $_ -ne $binancePort })
         }
     }
 }
 
 $composeFile = Join-Path $projectRoot "docker-compose.yml"
-$backendIsRunning = (docker compose -f $composeFile ps --status running --services 2>$null) -contains "backend"
+$backendIsRunning = (docker compose -f $composeFile ps --status running --services 2>$null) -contains "delta-exchange"
 $currentBinding = if ($backendIsRunning) {
-    docker compose -f $composeFile port backend 8000 2>$null | Select-Object -First 1
+    docker compose -f $composeFile port delta-exchange 8000 2>$null | Select-Object -First 1
 }
 else {
     $null
@@ -77,12 +78,38 @@ try {
     }
 
     if (-not $healthy) {
-        docker compose logs --tail 50 backend
+        docker compose logs --tail 50 delta-exchange
         throw "The backend started but did not become healthy on port $backendPort."
+    }
+
+    $binanceHealthy = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        try {
+            $marketHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$binancePort/health" -TimeoutSec 2
+            $streamReady = $marketHealth.realtime.connected -and
+                $marketHealth.realtime.bookSynced -and
+                $null -ne $marketHealth.realtime.eventAgeMs -and
+                $marketHealth.realtime.eventAgeMs -lt 30000
+            if ($marketHealth.success -and
+                $marketHealth.service -eq "binance-market-data-api" -and
+                $streamReady) {
+                $binanceHealthy = $true
+                break
+            }
+        }
+        catch {}
+        Start-Sleep -Milliseconds 500
+    }
+
+    if (-not $binanceHealthy) {
+        docker compose logs --tail 50 binace
+        throw "The Binace market-data service did not become healthy on port $binancePort."
     }
 
     Write-Host "Delta backend is healthy: http://localhost:$backendPort"
     Write-Host "API documentation: http://localhost:$backendPort/docs"
+    Write-Host "Binance BTCUSDT Spot stream is healthy: http://localhost:$binancePort"
+    Write-Host "Market API documentation: http://localhost:$binancePort/docs"
 }
 finally {
     Pop-Location
