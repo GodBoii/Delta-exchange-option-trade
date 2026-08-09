@@ -8,7 +8,8 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 - **Authentication:** Supabase email/password and optional Google OAuth.
 - **Persistence:** Supabase Postgres with Row Level Security.
 - **Delta credentials:** Supabase Vault, accessed only with the server-side service role.
-- **Trading API and scheduler:** Python FastAPI in one continuously running Docker container on a static-IP server.
+- **Trading API and scheduler:** Python FastAPI in the `Delta-exchange` container on a static-IP server.
+- **BTC spot analysis:** A separate read-only FastAPI service in the `Binace` container, backed by the public Binance Spot REST and WebSocket APIs. It never places orders.
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
@@ -22,7 +23,9 @@ lib/                         Browser/server Supabase helpers and frontend types
 backend/app/                 FastAPI, Delta client, execution engine, scheduler
 backend/tests/               Python strategy safety tests
 backend/Dockerfile           Production Python image
-docker-compose.yml           Single-replica backend deployment
+binance_backend/app/         Binance Spot stream, synchronized book, and analysis API
+binance_backend/tests/       Market-data, analysis, and stream-state tests
+docker-compose.yml           Two-service backend deployment
 supabase/migrations/         Database, RLS, and Vault functions
 ```
 
@@ -35,7 +38,8 @@ NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_API_PORTS=8000,8585,8085,8011,8001
+NEXT_PUBLIC_API_PORTS=8000,8585,8085,8011
+NEXT_PUBLIC_BINANCE_API_URL=http://localhost:8001
 SUPABASE_SERVICE_ROLE_KEY=...
 DELTA_PRODUCTION_URL=https://api.india.delta.exchange
 ```
@@ -54,10 +58,31 @@ The Compose service reads server credentials from the ignored root `.env.local` 
 ```powershell
 docker compose up -d --build
 docker compose ps
-docker compose logs -f backend
+docker compose logs -f delta-exchange binace
 ```
 
-The API is available at `http://localhost:8000`, its health endpoint is `/health`, and interactive API documentation is available at `/docs`.
+The Delta trading API is available at `http://localhost:8000`; the Binance Spot analysis API is available at `http://localhost:8001`. Both expose `/health` and `/docs`.
+
+Compose creates the requested containers:
+
+- `Delta-exchange`: existing authenticated Delta trading API and scheduler.
+- `Binace`: public Binance `BTCUSDT` Spot analysis API. The spelling intentionally matches the requested container name.
+
+The market service exposes:
+
+- `GET /api/market/btcusd`: live Spot ticker, candles, and the current analysis snapshot. The legacy path is retained for frontend compatibility.
+- `GET /api/market/btcusd/candles`: up to 1,500 candles per request, with interval/start/end controls.
+- `GET /api/market/btcusd/ticker`: normalized 24-hour market statistics.
+- `GET /api/market/btcusd/order-book`: synchronized local Spot order book.
+- `GET /api/market/btcusd/trades`: recent Spot trades.
+- `GET /api/market/btcusd/analysis`: ATR, historical volatility, VWAP, CVD, supply/demand, market structure, order-book imbalance, and sideways probability.
+- `WS /ws/market/btcusd`: throttled real-time browser feed containing ticker, bid/ask, active candle, order-book summary, and analysis updates.
+
+The chart is available publicly at `http://localhost:3000/market` and inside the connected workspace under **BTC market**. A single server-side Binance connection fans out live updates to browsers; REST is used only for initial candle history and recovery. It supports 1-minute through daily candle views.
+
+No Binance API key is required because this service consumes public market data only. Delta remains the sole venue for credentials, order submission, positions, and execution. `BTCUSDT` is deliberately shown everywhere in the analysis UI so it is not confused with Delta's separate `BTCUSD` contract price.
+
+The `Binace` service subscribes to public trade, best bid/ask, 100 ms diff-depth, 24-hour ticker, and kline streams. Set `BINANCE_BASE_URL`, `BINANCE_WS_URL`, `BINANCE_SYMBOL`, `MARKET_BROADCAST_SECONDS`, or `CVD_WINDOW_SECONDS` only when overriding their documented defaults in `binance_backend/.env.example`. The Docker health check requires a connected stream, a synchronized order book, and an event newer than 30 seconds.
 
 ### Flexible local ports
 
@@ -65,7 +90,7 @@ The frontend is not tied to port 3000. Next.js may run on 3000, 3001, 3002, or a
 
 For Google OAuth and email-confirmation callbacks, add every local frontend callback you plan to use to Supabase Authentication > URL Configuration, for example `http://localhost:3000/auth/callback`, `http://localhost:3001/auth/callback`, and `http://localhost:3002/auth/callback`.
 
-The frontend probes the backend ports listed in `NEXT_PUBLIC_API_PORTS` in parallel and uses the first endpoint that returns a valid Delta Strategy API health response. An explicit `NEXT_PUBLIC_API_URL` is preferred but is not mandatory locally.
+The frontend probes the Delta backend ports listed in `NEXT_PUBLIC_API_PORTS` in parallel and uses the first endpoint that returns a valid Delta Strategy API health response. Port 8001 is reserved for `Binace` and must not be included in that fallback list. An explicit `NEXT_PUBLIC_API_URL` is preferred but is not mandatory locally.
 
 Use the automatic local launcher. It checks the configured backend ports and starts Docker on the first available one:
 
@@ -81,7 +106,7 @@ docker compose up -d --build
 npm run dev
 ```
 
-The frontend will discover `http://localhost:8585` automatically. Other included fallback ports are 8085, 8011, and 8001. To use another port, add it to `NEXT_PUBLIC_API_PORTS`, restart the frontend, and set the same `BACKEND_PORT` before starting Compose.
+The frontend will discover `http://localhost:8585` automatically. Other included Delta fallback ports are 8085 and 8011. To use another port, add it to `NEXT_PUBLIC_API_PORTS`, restart the frontend, and set the same `BACKEND_PORT` before starting Compose. Keep it distinct from `BINANCE_PORT`, which defaults to 8001.
 
 The scheduler is part of the Python application lifecycle. There is no separate npm worker command. It checks Supabase every two seconds while the container is healthy.
 
@@ -109,6 +134,7 @@ If you later expose the Docker API through a public HTTPS domain, add:
 
 ```text
 NEXT_PUBLIC_API_URL=https://your-python-api-domain.example
+NEXT_PUBLIC_BINANCE_API_URL=https://your-market-api-domain.example
 ```
 
 ### Supabase Auth URLs
@@ -127,7 +153,7 @@ https://delta-exchange-option-trade.vercel.app/auth/callback
 
 ### Docker backend
 
-Deploy the Docker service to an always-on VPS or container host with a stable outbound public IP. On the server, create an ignored `.env.local` containing the server variables, then run:
+Deploy both Docker services to an always-on VPS or container host. The Delta service still needs a stable outbound public IP. On the server, create an ignored `.env.local` containing the server variables, then run:
 
 ```bash
 docker compose up -d --build
@@ -141,7 +167,7 @@ Required backend variables are documented in `backend/.env.example`. `FRONTEND_O
 https://delta-exchange-option-trade.vercel.app
 ```
 
-Run exactly one backend container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design.
+Run exactly one `Delta-exchange` container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design. `Binace` is isolated from Supabase and Delta credentials and only accesses public market endpoints.
 
 Add the backend server's static public IP to the Delta API key allowlist. Vercel's IP is not used for Delta requests.
 
@@ -190,6 +216,14 @@ Backend:
 cd backend
 .venv\Scripts\python -m ruff check app tests
 .venv\Scripts\python -m pytest
+```
+
+Market data backend:
+
+```powershell
+cd binance_backend
+..\backend\.venv\Scripts\python -m ruff check app tests
+..\backend\.venv\Scripts\python -m pytest
 ```
 
 Docker:
