@@ -15,6 +15,7 @@ from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
 from .errors import AppError
 from .models import CancelOrderRequest, ClosePositionRequest, ConnectRequest, SaveStrategyRequest, StrategyDefinition
+from .news import router as news_router
 from .strategy import delta_expiry
 from .supabase import SupabaseAdmin
 
@@ -54,6 +55,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.include_router(news_router)
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 OptionalUser = Annotated[dict[str, Any] | None, Depends(optional_user)]
