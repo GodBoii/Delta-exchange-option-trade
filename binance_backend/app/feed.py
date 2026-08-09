@@ -50,7 +50,7 @@ class BinanceSpotFeed:
         self.delta = delta
         self.delta_context: dict[str, Any] = {}
         self.delta_context_error: str | None = None
-        self.delta_oi_history: deque[dict[str, float | int]] = deque(maxlen=720)
+        self._delta_history_at = 0.0
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._dirty = asyncio.Event()
         self._stopping = asyncio.Event()
@@ -109,18 +109,15 @@ class BinanceSpotFeed:
             return
         while not self._stopping.is_set():
             try:
-                context = await self.delta.ticker()
+                now = time.monotonic()
+                include_slow_data = not self.delta_context or now - self._delta_history_at >= self.settings.delta_history_seconds
+                context = await self.delta.snapshot(include_slow_data=include_slow_data)
                 observed_at = int(time.time() * 1000)
                 context["receivedAt"] = observed_at
-                self.delta_context = context
+                self.delta_context = {**self.delta_context, **context}
+                if include_slow_data:
+                    self._delta_history_at = now
                 self.delta_context_error = None
-                self.delta_oi_history.append(
-                    {
-                        "time": observed_at,
-                        "valueUsd": context["openInterestUsd"],
-                        "valueBtc": context["openInterestBtc"],
-                    }
-                )
                 self._dirty.set()
             except Exception as error:
                 self.delta_context_error = str(error)
@@ -323,7 +320,6 @@ class BinanceSpotFeed:
                 **self.delta_context,
                 "available": bool(self.delta_context),
                 "lastError": self.delta_context_error,
-                "openInterestHistory": list(self.delta_oi_history),
             },
             "realtime": self.status(),
             "analysis": self._analysis,
