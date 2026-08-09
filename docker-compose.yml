@@ -1,5 +1,6 @@
 services:
-  backend:
+  delta-exchange:
+    container_name: Delta-exchange
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -7,7 +8,7 @@ services:
       - .env.local
     environment:
       FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
-      FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1)(:\d+)?$
+      FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
       MAX_ENTRY_LATENESS_SECONDS: "60"
@@ -20,4 +21,29 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 15s
+      retries: 3
+
+  binace:
+    container_name: Binace
+    build:
+      context: ./binance_backend
+      dockerfile: Dockerfile
+    environment:
+      BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
+      BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://stream.binance.com:9443/stream}
+      BINANCE_SYMBOL: ${BINANCE_SYMBOL:-BTCUSDT}
+      MARKET_CACHE_SECONDS: ${MARKET_CACHE_SECONDS:-2}
+      MARKET_BROADCAST_SECONDS: ${MARKET_BROADCAST_SECONDS:-0.25}
+      CVD_WINDOW_SECONDS: ${CVD_WINDOW_SECONDS:-900}
+      FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
+      FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
+    ports:
+      - "${BINANCE_PORT:-8001}:8001"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)); r=data['realtime']; assert data['success'] and data['service'] == 'binance-market-data-api' and r['connected'] and r['bookSynced'] and r['eventAgeMs'] is not None and r['eventAgeMs'] < 30000"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
       retries: 3
