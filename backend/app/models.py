@@ -19,6 +19,12 @@ class EntrySettings(StrictModel):
     entryAt: datetime
     exitAt: datetime
 
+    @model_validator(mode="after")
+    def validate_timezones(self) -> "EntrySettings":
+        if self.entryAt.utcoffset() is None or self.exitAt.utcoffset() is None:
+            raise ValueError("Entry and exit times must include a timezone")
+        return self
+
 
 class StrategyLeg(StrictModel):
     id: str = Field(min_length=1, max_length=40)
@@ -96,4 +102,8 @@ class SaveStrategyRequest(StrictModel):
 
 class CancelOrderRequest(StrictModel):
     productId: int = Field(gt=0)
+    confirm: Literal[True]
+
+
+class ClosePositionRequest(StrictModel):
     confirm: Literal[True]

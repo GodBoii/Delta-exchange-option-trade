@@ -14,7 +14,7 @@ from .config import get_settings
 from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
 from .errors import AppError
-from .models import CancelOrderRequest, ConnectRequest, SaveStrategyRequest, StrategyDefinition
+from .models import CancelOrderRequest, ClosePositionRequest, ConnectRequest, SaveStrategyRequest, StrategyDefinition
 from .strategy import delta_expiry
 from .supabase import SupabaseAdmin
 
@@ -228,13 +228,21 @@ async def cancel_order(request: Request, order_id: int, body: CancelOrderRequest
         await client.close()
 
 
+@app.post("/api/positions/{product_id}/close")
+async def close_position(
+    request: Request, product_id: int, body: ClosePositionRequest, user: RequiredUser
+) -> dict[str, Any]:
+    result = await request.app.state.engine.close_account_position(str(user["id"]), product_id)
+    return {"success": True, "result": result}
+
+
 @app.get("/api/strategies")
 async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any]:
     account = await current_account(request.app.state.db, user, required=True)
     rows = await request.app.state.db.select(
         "strategies",
         {
-            "select": "id,name,status,entry_at,exit_at,last_error,created_at",
+            "select": "id,name,status,entry_at,exit_at,entry_execution_at,last_error,created_at",
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
             "limit": "100",
@@ -249,6 +257,7 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "status": row["status"],
                 "entryAt": row["entry_at"],
                 "exitAt": row["exit_at"],
+                "entryExecutedAt": row["entry_execution_at"],
                 "lastError": row["last_error"],
                 "createdAt": row["created_at"],
             }
@@ -277,18 +286,7 @@ async def preview_strategy(request: Request, body: StrategyDefinition, user: Req
 
 @app.delete("/api/strategies/{strategy_id}")
 async def cancel_strategy(request: Request, strategy_id: str, user: RequiredUser) -> dict[str, bool]:
-    rows = await request.app.state.db.update(
-        "strategies",
-        {"status": "cancelled"},
-        {
-            "select": "id",
-            "id": f"eq.{strategy_id}",
-            "user_id": f"eq.{user['id']}",
-            "status": "in.(draft,scheduled)",
-        },
-    )
-    if not rows:
-        raise AppError(409, "Only draft or scheduled strategies can be cancelled", "cannot_cancel")
+    await request.app.state.engine.cancel_strategy(strategy_id, str(user["id"]))
     return {"success": True}
 
 
@@ -301,3 +299,16 @@ async def execute_strategy(request: Request, strategy_id: str, user: RequiredUse
     if not owned:
         raise AppError(404, "Strategy not found", "strategy_not_found")
     return {"success": True, "result": await request.app.state.engine.execute_entry(strategy_id)}
+
+
+@app.post("/api/strategies/{strategy_id}/exit")
+async def exit_strategy(
+    request: Request, strategy_id: str, body: ClosePositionRequest, user: RequiredUser
+) -> dict[str, Any]:
+    owned = await request.app.state.db.select(
+        "strategies",
+        {"select": "id", "id": f"eq.{strategy_id}", "user_id": f"eq.{user['id']}", "limit": "1"},
+    )
+    if not owned:
+        raise AppError(404, "Strategy not found", "strategy_not_found")
+    return {"success": True, "result": await request.app.state.engine.execute_exit(strategy_id)}
