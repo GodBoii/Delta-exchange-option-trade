@@ -80,21 +80,72 @@ type RecentTrade = {
   buyerIsMaker: boolean;
 };
 
-type OpenInterestPoint = { time: number; valueUsd: number; valueBtc: number };
+type DeltaHistoryPoint = { time: number; open: number; high: number; low: number; close: number };
+type OpenInterestPoint = DeltaHistoryPoint & { valueUsd?: number; valueBtc?: number };
+type DeltaBookLevel = [price: number, sizeContracts: number, depthContracts: number, sizeBtc: number];
+type DeltaTrade = {
+  id: string;
+  price: number;
+  sizeContracts: number;
+  sizeBtc: number;
+  notionalUsd: number;
+  side: "buy" | "sell";
+  time: number;
+};
+type DeltaProduct = {
+  productId: number;
+  symbol: string;
+  description: string;
+  state: string;
+  tradingStatus: string;
+  contractType: string;
+  underlyingAsset: string;
+  quotingAsset: string;
+  settlingAsset: string;
+  indexSymbol: string;
+  indexDescription: string;
+  contractValueBtc: number;
+  tickSize: number;
+  defaultLeverage: number;
+  positionSizeLimitContracts: number;
+  initialMarginPercent: number;
+  maintenanceMarginPercent: number;
+  makerFeePercent: number;
+  takerFeePercent: number;
+  fundingIntervalHours: number;
+  launchTime?: string | null;
+};
 
 type DeltaContext = {
   available: boolean;
   source?: string;
   symbol?: string;
   instrumentType?: string;
+  tradingStatus?: string;
   lastPrice?: number;
+  open24h?: number;
+  high24h?: number;
+  low24h?: number;
+  lastPriceChange24hPercent?: number;
   markPrice?: number;
+  markHigh24h?: number;
+  markLow24h?: number;
+  markChange24hPercent?: number;
+  markBasisPercent?: number;
   indexPrice?: number;
   openInterestBtc?: number;
+  openInterestContracts?: number;
   openInterestUsd?: number;
+  openInterestChange6hUsd?: number;
   volume24hBtc?: number;
+  volume24hContracts?: number;
   turnover24hUsd?: number;
   fundingRatePercent?: number;
+  leverage?: number;
+  tickSize?: number;
+  contractValueBtc?: number;
+  priceBandLower?: number;
+  priceBandUpper?: number;
   bestBid?: number;
   bestAsk?: number;
   bidSizeContracts?: number;
@@ -102,6 +153,11 @@ type DeltaContext = {
   receivedAt?: number;
   lastError?: string | null;
   openInterestHistory: OpenInterestPoint[];
+  fundingHistory?: DeltaHistoryPoint[];
+  markPriceHistory?: DeltaHistoryPoint[];
+  orderBook?: { symbol: string; bids: DeltaBookLevel[]; asks: DeltaBookLevel[] };
+  recentTrades?: DeltaTrade[];
+  product?: DeltaProduct;
 };
 
 type MarketResponse = {
@@ -361,6 +417,8 @@ export default function BtcMarketChart() {
         spotPrice={data.ticker.lastPrice}
       />}
 
+      {data && <DeltaMarketSection delta={data.deltaContext} binanceSpotPrice={data.ticker.lastPrice} />}
+
       <footer className="market-footer">
         <span><i /> Binance Spot BTCUSDT analysis · Delta BTCUSD derivative context</span>
         <span>{updatedAt ? `Updated ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"}</span>
@@ -506,7 +564,7 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
           <strong>{currencyCompact(delta.openInterestUsd || 0)}</strong>
           <span>{compact(delta.openInterestBtc || 0)} BTC outstanding</span>
         </div>
-        <OiSparkline points={delta.openInterestHistory || []} />
+        <OiSparkline points={delta.openInterestHistory || []} markPrice={delta.markPrice || 0} />
         <div className="delta-metrics">
           <ContextMetric label="Mark price" value={money(delta.markPrice || 0)} />
           <ContextMetric label="Index price" value={money(delta.indexPrice || 0)} />
@@ -536,6 +594,131 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
       </div>
     </article>
   </section>;
+}
+
+function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; binanceSpotPrice: number }) {
+  if (!delta.available) return <section className="delta-market-section delta-market-empty" aria-label="Delta BTCUSD market data">
+    <WifiOff /><div><h2>Delta BTCUSD market data</h2><p>{delta.lastError || "Waiting for the Delta public market feed."}</p></div>
+  </section>;
+
+  const ltpChange = delta.lastPriceChange24hPercent || 0;
+  const oiChange = delta.openInterestChange6hUsd || 0;
+  const basisToBinance = (delta.markPrice || 0) - binanceSpotPrice;
+  const bandLow = delta.priceBandLower || 0;
+  const bandHigh = delta.priceBandUpper || 0;
+  const bandPosition = bandHigh > bandLow ? Math.max(0, Math.min(100, ((delta.lastPrice || 0) - bandLow) / (bandHigh - bandLow) * 100)) : 50;
+  const bids = delta.orderBook?.bids || [];
+  const asks = delta.orderBook?.asks || [];
+  const trades = delta.recentTrades || [];
+
+  return <section className="delta-market-section" aria-label="Complete Delta Exchange BTCUSD public market data">
+    <header className="delta-section-header">
+      <div><small>DELTA EXCHANGE · EXECUTION MARKET</small><h2>BTCUSD perpetual intelligence</h2><p>Public derivative data from the same venue used for strategy execution.</p></div>
+      <div className="delta-live-state"><i /><span>{delta.tradingStatus || "Live"}</span><time>{delta.receivedAt ? `Updated ${new Date(delta.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting"}</time></div>
+    </header>
+
+    <div className="delta-tape">
+      <DeltaMetric label="Last price" value={money(delta.lastPrice || 0)} note={`${signedPercent(ltpChange)} · 24h`} tone={ltpChange >= 0 ? "up" : "down"} />
+      <DeltaMetric label="Mark price" value={money(delta.markPrice || 0)} note={`${signedPercent(delta.markChange24hPercent || 0)} · 24h`} />
+      <DeltaMetric label="Index price" value={money(delta.indexPrice || 0)} note={delta.product?.indexSymbol || ".DEXBTUSD"} />
+      <DeltaMetric label="Open interest" value={currencyCompact(delta.openInterestUsd || 0)} note={`${signedCurrencyCompact(oiChange)} · 6h`} tone={oiChange >= 0 ? "up" : "down"} />
+      <DeltaMetric label="Funding rate" value={`${(delta.fundingRatePercent || 0).toFixed(4)}%`} note={`${delta.product?.fundingIntervalHours || 8}h interval`} tone={(delta.fundingRatePercent || 0) >= 0 ? "up" : "down"} />
+      <DeltaMetric label="24h volume" value={`${compact(delta.volume24hBtc || 0)} BTC`} note={`${compact(delta.volume24hContracts || 0)} contracts`} />
+      <DeltaMetric label="24h turnover" value={currencyCompact(delta.turnover24hUsd || 0)} note="USD notional" />
+      <DeltaMetric label="Mark / Binance basis" value={signedMoney(basisToBinance)} note={`${signedPercent(delta.markBasisPercent || 0)} Delta mark/index`} tone={basisToBinance >= 0 ? "up" : "down"} />
+    </div>
+
+    <div className="delta-range-strip">
+      <div><span>24h low</span><strong>{money(delta.low24h || 0)}</strong></div>
+      <div className="delta-band-track" aria-label={`Last price is ${bandPosition.toFixed(1)} percent through the Delta price band`}>
+        <i style={{ left: `${bandPosition}%` }} /><span>Allowed price band</span>
+      </div>
+      <div><span>24h high</span><strong>{money(delta.high24h || 0)}</strong></div>
+      <div><span>Band floor</span><strong>{money(bandLow)}</strong></div>
+      <div><span>Band ceiling</span><strong>{money(bandHigh)}</strong></div>
+    </div>
+
+    <div className="delta-history-grid">
+      <DeltaSeriesChart title="Open interest · 48h" points={delta.openInterestHistory || []} format={value => `${compact(value)} BTC`} />
+      <DeltaSeriesChart title="Funding rate · 48h" points={delta.fundingHistory || []} format={value => `${value.toFixed(4)}%`} zeroLine />
+      <DeltaSeriesChart title="Mark price · 48h" points={delta.markPriceHistory || []} format={value => money(value)} />
+    </div>
+
+    <div className="delta-detail-grid">
+      <article className="delta-data-panel delta-book-panel">
+        <DetailHeader eyebrow="DELTA L2" title="Execution order book" meta="Top 15 public levels · 5s snapshot" />
+        <div className="delta-quote-row"><span><small>Best bid</small><strong className="up">{bookPrice(delta.bestBid || 0)}</strong><em>{compact(delta.bidSizeContracts || 0)} contracts</em></span><b>{((delta.bestAsk || 0) - (delta.bestBid || 0)).toFixed(2)} spread</b><span><small>Best ask</small><strong className="down">{bookPrice(delta.bestAsk || 0)}</strong><em>{compact(delta.askSizeContracts || 0)} contracts</em></span></div>
+        <DeltaOrderBook bids={bids} asks={asks} />
+      </article>
+
+      <article className="delta-data-panel">
+        <DetailHeader eyebrow="DELTA TAPE" title="Recent BTCUSD trades" meta="Public taker-side executions" />
+        <div className="delta-trade-head"><span>Price</span><span>Side</span><span>Size</span><span>Notional</span><span>Time</span></div>
+        <div className="delta-trade-list">
+          {trades.slice(0, 14).map(trade => <div className="delta-trade-row" key={trade.id}>
+            <strong className={trade.side === "buy" ? "up" : "down"}>{bookPrice(trade.price)}</strong><span className={trade.side}>{trade.side}</span><span>{trade.sizeBtc.toFixed(3)} BTC</span><span>{currencyCompact(trade.notionalUsd)}</span><time>{new Date(trade.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+          </div>)}
+          {!trades.length && <div className="delta-list-empty">Waiting for Delta public trades…</div>}
+        </div>
+      </article>
+
+      <article className="delta-data-panel delta-contract-panel">
+        <DetailHeader eyebrow="CONTRACT" title="BTCUSD specifications" meta={`Product ID ${delta.product?.productId || 27}`} />
+        <div className="delta-contract-grid">
+          <ContractFact label="Instrument" value={humanize(delta.product?.contractType || delta.instrumentType || "perpetual_futures")} />
+          <ContractFact label="Contract value" value={`${delta.product?.contractValueBtc || delta.contractValueBtc || .001} BTC`} />
+          <ContractFact label="Tick size" value={`$${delta.product?.tickSize || delta.tickSize || .5}`} />
+          <ContractFact label="Default leverage" value={`${delta.product?.defaultLeverage || delta.leverage || 0}×`} />
+          <ContractFact label="Underlying" value={delta.product?.underlyingAsset || "BTC"} />
+          <ContractFact label="Quote / settle" value={`${delta.product?.quotingAsset || "USD"} / ${delta.product?.settlingAsset || "USD"}`} />
+          <ContractFact label="Initial margin" value={`${delta.product?.initialMarginPercent || 0}%`} />
+          <ContractFact label="Maintenance margin" value={`${delta.product?.maintenanceMarginPercent || 0}%`} />
+          <ContractFact label="Maker fee" value={`${(delta.product?.makerFeePercent || 0).toFixed(3)}%`} />
+          <ContractFact label="Taker fee" value={`${(delta.product?.takerFeePercent || 0).toFixed(3)}%`} />
+          <ContractFact label="Position limit" value={`${compact(delta.product?.positionSizeLimitContracts || 0)} contracts`} />
+          <ContractFact label="Index" value={delta.product?.indexSymbol || ".DEXBTUSD"} />
+        </div>
+        <p className="source-note">Delta values describe the BTCUSD perpetual used by this app for execution. Binance values above describe BTCUSDT Spot and remain an independent market reference.</p>
+      </article>
+    </div>
+  </section>;
+}
+
+function DeltaMetric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "up" | "down" }) {
+  return <div className="delta-metric"><small>{label}</small><strong className={tone}>{value}</strong><span>{note}</span></div>;
+}
+
+function DeltaSeriesChart({ title, points, format, zeroLine = false }: { title: string; points: DeltaHistoryPoint[]; format: (value: number) => string; zeroLine?: boolean }) {
+  const values = points.map(point => point.close);
+  if (values.length < 2) return <article className="delta-series-card"><header><small>{title}</small><strong>Collecting…</strong></header><div className="delta-series-empty">Historical series will appear after the Delta refresh.</div></article>;
+  const min = Math.min(...values, ...(zeroLine ? [0] : []));
+  const max = Math.max(...values, ...(zeroLine ? [0] : []));
+  const range = Math.max(Math.abs(max) * .000001, max - min, 1e-9);
+  const y = (value: number) => 108 - (value - min) / range * 88;
+  const line = values.map((value, index) => `${12 + index / (values.length - 1) * 336},${y(value)}`).join(" ");
+  const change = values.at(-1)! - values[0];
+  return <article className="delta-series-card">
+    <header><small>{title}</small><strong>{format(values.at(-1)!)}</strong><span className={change >= 0 ? "up" : "down"}>{change >= 0 ? "+" : ""}{format(change)}</span></header>
+    <svg viewBox="0 0 360 124" preserveAspectRatio="none" role="img" aria-label={`${title} from ${format(values[0])} to ${format(values.at(-1)!)}`}>
+      {zeroLine && min < 0 && max > 0 && <line className="delta-zero-line" x1="12" x2="348" y1={y(0)} y2={y(0)} />}
+      <polyline points={line} />
+      <circle cx="348" cy={y(values.at(-1)!)} r="3" />
+    </svg>
+    <footer><span>{new Date(points[0].time).toLocaleDateString([], { day: "2-digit", month: "short" })}</span><span>Now</span></footer>
+  </article>;
+}
+
+function DeltaOrderBook({ bids, asks }: { bids: DeltaBookLevel[]; asks: DeltaBookLevel[] }) {
+  const maxSize = Math.max(1, ...bids.map(level => level[1]), ...asks.map(level => level[1]));
+  const side = (levels: DeltaBookLevel[], kind: "bid" | "ask") => <div className="delta-book-side">
+    <div className="delta-book-head"><span>{kind} price</span><span>Contracts</span><span>BTC</span></div>
+    {levels.slice(0, 10).map(level => <div className="delta-book-row" key={`${kind}-${level[0]}`}><i className={kind} style={{ width: `${level[1] / maxSize * 100}%` }} /><strong className={kind === "bid" ? "up" : "down"}>{bookPrice(level[0])}</strong><span>{compact(level[1])}</span><span>{level[3].toFixed(3)}</span></div>)}
+  </div>;
+  return <div className="delta-order-book">{side(bids, "bid")}{side(asks, "ask")}</div>;
+}
+
+function ContractFact({ label, value }: { label: string; value: string }) {
+  return <div><small>{label}</small><strong>{value}</strong></div>;
 }
 
 type CumulativeLevel = { price: number; quantity: number; total: number };
@@ -592,8 +775,8 @@ function OrderBookTable({ bids, asks }: { bids: CumulativeLevel[]; asks: Cumulat
   </div>;
 }
 
-function OiSparkline({ points }: { points: OpenInterestPoint[] }) {
-  const values = points.map(point => point.valueUsd).filter(value => value > 0);
+function OiSparkline({ points, markPrice }: { points: OpenInterestPoint[]; markPrice: number }) {
+  const values = points.map(point => point.valueUsd || point.close * markPrice).filter(value => value > 0);
   if (values.length < 2) return <div className="oi-chart-empty">Collecting OI history…</div>;
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -633,6 +816,18 @@ function signedMoney(value: number) {
 
 function currencyCompact(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 }).format(value);
+}
+
+function signedCurrencyCompact(value: number) {
+  return `${value >= 0 ? "+" : "-"}${currencyCompact(Math.abs(value))}`;
+}
+
+function signedPercent(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(3)}%`;
+}
+
+function humanize(value: string) {
+  return value.replaceAll("_", " ");
 }
 
 function price(value: number) {
