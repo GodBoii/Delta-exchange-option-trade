@@ -6,12 +6,14 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env.local
+      - ./backend/.env
     environment:
       FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
       FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
       MAX_ENTRY_LATENESS_SECONDS: "60"
+      NEWS_ANALYZER_URL: http://news-analyzer:8002
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped
@@ -21,6 +23,24 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 15s
+      retries: 3
+
+  news-analyzer:
+    container_name: news-analyzer
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.news-analyzer
+    env_file:
+      - ./backend/.env
+    expose:
+      - "8002"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)); assert data['success'] and data['service'] == 'news-analyzer'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
       retries: 3
 
   binace:
