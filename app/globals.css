@@ -261,3 +261,93 @@ body:before{content:"";position:fixed;inset:0;z-index:100;pointer-events:none;op
 :focus-visible{outline:2px solid #a9b7bc;outline-offset:3px}
 @media (max-width:800px){.topbar{height:68px}.settings-panel:first-child,.settings-panel:nth-child(2),.settings-panel.wide{border-radius:0}.settings-panel:first-child{border-radius:16px 16px 0 0}.settings-panel.wide{border-radius:0 0 16px 16px}.main-nav{background:rgba(8,10,12,.9);border-color:rgba(255,255,255,.08);backdrop-filter:blur(24px)}}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.nav-button,.icon-button,.primary-button,.secondary-button,.ghost-button,.market-intervals button,.segmented-field .t-tab{transition:none!important}}
+
+/* Market analysis readability pass: +1px type scale with stronger hierarchy. */
+.market-terminal .market-symbol strong{font-size:16px;font-weight:650}
+.market-terminal .market-symbol small{font-size:11px;font-weight:500;color:#a3adb2}
+.market-terminal .market-source{font-size:9px;font-weight:600;color:#aeb8bc}
+.market-terminal .market-intervals button{font-size:11px;font-weight:650}
+.market-terminal .market-feed-state{font-size:11px;font-weight:600;color:#a3adb2}
+.market-terminal .market-last-price small{font-size:10px;font-weight:600;color:#a3adb2}
+.market-terminal .market-last-price strong{font-size:26px;font-weight:650}
+.market-terminal .market-last-price span{font-size:11px;font-weight:600}
+.market-terminal .market-stat small{font-size:9px;font-weight:600;color:#859096}
+.market-terminal .market-stat strong{font-size:13px;font-weight:650}
+.market-terminal .chart-readout{font-size:10px;font-weight:500;color:#9ca6ab}
+.market-terminal .chart-readout b{font-weight:650}
+.market-terminal .chart-grid text{font-size:11px;fill:#7d888d;font-weight:500}
+.market-terminal .last-price-text{font-size:11px}
+.market-terminal .chart-loading span{font-size:12px;font-weight:600}
+.market-terminal .chart-error h3{font-size:15px;font-weight:650}
+.market-terminal .chart-error p{font-size:11px;font-weight:500}
+.market-terminal .chart-stale-banner{font-size:10px;font-weight:600}
+.market-terminal .market-footer{font-size:10px;font-weight:500;color:#79838a}
+.market-terminal .analysis-metric small{font-size:9px;font-weight:650;color:#859096}
+.market-terminal .analysis-metric strong{font-size:16px;font-weight:650}
+.market-terminal .analysis-metric span{font-size:9px;font-weight:500;color:#7f8a90}
+.market-terminal .detail-header small{font-size:9px;font-weight:650;color:#8d999e}
+.market-terminal .detail-header h3{font-size:16px;font-weight:650}
+.market-terminal .detail-header>span{font-size:9px;font-weight:500;color:#7f8a90}
+.market-terminal .depth-summary small,
+.market-terminal .oi-hero small,
+.market-terminal .trade-flow-summary small{font-size:9px;font-weight:650;color:#859096}
+.market-terminal .depth-summary strong{font-size:16px;font-weight:650}
+.market-terminal .spread-stat strong{font-size:12px;font-weight:650}
+.market-terminal .depth-chart text{font-size:9px;fill:#7d888d;font-weight:500}
+.market-terminal .balance-labels{font-size:9px;font-weight:500;color:#7f8a90}
+.market-terminal .book-head{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .book-row{font-size:10px;font-weight:550;color:#bac3c6}
+.market-terminal .oi-hero strong{font-size:32px;font-weight:650}
+.market-terminal .oi-hero span{font-size:10px;font-weight:500;color:#9ca6ab}
+.market-terminal .oi-chart-wrap>span,
+.market-terminal .oi-chart-empty{font-size:9px;font-weight:500;color:#7f8a90}
+.market-terminal .delta-metrics small{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-metrics strong{font-size:12px;font-weight:650}
+.market-terminal .basis-row{font-size:10px;font-weight:500}
+.market-terminal .basis-row strong{font-size:12px;font-weight:650}
+.market-terminal .source-note{font-size:9px;font-weight:500;color:#7f8a90}
+.market-terminal .detail-empty p{font-size:10px;font-weight:500}
+.market-terminal .trade-flow-summary strong{font-size:11px;font-weight:650}
+.market-terminal .trade-tile{font-size:9px;font-weight:550}
+.market-terminal .trade-tile strong{font-size:9px;font-weight:650}
+.market-terminal .trade-tile time{color:#7f8a90}
+.market-terminal .delta-section-header small{font-size:9px;font-weight:650;color:#89969a}
+.market-terminal .delta-section-header h2{font-size:clamp(22px,2.4vw,32px);font-weight:650}
+.market-terminal .delta-section-header p{font-size:11px;font-weight:500;color:#9ca6ab}
+.market-terminal .delta-live-state{font-size:10px;font-weight:600;color:#a6b0b4}
+.market-terminal .delta-live-state time{font-size:9px;color:#7f8a90}
+.market-terminal .delta-metric small{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-metric strong{font-size:17px;font-weight:650}
+.market-terminal .delta-metric span{font-size:9px;font-weight:500;color:#7f8a90}
+.market-terminal .delta-range-strip span{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-range-strip strong{font-size:11px;font-weight:650}
+.market-terminal .delta-series-card header small{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-series-card header strong{font-size:16px;font-weight:650}
+.market-terminal .delta-series-card header span{font-size:9px;font-weight:600}
+.market-terminal .delta-series-card footer{font-size:8px;font-weight:500;color:#7f8a90}
+.market-terminal .delta-series-empty{font-size:9px;font-weight:500}
+.market-terminal .delta-quote-row small{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-quote-row strong{font-size:16px;font-weight:650}
+.market-terminal .delta-quote-row em,
+.market-terminal .delta-quote-row>b{font-size:9px;font-weight:550;color:#7f8a90}
+.market-terminal .delta-book-head,
+.market-terminal .delta-trade-head{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-book-row,
+.market-terminal .delta-trade-row{font-size:9px;font-weight:550}
+.market-terminal .delta-book-row strong,
+.market-terminal .delta-trade-row strong{font-weight:650}
+.market-terminal .delta-trade-row time{color:#7f8a90}
+.market-terminal .delta-list-empty{font-size:9px;font-weight:500}
+.market-terminal .delta-contract-grid small{font-size:8px;font-weight:650;color:#859096}
+.market-terminal .delta-contract-grid strong{font-size:11px;font-weight:650}
+.market-terminal .delta-market-empty h2{font-size:19px;font-weight:650}
+.market-terminal .delta-market-empty p{font-size:11px;font-weight:500}
+
+@media (max-width:700px){
+  .market-terminal .market-last-price strong{font-size:21px}
+}
+
+@media (max-width:420px){
+  .market-terminal .delta-metric strong{font-size:14px}
+  .market-terminal .delta-quote-row strong{font-size:13px}
+}
