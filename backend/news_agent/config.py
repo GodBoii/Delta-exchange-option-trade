@@ -45,7 +45,7 @@ class NewsAgentSettings:
         load_dotenv(ENV_FILE, override=False)
         return cls(
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
-            model_id=os.getenv("NEWS_AGENT_MODEL", "poolside/laguna-xs-2.1:free"),
+            model_id=os.getenv("NEWS_AGENT_MODEL", "xiaomi/mimo-v2.5"),
             app_name=os.getenv("NEWS_AGENT_APP_NAME", "Delta News Intelligence Prototype"),
             http_referer=os.getenv("NEWS_AGENT_HTTP_REFERER") or None,
             search_backend=os.getenv("NEWS_AGENT_SEARCH_BACKEND", "auto"),
