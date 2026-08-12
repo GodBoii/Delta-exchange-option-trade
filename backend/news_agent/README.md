@@ -15,7 +15,7 @@ The runtime uses one Agno agent. Agno handles tool calls, structured output, ses
 - Persistent Agno sessions in Supabase PostgreSQL through `PostgresDb`.
 - SSRF protections that block localhost, private/reserved addresses, credentials, and nonstandard ports.
 
-The configured `poolside/laguna-xs-2.1:free` fallback model is text-only. This prototype returns images as URLs and metadata for display but does not send image pixels to the model, so the agent is prohibited from claiming visual analysis.
+The configured `deepseek/deepseek-v4-flash-0731` model is accessed through OpenRouter with its maximum supported `xhigh` reasoning effort. This prototype returns images as URLs and metadata for display but does not send image pixels to the model, so the agent is prohibited from claiming visual analysis.
 
 ## Install
 
@@ -88,16 +88,17 @@ Agno v2 stores all runs for a session in one row. This service explicitly uses
 and table are created on the first successful run.
 
 Non-secret operational settings live beside the implementation instead of in
-`.env`: model/session defaults and the 4,096-token report budget are in `config.py`; the 15-second article
-timeout, 20,000-character extraction limit, 2 MB download limit, three-redirect
-limit, and source allowlist are in `tools.py`. The allowlist is empty by
-default, which permits public HTTP(S) domains while still blocking localhost
-and non-public network targets.
+`.env`. The model and session defaults are in `config.py`. The application
+does not impose output-token, completion-token, reasoning-step, tool-call,
+article-time, article-size, extracted-text, redirect-count, or analysis-concurrency
+caps. Up to 15 prior session runs are added to model context. The source
+allowlist is empty by default, which permits public HTTP(S) domains while still
+blocking localhost and non-public network targets.
 
 ## Important limitations
 
 Search results and scraped pages can be incomplete, stale, copyrighted, adversarial, or incorrect. Website terms and robots policies remain applicable. The URL validator reduces SSRF risk but does not turn this prototype into a hardened public scraping proxy. Use an explicit domain allowlist before exposing it as a public service.
 
-OpenRouter model availability, provider routing, pricing, and rate limits can change. The configured free fallback currently advertises tool calling but not native response formatting, so Agno places the Pydantic schema in the prompt and validates the returned JSON locally. The CLI warns if the returned content does not validate. OpenRouter may use free-model inputs and outputs for model improvement; do not send secrets or private trading data through this prototype.
+OpenRouter model availability, context windows, provider routing, pricing, rate limits, and model-side generation limits can change and are not controlled by this application. Agno validates the returned structured report locally. The CLI warns if returned content does not validate. Do not send secrets or private trading data through this prototype.
 
 The production agent uses Agno `PostgresDb` with Supabase. `SUPABASE_DB_URL` is a server-only PostgreSQL connection URI and must never be exposed through a `NEXT_PUBLIC_` variable. The dedicated `news-analyzer` container is the only service that needs this URI and the OpenRouter key. `GET /health` reports `databaseReady`, `databaseSchema`, and `sessionTable`; it never returns the connection URI or password.
