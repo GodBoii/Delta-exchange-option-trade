@@ -63,3 +63,5 @@ Thumbs.db
 # Secrets
 **/secrets/
 secrets/
+
+*.ctl
