@@ -3,9 +3,6 @@ from __future__ import annotations
 import pytest
 
 from news_agent.tools import (
-    MAX_ARTICLE_CHARS,
-    MAX_DOWNLOAD_BYTES,
-    MAX_REDIRECTS,
     UnsafeUrlError,
     canonicalize_url,
     classify_source_url,
@@ -45,12 +42,6 @@ ARTICLE_HTML = """
 """
 
 
-def test_scraper_limits_are_explicit_code_constants() -> None:
-    assert MAX_ARTICLE_CHARS == 20_000
-    assert MAX_DOWNLOAD_BYTES == 2_000_000
-    assert MAX_REDIRECTS == 3
-
-
 def test_canonicalize_url_removes_tracking_and_fragment() -> None:
     value = canonicalize_url("HTTPS://Example.com/story?utm_source=x&id=7#section")
     assert value == "https://example.com/story?id=7"
@@ -73,7 +64,7 @@ def test_validate_public_url_blocks_unsafe_targets(url: str) -> None:
 
 
 def test_parse_article_extracts_metadata_text_and_images() -> None:
-    article = parse_article_html(ARTICLE_HTML, "https://news.example.com/original", 5_000)
+    article = parse_article_html(ARTICLE_HTML, "https://news.example.com/original")
     assert article["title"] == "Bitcoin reacts to a policy announcement"
     assert article["canonical_url"] == "https://news.example.com/story?id=7"
     assert article["publisher"] == "Example News"
@@ -83,6 +74,7 @@ def test_parse_article_extracts_metadata_text_and_images() -> None:
     assert "navigation" not in article["text"]
     assert article["images"][0]["image_url"] == "https://cdn.example.com/lead.jpg"
     assert any(image["alt_text"] == "Bitcoin market chart" for image in article["images"])
+    assert article["text_truncated"] is False
 
 
 def test_source_classification_is_transparent_and_subdomain_aware() -> None:
