@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import socket
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +16,8 @@ from bs4 import BeautifulSoup
 from ddgs import DDGS
 
 from .config import NewsAgentSettings
+
+logger = logging.getLogger(__name__)
 
 USER_AGENT = "DeltaNewsResearchBot/0.1 (+local research prototype)"
 TRACKING_QUERY_PREFIXES = ("utm_",)
@@ -129,6 +133,8 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
     """Fetch a public document without app-imposed size, time, or redirect-count caps."""
     current_url = validate_public_url(url, settings.allowed_domains)
     requested_url = current_url
+    started_at = time.perf_counter()
+    logger.debug("tool.fetch_public_document start url=%s", requested_url)
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9"}
     visited_urls: set[str] = set()
 
@@ -147,6 +153,11 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
                             response=response,
                         )
                     current_url = validate_public_url(urljoin(current_url, location), settings.allowed_domains)
+                    logger.debug(
+                        "tool.fetch_public_document redirect status=%d target=%s",
+                        response.status_code,
+                        current_url,
+                    )
                     continue
 
                 response.raise_for_status()
@@ -154,6 +165,13 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
                 if content_type not in {"text/html", "application/xhtml+xml", "text/plain", ""}:
                     raise ValueError(f"Unsupported article content type: {content_type or 'unknown'}")
                 body = b"".join(response.iter_bytes())
+                logger.debug(
+                    "tool.fetch_public_document complete status=%d bytes=%d elapsed_ms=%d final_url=%s",
+                    response.status_code,
+                    len(body),
+                    round((time.perf_counter() - started_at) * 1_000),
+                    response.url,
+                )
                 return FetchResult(
                     requested_url=requested_url,
                     final_url=str(response.url),
@@ -396,6 +414,7 @@ class NewsResearchTools(Toolkit):
     def read_news_article(self, url: str) -> str:
         """Fetch and extract one public news article, including provenance and image URLs."""
         try:
+            logger.debug("tool.read_news_article start url=%s", url)
             fetched = fetch_public_document(url, self.settings)
             html = fetched.body.decode("utf-8", errors="replace")
             article = parse_article_html(html, fetched.final_url)
@@ -403,13 +422,27 @@ class NewsResearchTools(Toolkit):
             article["final_url"] = fetched.final_url
             article["source_class"] = classify_source_url(article["canonical_url"])["source_class"]
             article["content_type"] = fetched.content_type
+            logger.debug(
+                "tool.read_news_article complete url=%s title=%r text_chars=%d images=%d",
+                url,
+                article.get("title"),
+                len(article.get("text") or ""),
+                len(article.get("images") or []),
+            )
             return json.dumps({"ok": True, "article": article}, ensure_ascii=False)
         except Exception as exc:
+            logger.exception("tool.read_news_article failed url=%s", url)
             return json.dumps({"ok": False, "url": url, "error": str(exc)}, ensure_ascii=False)
 
     def build_news_dossier(self, urls: list[str]) -> str:
         """Fetch article URLs and return an evidence dossier for comparison."""
+        logger.debug("tool.build_news_dossier start urls=%s", urls)
         articles = [json.loads(self.read_news_article(url)) for url in urls]
+        logger.debug(
+            "tool.build_news_dossier complete requested=%d successful=%d",
+            len(urls),
+            sum(bool(item.get("ok")) for item in articles),
+        )
         return json.dumps(
             {
                 "requested": len(urls),
@@ -421,6 +454,7 @@ class NewsResearchTools(Toolkit):
 
     def extract_news_images(self, url: str) -> str:
         """Extract image URLs and provenance from a public article without performing visual analysis."""
+        logger.debug("tool.extract_news_images start url=%s", url)
         result = json.loads(self.read_news_article(url))
         if not result.get("ok"):
             return json.dumps(result, ensure_ascii=False)
@@ -439,10 +473,18 @@ class NewsResearchTools(Toolkit):
     def search_news_images(self, query: str) -> str:
         """Search the public web for news-related image URLs and return their source-page provenance."""
         try:
+            started_at = time.perf_counter()
+            logger.debug("tool.search_news_images start query=%r", query)
             results = DDGS(timeout=None).images(
                 query,
                 safesearch="moderate",
                 max_results=None,
+            )
+            logger.debug(
+                "tool.search_news_images complete query=%r results=%d elapsed_ms=%d",
+                query,
+                len(results),
+                round((time.perf_counter() - started_at) * 1_000),
             )
             normalized = []
             for item in results:
@@ -462,10 +504,12 @@ class NewsResearchTools(Toolkit):
                 ensure_ascii=False,
             )
         except Exception as exc:
+            logger.exception("tool.search_news_images failed query=%r", query)
             return json.dumps({"ok": False, "query": query, "error": str(exc)}, ensure_ascii=False)
 
     def inspect_news_source(self, url: str) -> str:
         """Classify a source domain and explain that domain class does not prove an article's factual accuracy."""
         result = classify_source_url(url)
+        logger.debug("tool.inspect_news_source url=%s classification=%s", url, result)
         result["caveat"] = "Source class is provenance metadata, not a truth or bias score."
         return json.dumps(result, ensure_ascii=False)
