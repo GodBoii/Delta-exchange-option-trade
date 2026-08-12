@@ -2,7 +2,7 @@
 
 This is an isolated, read-only prototype. It is not imported by the Delta FastAPI application or the Binance collector and has no trading tools.
 
-The runtime uses two Agno agents because the small free model is more reliable when research tool selection and the large structured report schema are handled in separate turns. The source researcher searches, opens pages, and collects image provenance. The analyst converts that dossier into `NewsAnalysisReport`.
+The runtime uses one Agno agent. Agno handles tool calls, structured output, session persistence, and PostgreSQL table creation.
 
 ## Capabilities
 
@@ -12,7 +12,7 @@ The runtime uses two Agno agents because the small free model is more reliable w
 - News image search and article image extraction with source-page provenance.
 - Transparent domain classification for official and established sources.
 - Pydantic-validated `NewsAnalysisReport` output when the model follows the prompted schema.
-- Persistent Agno sessions in Supabase PostgreSQL through `PostgresDb`, with the latest configured runs included as conversational context.
+- Persistent Agno sessions in Supabase PostgreSQL through `PostgresDb`.
 - SSRF protections that block localhost, private/reserved addresses, credentials, and nonstandard ports.
 
 The configured `poolside/laguna-xs-2.1:free` fallback model is text-only. This prototype returns images as URLs and metadata for display but does not send image pixels to the model, so the agent is prohibited from claiming visual analysis.
@@ -56,7 +56,7 @@ Continue a named research session across separate CLI runs:
 .venv\Scripts\python.exe -m news_agent --session-id btc-macro --user-id local-user "What changed since the previous report?"
 ```
 
-Without `--session-id`, the CLI uses `news-research-default`. The structured analyst uses that session ID and the source researcher uses the related `<session-id>:research` thread. Session messages, responses, run metadata, and tool calls are written automatically to the configured Supabase PostgreSQL session table. Agno creates the schema and table on first use when `NEWS_AGENT_DB_CREATE_SCHEMA=true`. JSON output includes both session IDs and the run ID.
+Without `--session-id`, the CLI uses `news-research-default`. Session messages, responses, run metadata, and tool calls are written automatically by Agno. `PostgresDb(db_url=...)` creates its tables on first use. JSON output includes the session ID and run ID.
 
 ## Test
 
@@ -74,23 +74,10 @@ Tests do not require an OpenRouter key or live internet access.
 ```text
 OPENROUTER_API_KEY=
 NEWS_AGENT_MODEL=poolside/laguna-xs-2.1:free
-NEWS_AGENT_APP_NAME=Delta News Intelligence Prototype
-NEWS_AGENT_HTTP_REFERER=
-NEWS_AGENT_SEARCH_BACKEND=auto
-NEWS_AGENT_SEARCH_REGION=wt-wt
-NEWS_AGENT_SEARCH_TIMEOUT_SECONDS=12
-NEWS_AGENT_ARTICLE_TIMEOUT_SECONDS=15
-NEWS_AGENT_MAX_ARTICLE_CHARS=20000
-NEWS_AGENT_MAX_DOWNLOAD_BYTES=2000000
-NEWS_AGENT_MAX_REDIRECTS=3
 NEWS_AGENT_ALLOWED_DOMAINS=
 SUPABASE_DB_URL=postgresql://postgres:password@db.project-ref.supabase.co:5432/postgres
-NEWS_AGENT_DB_SCHEMA=ai
-NEWS_AGENT_DB_CREATE_SCHEMA=true
-NEWS_AGENT_SESSION_TABLE=news_agent_sessions
 NEWS_AGENT_DEFAULT_SESSION_ID=news-research-default
 NEWS_AGENT_DEFAULT_USER_ID=local-user
-NEWS_AGENT_HISTORY_RUNS=3
 ```
 
 When `NEWS_AGENT_ALLOWED_DOMAINS` is non-empty, the article reader only fetches those comma-separated domains and their subdomains. Leaving it empty permits public HTTP(S) domains while still blocking non-public network targets.
