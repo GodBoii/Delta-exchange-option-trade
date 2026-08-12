@@ -16,6 +16,10 @@ from ddgs import DDGS
 from .config import NewsAgentSettings
 
 USER_AGENT = "DeltaNewsResearchBot/0.1 (+local research prototype)"
+ARTICLE_TIMEOUT_SECONDS = 15
+MAX_ARTICLE_CHARS = 50_000
+MAX_DOWNLOAD_BYTES = 5_000_000
+MAX_REDIRECTS = 5
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src"}
 
@@ -129,11 +133,11 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
     """Fetch a bounded public document while validating every redirect target."""
     current_url = validate_public_url(url, settings.allowed_domains)
     requested_url = current_url
-    timeout = httpx.Timeout(settings.article_timeout_seconds, connect=min(8, settings.article_timeout_seconds))
+    timeout = httpx.Timeout(ARTICLE_TIMEOUT_SECONDS)
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9"}
 
     with httpx.Client(timeout=timeout, follow_redirects=False, headers=headers) as client:
-        for redirect_index in range(settings.max_redirects + 1):
+        for redirect_index in range(MAX_REDIRECTS + 1):
             with client.stream("GET", current_url) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
@@ -143,7 +147,7 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
                             request=response.request,
                             response=response,
                         )
-                    if redirect_index >= settings.max_redirects:
+                    if redirect_index >= MAX_REDIRECTS:
                         raise UnsafeUrlError("Maximum redirect count exceeded")
                     current_url = validate_public_url(urljoin(current_url, location), settings.allowed_domains)
                     continue
@@ -155,8 +159,8 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
                 body = bytearray()
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
-                    if len(body) > settings.max_download_bytes:
-                        raise ValueError("Article download exceeded NEWS_AGENT_MAX_DOWNLOAD_BYTES")
+                    if len(body) > MAX_DOWNLOAD_BYTES:
+                        raise ValueError("Article download exceeded the safe fetch size")
                 return FetchResult(
                     requested_url=requested_url,
                     final_url=str(response.url),
@@ -401,7 +405,7 @@ class NewsResearchTools(Toolkit):
         try:
             fetched = fetch_public_document(url, self.settings)
             html = fetched.body.decode("utf-8", errors="replace")
-            article = parse_article_html(html, fetched.final_url, self.settings.max_article_chars)
+            article = parse_article_html(html, fetched.final_url, MAX_ARTICLE_CHARS)
             article["requested_url"] = fetched.requested_url
             article["final_url"] = fetched.final_url
             article["source_class"] = classify_source_url(article["canonical_url"])["source_class"]
@@ -411,21 +415,19 @@ class NewsResearchTools(Toolkit):
             return json.dumps({"ok": False, "url": url, "error": str(exc)}, ensure_ascii=False)
 
     def build_news_dossier(self, urls: list[str]) -> str:
-        """Fetch up to five article URLs and return a compact evidence dossier for comparison."""
-        limited_urls = urls[:5]
-        articles = [json.loads(self.read_news_article(url)) for url in limited_urls]
+        """Fetch article URLs and return an evidence dossier for comparison."""
+        articles = [json.loads(self.read_news_article(url)) for url in urls]
         return json.dumps(
             {
-                "requested": len(limited_urls),
+                "requested": len(urls),
                 "successful": sum(bool(item.get("ok")) for item in articles),
                 "items": articles,
             },
             ensure_ascii=False,
         )
 
-    def extract_news_images(self, url: str, max_images: int = 6) -> str:
+    def extract_news_images(self, url: str) -> str:
         """Extract image URLs and provenance from a public article without performing visual analysis."""
-        max_images = max(1, min(12, max_images))
         result = json.loads(self.read_news_article(url))
         if not result.get("ok"):
             return json.dumps(result, ensure_ascii=False)
@@ -435,21 +437,18 @@ class NewsResearchTools(Toolkit):
                 "ok": True,
                 "title": article.get("title"),
                 "source_page_url": article.get("canonical_url"),
-                "images": article.get("images", [])[:max_images],
+                "images": article.get("images", []),
                 "visual_analysis_performed": False,
             },
             ensure_ascii=False,
         )
 
-    def search_news_images(self, query: str, max_results: int = 6) -> str:
+    def search_news_images(self, query: str) -> str:
         """Search the public web for news-related image URLs and return their source-page provenance."""
-        max_results = max(1, min(12, max_results))
         try:
-            results = DDGS(timeout=self.settings.search_timeout_seconds).images(
+            results = DDGS().images(
                 query,
-                region=self.settings.search_region,
                 safesearch="moderate",
-                max_results=max_results,
             )
             normalized = []
             for item in results:
