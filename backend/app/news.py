@@ -67,6 +67,15 @@ async def get_news_session(session_id: SessionPath, user: RequiredUser) -> dict[
     )
 
 
+@router.get("/sessions")
+async def list_news_sessions(user: RequiredUser) -> dict[str, Any]:
+    return await _news_analyzer_request(
+        "GET",
+        "/v1/sessions",
+        user_id=str(user["id"]),
+    )
+
+
 @router.post("/analyze")
 async def analyze_news(body: NewsAnalysisRequest, user: RequiredUser) -> dict[str, Any]:
     return await _news_analyzer_request(
