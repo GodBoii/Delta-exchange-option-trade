@@ -10,12 +10,11 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = BACKEND_DIR / ".env"
 
-MODEL_ID = "poolside/laguna-xs-2.1:free"
-MODEL_MAX_TOKENS = 4_096
+MODEL_ID = "deepseek/deepseek-v4-flash-0731"
 SESSION_TABLE = "news_agent_sessions"
 DB_SCHEMA = "ai"
 DB_CREATE_SCHEMA = True
-HISTORY_RUNS = 3
+HISTORY_RUNS = 15
 DEFAULT_SESSION_ID = "news-research-default"
 DEFAULT_USER_ID = "local-user"
 ALLOWED_DOMAINS: tuple[str, ...] = ()
@@ -25,7 +24,6 @@ def _with_connection_defaults(url: str) -> str:
     parts = urlsplit(url)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     query.setdefault("sslmode", "require")
-    query.setdefault("connect_timeout", "10")
     query.setdefault("keepalives", "1")
     query.setdefault("keepalives_idle", "30")
     query.setdefault("keepalives_interval", "10")
@@ -42,7 +40,7 @@ class NewsAgentSettings:
     session_table: str
     db_schema: str
     db_create_schema: bool
-    history_runs: int
+    history_runs: int | None
     default_session_id: str
     default_user_id: str
 
