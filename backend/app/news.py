@@ -18,7 +18,7 @@ SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,80}$")]
 class NewsAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=12, max_length=3_000)
+    query: str = Field(min_length=1)
     sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]{1,80}$")
 
     @field_validator("query")
