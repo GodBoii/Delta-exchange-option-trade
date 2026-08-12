@@ -13,7 +13,6 @@ services:
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
       MAX_ENTRY_LATENESS_SECONDS: "60"
-      NEWS_ANALYZER_URL: http://news-analyzer:8002
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped
@@ -37,9 +36,9 @@ services:
     restart: unless-stopped
     init: true
     healthcheck:
-      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)); assert data['success'] and data['service'] == 'news-analyzer'"]
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=12)); assert data['success'] and data['service'] == 'news-analyzer' and data['databaseReady']"]
       interval: 30s
-      timeout: 5s
+      timeout: 15s
       start_period: 10s
       retries: 3
 
@@ -58,6 +57,7 @@ services:
       DELTA_HISTORY_SECONDS: ${DELTA_HISTORY_SECONDS:-300}
       MARKET_CACHE_SECONDS: ${MARKET_CACHE_SECONDS:-2}
       MARKET_BROADCAST_SECONDS: ${MARKET_BROADCAST_SECONDS:-0.25}
+      WEBSOCKETS_MAX_LINE_LENGTH: ${WEBSOCKETS_MAX_LINE_LENGTH:-32768}
       CVD_WINDOW_SECONDS: ${CVD_WINDOW_SECONDS:-900}
       FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
       FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
