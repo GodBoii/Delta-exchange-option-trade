@@ -31,6 +31,8 @@ services:
       dockerfile: Dockerfile.news-analyzer
     env_file:
       - ./backend/.env
+    environment:
+      NEWS_LOG_LEVEL: DEBUG
     expose:
       - "8002"
     restart: unless-stopped
