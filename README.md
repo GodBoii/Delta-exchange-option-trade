@@ -74,11 +74,26 @@ docker compose logs -f delta-exchange binace news-analyzer
 
 The Delta trading API is available at `http://localhost:8000`; the Binance Spot analysis API is available at `http://localhost:8001`. The private News Analyzer listens only inside the Compose network on port 8002.
 
+The connected workspace's **News intelligence** tab includes **Run analysis**.
+It sends an authenticated request through the Delta API gateway, runs the Agno
+agent, and replaces the page with the newly persisted structured outcome.
+Earlier runs remain available as session history.
+
 Compose creates the requested containers:
 
 - `Delta-exchange`: existing authenticated Delta trading API and scheduler.
 - `Binace`: public Binance `BTCUSDT` Spot analysis API. The spelling intentionally matches the requested container name.
 - `news-analyzer`: private Agno/OpenRouter research service with Supabase PostgreSQL session persistence.
+
+For News Analyzer persistence, copy the **Session pooler** URI from the same
+Supabase project used by the application into
+`backend/.env` as `SUPABASE_DB_URL`. Shared-pooler usernames use
+`postgres.<project-ref>`; a project mismatch or stale database password will
+make `databaseReady` false at `GET /health`. By default, Agno stores the
+session row in `ai.news_agent_sessions`. Non-secret News Analyzer settings are
+code constants in `backend/news_agent/config.py` and
+`backend/news_agent/tools.py`; `backend/.env` contains only the OpenRouter key
+and Supabase database URI.
 
 The market service exposes:
 
