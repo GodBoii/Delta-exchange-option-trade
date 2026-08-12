@@ -83,7 +83,6 @@ type SavedOutcome = {
 type NewsAnalysisResponse = SavedOutcome & {
   success: boolean;
   sessionId: string;
-  researchSessionId: string;
   researchTools: string[];
   elapsedMs?: number;
   history: SavedOutcome[];
