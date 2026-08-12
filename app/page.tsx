@@ -183,9 +183,12 @@ async function apiOrigin() {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const origin = await apiOrigin();
   const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
+  const signal = init && Object.prototype.hasOwnProperty.call(init, "signal")
+    ? init.signal
+    : AbortSignal.timeout(8_000);
   const response = await fetch(`${origin}${url}`, {
     ...init,
-    signal: init?.signal ?? AbortSignal.timeout(8_000),
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
