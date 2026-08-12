@@ -32,7 +32,7 @@ class ServiceError(Exception):
 class NewsAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=12, max_length=3_000)
+    query: str = Field(min_length=1)
     sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]{1,80}$")
     userId: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
 
@@ -66,7 +66,7 @@ def _parse_saved_report(content: Any) -> NewsAnalysisReport:
     return NewsAnalysisReport.model_validate(content)
 
 
-def _valid_outcomes(session: Any, *, limit: int = 13) -> list[tuple[NewsAnalysisReport, Any]]:
+def _valid_outcomes(session: Any) -> list[tuple[NewsAnalysisReport, Any]]:
     if not session or not session.runs:
         return []
     outcomes: list[tuple[NewsAnalysisReport, Any]] = []
@@ -75,15 +75,12 @@ def _valid_outcomes(session: Any, *, limit: int = 13) -> list[tuple[NewsAnalysis
             outcomes.append((_parse_saved_report(run.content), run))
         except Exception:
             continue
-        if len(outcomes) >= limit:
-            break
     return outcomes
 
 
 def _response_payload(
     *,
     session: Any,
-    research_session: Any,
     public_session_id: str,
     elapsed_ms: int | None = None,
 ) -> dict[str, Any]:
@@ -102,10 +99,9 @@ def _response_payload(
     payload: dict[str, Any] = {
         "success": True,
         "sessionId": public_session_id,
-        "researchSessionId": f"{public_session_id}:research",
         "runId": run.run_id,
         "model": run.model or settings.model_id,
-        "researchTools": _tool_names(research_session),
+        "researchTools": _tool_names(session),
         "report": report.model_dump(mode="json"),
         "history": history,
     }
@@ -122,10 +118,8 @@ def _load_response(user_id: str, session_id: str, elapsed_ms: int | None = None)
         raise ServiceError(503, str(exc), "news_database_not_configured") from exc
     try:
         session = db.get_session(stored_session_id, user_id=user_id)
-        research_session = db.get_session(f"{stored_session_id}:research", user_id=user_id)
         return _response_payload(
             session=session,
-            research_session=research_session,
             public_session_id=session_id,
             elapsed_ms=elapsed_ms,
         )
