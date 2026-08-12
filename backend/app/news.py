@@ -11,14 +11,14 @@ router = APIRouter(prefix="/api/news", tags=["news intelligence"])
 news_analyzer_url = "http://news-analyzer:8002"
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
-SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,80}$")]
+SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]+$")]
 
 
 class NewsAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
-    sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]+$")
 
     @field_validator("query")
     @classmethod
@@ -32,10 +32,9 @@ async def _news_analyzer_request(
     *,
     user_id: str,
     body: dict[str, Any] | None = None,
-    timeout: float = 15.0,
 ) -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=5.0)) as client:
+        async with httpx.AsyncClient(timeout=None) as client:
             response = await client.request(
                 method,
                 f"{news_analyzer_url.rstrip('/')}{path}",
@@ -75,5 +74,4 @@ async def analyze_news(body: NewsAnalysisRequest, user: RequiredUser) -> dict[st
         "/v1/analyze",
         user_id=str(user["id"]),
         body=body.model_dump(),
-        timeout=300.0,
     )
