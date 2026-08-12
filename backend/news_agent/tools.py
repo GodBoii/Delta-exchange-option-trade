@@ -17,9 +17,9 @@ from .config import NewsAgentSettings
 
 USER_AGENT = "DeltaNewsResearchBot/0.1 (+local research prototype)"
 ARTICLE_TIMEOUT_SECONDS = 15
-MAX_ARTICLE_CHARS = 50_000
-MAX_DOWNLOAD_BYTES = 5_000_000
-MAX_REDIRECTS = 5
+MAX_ARTICLE_CHARS = 20_000
+MAX_DOWNLOAD_BYTES = 2_000_000
+MAX_REDIRECTS = 3
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src"}
 
@@ -109,7 +109,7 @@ def validate_public_url(url: str, allowed_domains: tuple[str, ...] = ()) -> str:
     if hostname == "localhost" or hostname.endswith(".localhost"):
         raise UnsafeUrlError("Localhost URLs are not allowed")
     if allowed_domains and not any(_registrable_match(hostname, domain) for domain in allowed_domains):
-        raise UnsafeUrlError("URL domain is not in NEWS_AGENT_ALLOWED_DOMAINS")
+        raise UnsafeUrlError("URL domain is not in the configured news-source allowlist")
 
     try:
         literal_address = ipaddress.ip_address(hostname)
