@@ -3,6 +3,9 @@ from __future__ import annotations
 import pytest
 
 from news_agent.tools import (
+    MAX_ARTICLE_CHARS,
+    MAX_DOWNLOAD_BYTES,
+    MAX_REDIRECTS,
     UnsafeUrlError,
     canonicalize_url,
     classify_source_url,
@@ -40,6 +43,12 @@ ARTICLE_HTML = """
   </body>
 </html>
 """
+
+
+def test_scraper_limits_are_explicit_code_constants() -> None:
+    assert MAX_ARTICLE_CHARS == 20_000
+    assert MAX_DOWNLOAD_BYTES == 2_000_000
+    assert MAX_REDIRECTS == 3
 
 
 def test_canonicalize_url_removes_tracking_and_fragment() -> None:
