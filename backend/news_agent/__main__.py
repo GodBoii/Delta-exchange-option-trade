@@ -104,7 +104,6 @@ def main() -> int:
             output = json.dumps(
                 {
                     "session_id": session_id,
-                    "research_session_id": pipeline_result.research_session_id,
                     "run_id": run_id,
                     "model": pipeline_result.model_id,
                     "research_tools": pipeline_result.research_tools,
@@ -117,7 +116,6 @@ def main() -> int:
             output = "\n".join(
                 [
                     f"Session: `{session_id}`  ",
-                    f"Research session: `{pipeline_result.research_session_id}`  ",
                     f"Run: `{run_id}`  ",
                     f"Model: `{pipeline_result.model_id}`  ",
                     f"Research tools: `{', '.join(pipeline_result.research_tools)}`",
