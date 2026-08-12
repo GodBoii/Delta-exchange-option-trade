@@ -222,14 +222,17 @@ export default function BtcMarketChart() {
   const [feedState, setFeedState] = useState<FeedState>("connecting");
   const [feedError, setFeedError] = useState("");
   const intervalRef = useRef(interval);
+  const loadRequestRef = useRef(0);
 
   useEffect(() => { intervalRef.current = interval; }, [interval]);
 
   const load = useCallback(async (quiet = false) => {
+    const requestId = ++loadRequestRef.current;
+    const requestedInterval = interval;
     if (!quiet) setLoading(true);
     try {
       const origin = marketDataOrigin();
-      const response = await fetch(`${origin}/api/market/btcusd?interval=${interval}&limit=240`, {
+      const response = await fetch(`${origin}/api/market/btcusd?interval=${requestedInterval}&limit=240`, {
         cache: "no-store",
         signal: AbortSignal.timeout(8_000),
       });
@@ -237,18 +240,25 @@ export default function BtcMarketChart() {
       if (!response.ok || !payload.success) {
         throw new Error(payload.error?.message || `Market request failed (${response.status})`);
       }
-      setData(payload);
+      if (payload.interval !== requestedInterval) {
+        throw new Error(`Market response returned ${payload.interval || "an unknown interval"} instead of ${requestedInterval}`);
+      }
+      if (requestId !== loadRequestRef.current) return;
+      setData({ ...payload, candles: normalizeCandles(payload.candles, 240) });
       setUpdatedAt(new Date());
       setError("");
     } catch (nextError) {
+      if (requestId !== loadRequestRef.current) return;
       setError(nextError instanceof Error ? nextError.message : "BTCUSDT market data is unavailable");
     } finally {
-      if (!quiet) setLoading(false);
+      if (!quiet && requestId === loadRequestRef.current) setLoading(false);
     }
   }, [interval]);
 
   useEffect(() => {
+    setHovered(null);
     void load();
+    return () => { loadRequestRef.current += 1; };
   }, [load]);
 
   useEffect(() => {
@@ -278,12 +288,15 @@ export default function BtcMarketChart() {
           setData(current => {
             if (!current) return current;
             const liveCandle = update.candles[intervalRef.current];
+            const candles = current.interval === intervalRef.current && liveCandle
+              ? mergeCandle(current.candles, liveCandle, 240)
+              : current.candles;
             return {
               ...current,
               symbol: update.symbol,
               source: update.source,
               ticker: { ...current.ticker, ...update.ticker },
-              candles: liveCandle ? mergeCandle(current.candles, liveCandle, 240) : current.candles,
+              candles,
               realtime: update.realtime,
               analysis: update.analysis,
               orderBook: update.orderBook,
@@ -310,7 +323,10 @@ export default function BtcMarketChart() {
     };
   }, []);
 
-  const chart = useMemo(() => chartGeometry(data?.candles || []), [data?.candles]);
+  const chart = useMemo(
+    () => chartGeometry(data?.interval === interval ? data.candles : []),
+    [data?.candles, data?.interval, interval],
+  );
   const activeCandle = chart.candles[hovered ?? Math.max(0, chart.candles.length - 1)];
   const positive = (data?.ticker.priceChangePercent || 0) >= 0;
 
@@ -334,7 +350,16 @@ export default function BtcMarketChart() {
           <span className="market-source">BINANCE</span>
         </div>
         <div className="market-intervals" aria-label="Chart interval">
-          {intervals.map(item => <button key={item.value} aria-pressed={interval === item.value} className={interval === item.value ? "active" : ""} onClick={() => setIntervalValue(item.value)}>{item.label}</button>)}
+          {intervals.map(item => <button
+            key={item.value}
+            aria-pressed={interval === item.value}
+            className={interval === item.value ? "active" : ""}
+            onClick={() => {
+              if (interval === item.value) return;
+              setLoading(true);
+              setIntervalValue(item.value);
+            }}
+          >{item.label}</button>)}
         </div>
         <div className={`market-feed-state${feedState !== "live" ? " stale" : ""}`}><i />{feedLabel(feedState)}</div>
       </header>
@@ -361,7 +386,7 @@ export default function BtcMarketChart() {
       </div>
 
       <div className="chart-stage">
-        {loading && !data ? <ChartLoading /> : data && chart.candles.length ? <svg
+        {loading && !chart.candles.length ? <ChartLoading /> : data && chart.candles.length ? <svg
           className="candlestick-chart"
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
           preserveAspectRatio="none"
@@ -440,10 +465,17 @@ function marketDataWebSocketOrigin() {
 }
 
 function mergeCandle(candles: Candle[], candle: Candle, limit: number) {
-  const next = candles.slice();
-  if (next.length && next[next.length - 1].openTime === candle.openTime) next[next.length - 1] = candle;
-  else next.push(candle);
-  return next.slice(-limit);
+  return normalizeCandles([...candles, candle], limit);
+}
+
+function normalizeCandles(candles: Candle[], limit: number) {
+  const byOpenTime = new Map<number, Candle>();
+  for (const candle of candles) {
+    if (Number.isFinite(candle.openTime)) byOpenTime.set(candle.openTime, candle);
+  }
+  return Array.from(byOpenTime.values())
+    .sort((left, right) => left.openTime - right.openTime)
+    .slice(-limit);
 }
 
 function feedLabel(state: FeedState) {
