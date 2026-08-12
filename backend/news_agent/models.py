@@ -18,10 +18,10 @@ class StrictModel(BaseModel):
 
 
 class SourceReference(StrictModel):
-    title: str = Field(min_length=1, max_length=500)
-    url: str = Field(min_length=8, max_length=2_000)
-    publisher: str | None = Field(default=None, max_length=200)
-    published_at: str | None = Field(default=None, max_length=100)
+    title: str
+    url: str
+    publisher: str | None = None
+    published_at: str | None = None
     source_class: Literal[
         "primary_official",
         "official_organization",
@@ -30,28 +30,28 @@ class SourceReference(StrictModel):
         "aggregator",
         "unknown",
     ]
-    evidence_used: str = Field(min_length=1, max_length=1_000)
+    evidence_used: str
 
 
 class NewsImageReference(StrictModel):
-    image_url: str = Field(min_length=8, max_length=2_000)
-    source_page_url: str = Field(min_length=8, max_length=2_000)
-    alt_text: str | None = Field(default=None, max_length=500)
-    caption: str | None = Field(default=None, max_length=1_000)
-    width: int | None = Field(default=None, ge=1, le=50_000)
-    height: int | None = Field(default=None, ge=1, le=50_000)
+    image_url: str
+    source_page_url: str
+    alt_text: str | None = None
+    caption: str | None = None
+    width: int | None = None
+    height: int | None = None
 
 
 class DirectionalAssessment(StrictModel):
     asset: Literal["BTC", "US_EQUITIES", "USD", "US_RATES", "GOLD", "CRYPTO_BROAD"]
     direction: Literal["bullish", "bearish", "neutral", "mixed", "uncertain"]
     confidence: float = Field(ge=0, le=1)
-    mechanisms: list[str] = Field(default_factory=list, max_length=8)
+    mechanisms: list[str] = Field(default_factory=list)
 
 
 class EventAssessment(StrictModel):
-    headline: str = Field(min_length=1, max_length=500)
-    summary: str = Field(min_length=1, max_length=2_000)
+    headline: str
+    summary: str
     event_type: Literal[
         "monetary_policy",
         "inflation_labor",
@@ -78,15 +78,15 @@ class EventAssessment(StrictModel):
         "retracted",
         "unknown",
     ]
-    entities: list[str] = Field(default_factory=list, max_length=20)
+    entities: list[str] = Field(default_factory=list)
     novelty: float = Field(ge=0, le=1)
     btc_relevance: float = Field(ge=0, le=1)
     volatility_impact: Literal["low", "moderate", "high", "extreme", "uncertain"]
     expected_horizon: Literal["minutes", "hours", "days", "weeks", "uncertain"]
-    directional_assessments: list[DirectionalAssessment] = Field(default_factory=list, max_length=6)
+    directional_assessments: list[DirectionalAssessment] = Field(default_factory=list)
     is_corroborated: bool
-    source_urls: list[str] = Field(min_length=1, max_length=10)
-    uncertainties: list[str] = Field(default_factory=list, max_length=10)
+    source_urls: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
 
     @field_validator("volatility_impact", mode="before")
     @classmethod
@@ -97,20 +97,17 @@ class EventAssessment(StrictModel):
 
 
 class NewsAnalysisReport(StrictModel):
-    query: str = Field(min_length=1, max_length=1_000)
+    query: str
     analyzed_at: datetime
-    executive_summary: str = Field(min_length=1, max_length=4_000)
-    events: list[EventAssessment] = Field(default_factory=list, max_length=12)
+    executive_summary: str
+    events: list[EventAssessment] = Field(default_factory=list)
     aggregate_btc_direction: Literal["bullish", "bearish", "neutral", "mixed", "uncertain"]
     aggregate_volatility_risk: Literal["low", "moderate", "high", "extreme", "uncertain"]
-    contradictions: list[str] = Field(default_factory=list, max_length=10)
-    missing_information: list[str] = Field(default_factory=list, max_length=10)
-    sources: list[SourceReference] = Field(default_factory=list, max_length=20)
-    images: list[NewsImageReference] = Field(default_factory=list, max_length=12)
-    risk_notice: str = Field(
-        default="News analysis is probabilistic research, not a trade instruction or execution signal.",
-        max_length=500,
-    )
+    contradictions: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+    sources: list[SourceReference] = Field(default_factory=list)
+    images: list[NewsImageReference] = Field(default_factory=list)
+    risk_notice: str = "News analysis is probabilistic research, not a trade instruction or execution signal."
 
     @field_validator("aggregate_volatility_risk", mode="before")
     @classmethod
