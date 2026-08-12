@@ -5,7 +5,6 @@ from agno.session.agent import AgentSession
 
 from news_agent import create_news_agent
 from news_agent.config import NewsAgentSettings
-from news_agent.models import NewsAnalysisReport
 
 
 def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
@@ -14,9 +13,10 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
 
     assert agent.model.id == "deepseek/deepseek-v4-flash-0731"
     assert agent.model.reasoning_effort == "xhigh"
+    assert agent.model.supports_native_structured_outputs is False
     assert agent.model.max_tokens is None
     assert agent.model.max_completion_tokens is None
-    assert agent.output_schema is NewsAnalysisReport
+    assert agent.output_schema is None
     assert agent.db is db
     assert agent.add_history_to_context is True
     assert agent.num_history_runs == NewsAgentSettings.load().history_runs
