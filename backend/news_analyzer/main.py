@@ -15,10 +15,8 @@ from news_agent.pipeline import run_news_pipeline
 
 logger = logging.getLogger(__name__)
 settings = NewsAgentSettings.load()
-news_run_lock = asyncio.Lock()
-
-SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,80}$")]
-UserQuery = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]{1,128}$")]
+SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]+$")]
+UserQuery = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]+$")]
 
 
 class ServiceError(Exception):
@@ -33,8 +31,8 @@ class NewsAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
-    sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]{1,80}$")
-    userId: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]+$")
+    userId: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
 
     @field_validator("query")
     @classmethod
@@ -255,5 +253,4 @@ async def analyze_news(body: NewsAnalysisRequest) -> dict[str, Any]:
             "SUPABASE_DB_URL is not configured for News Analyzer",
             "news_database_not_configured",
         )
-    async with news_run_lock:
-        return await asyncio.to_thread(_run_analysis, body)
+    return await asyncio.to_thread(_run_analysis, body)
