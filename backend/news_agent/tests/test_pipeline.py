@@ -13,7 +13,7 @@ from news_agent.pipeline import run_news_pipeline
 class FakeAgent:
     def __init__(self, response: RunOutput) -> None:
         self.response = response
-        self.model = SimpleNamespace(id="poolside/laguna-xs-2.1:free")
+        self.model = SimpleNamespace(id="deepseek/deepseek-v4-flash-0731")
         self.calls: list[dict] = []
 
     def run(self, prompt: str, **kwargs) -> RunOutput:
