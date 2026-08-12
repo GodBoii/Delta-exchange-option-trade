@@ -13,9 +13,12 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     agent = create_news_agent(require_api_key=False, db=db)
 
     assert agent.model.id == "poolside/laguna-xs-2.1:free"
+    assert agent.model.max_tokens == 4_096
     assert agent.output_schema is NewsAnalysisReport
     assert agent.db is db
     assert agent.add_history_to_context is True
+    assert agent.num_history_runs == NewsAgentSettings.load().history_runs
+    assert agent.store_events is True
     assert [type(toolkit).__name__ for toolkit in agent.tools] == ["WebSearchTools", "NewsResearchTools"]
 
     tool_names = {name for toolkit in agent.tools for name in toolkit.functions}
