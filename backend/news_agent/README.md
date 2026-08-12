@@ -2,16 +2,16 @@
 
 This is an isolated, read-only prototype. It is not imported by the Delta FastAPI application or the Binance collector and has no trading tools.
 
-The runtime uses one Agno agent. Agno handles tool calls, structured output, session persistence, and PostgreSQL table creation.
+The runtime uses deterministic evidence collection followed by one Agno synthesis agent. Agno handles the native Markdown response, session persistence, and PostgreSQL table creation.
 
 ## Capabilities
 
 - General web and news search through Agno `WebSearchTools` and DDGS.
-- Bounded BeautifulSoup article extraction with title, publisher, dates, canonical URL, readable text, and image metadata.
+- BeautifulSoup article extraction with title, publisher, dates, canonical URL, readable text, and image metadata.
 - Multi-article evidence dossiers for corroboration and contradiction checks.
 - News image search and article image extraction with source-page provenance.
 - Transparent domain classification for official and established sources.
-- Pydantic-validated `NewsAnalysisReport` output when the model follows the prompted schema.
+- Native model-authored Markdown output with clickable source links; no JSON or structured-output schema is forced.
 - Persistent Agno sessions in Supabase PostgreSQL through `PostgresDb`.
 - SSRF protections that block localhost, private/reserved addresses, credentials, and nonstandard ports.
 
@@ -80,7 +80,7 @@ For the shared Supabase Session pooler, the database username must be
 `postgres.<project-ref>`. Copy the complete URI from **Supabase Dashboard →
 Connect → Session pooler** rather than assembling it by hand, and use the
 intended application project. Percent-encode special characters in the database
-password. The analyzer adds SSL and bounded connection/keepalive settings
+password. The analyzer adds SSL connection settings
 without changing credentials.
 
 Agno v2 stores all runs for a session in one row. This service explicitly uses
@@ -99,6 +99,6 @@ blocking localhost and non-public network targets.
 
 Search results and scraped pages can be incomplete, stale, copyrighted, adversarial, or incorrect. Website terms and robots policies remain applicable. The URL validator reduces SSRF risk but does not turn this prototype into a hardened public scraping proxy. Use an explicit domain allowlist before exposing it as a public service.
 
-OpenRouter model availability, context windows, provider routing, pricing, rate limits, and model-side generation limits can change and are not controlled by this application. Agno validates the returned structured report locally. The CLI warns if returned content does not validate. Do not send secrets or private trading data through this prototype.
+OpenRouter model availability, context windows, provider routing, pricing, rate limits, and model-side generation limits can change and are not controlled by this application. The model writes normal Markdown without a forced response schema. Do not send secrets or private trading data through this prototype.
 
 The production agent uses Agno `PostgresDb` with Supabase. `SUPABASE_DB_URL` is a server-only PostgreSQL connection URI and must never be exposed through a `NEXT_PUBLIC_` variable. The dedicated `news-analyzer` container is the only service that needs this URI and the OpenRouter key. `GET /health` reports `databaseReady`, `databaseSchema`, and `sessionTable`; it never returns the connection URI or password.
