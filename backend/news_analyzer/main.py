@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from news_agent.config import NewsAgentSettings
-from news_agent.database import create_session_db
+from news_agent.database import create_session_db, verify_session_db
 from news_agent.models import NewsAnalysisReport
 from news_agent.pipeline import run_news_pipeline
 
@@ -112,10 +112,7 @@ def _response_payload(
 
 def _load_response(user_id: str, session_id: str, elapsed_ms: int | None = None) -> dict[str, Any]:
     stored_session_id = _stored_session_id(user_id, session_id)
-    try:
-        db = create_session_db(settings)
-    except RuntimeError as exc:
-        raise ServiceError(503, str(exc), "news_database_not_configured") from exc
+    db = _open_session_db()
     try:
         session = db.get_session(stored_session_id, user_id=user_id)
         return _response_payload(
@@ -123,6 +120,78 @@ def _load_response(user_id: str, session_id: str, elapsed_ms: int | None = None)
             public_session_id=session_id,
             elapsed_ms=elapsed_ms,
         )
+    finally:
+        db.close()
+
+
+def _database_service_error(error: Exception) -> ServiceError:
+    if isinstance(error, RuntimeError):
+        message = str(error)
+        code = "news_database_not_configured"
+    else:
+        message = (
+            "News session storage cannot connect to Supabase. Verify SUPABASE_DB_URL uses the Session pooler URI "
+            "for this project and the current database password."
+        )
+        code = "news_database_unavailable"
+    return ServiceError(503, message, code)
+
+
+def _open_session_db():
+    db = None
+    try:
+        db = create_session_db(settings)
+        verify_session_db(db)
+        return db
+    except Exception as exc:
+        if db is not None:
+            db.close()
+        raise _database_service_error(exc) from exc
+
+
+def _database_status() -> tuple[bool, str | None]:
+    db = None
+    try:
+        db = create_session_db(settings)
+        verify_session_db(db)
+        return True, None
+    except Exception as exc:
+        return False, _database_service_error(exc).message
+    finally:
+        if db is not None:
+            db.close()
+
+
+def _run_analysis(body: NewsAnalysisRequest) -> dict[str, Any]:
+    stored_session_id = _stored_session_id(body.userId, body.sessionId)
+    started_at = time.perf_counter()
+    db = _open_session_db()
+    try:
+        result = run_news_pipeline(
+            body.query,
+            settings=settings,
+            session_id=stored_session_id,
+            user_id=body.userId,
+            db=db,
+        )
+        if result.report is None:
+            raise ServiceError(502, "The news agent returned an invalid report", "invalid_news_report")
+        session = db.get_session(stored_session_id, user_id=body.userId)
+        elapsed_ms = round((time.perf_counter() - started_at) * 1_000)
+        return _response_payload(
+            session=session,
+            public_session_id=body.sessionId,
+            elapsed_ms=elapsed_ms,
+        )
+    except ServiceError:
+        raise
+    except Exception as exc:
+        logger.exception("News analysis run failed", exc_info=exc)
+        raise ServiceError(
+            502,
+            "The news agent could not complete the analysis. Check the News Analyzer logs for details.",
+            "news_agent_failed",
+        ) from exc
     finally:
         db.close()
 
@@ -157,11 +226,16 @@ async def unhandled_error_handler(_: Request, error: Exception) -> JSONResponse:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    database_ready, database_error = await asyncio.to_thread(_database_status)
     return {
         "success": True,
         "service": "news-analyzer",
         "database": "supabase-postgres",
         "databaseConfigured": bool(settings.supabase_db_url),
+        "databaseReady": database_ready,
+        "databaseError": database_error,
+        "databaseSchema": settings.db_schema,
+        "sessionTable": settings.session_table,
         "model": settings.model_id,
     }
 
@@ -181,20 +255,5 @@ async def analyze_news(body: NewsAnalysisRequest) -> dict[str, Any]:
             "SUPABASE_DB_URL is not configured for News Analyzer",
             "news_database_not_configured",
         )
-    stored_session_id = _stored_session_id(body.userId, body.sessionId)
-    started_at = time.perf_counter()
-    try:
-        async with news_run_lock:
-            result = await asyncio.to_thread(
-                run_news_pipeline,
-                body.query,
-                settings=settings,
-                session_id=stored_session_id,
-                user_id=body.userId,
-            )
-    except RuntimeError as exc:
-        raise ServiceError(502, str(exc), "news_agent_failed") from exc
-    if result.report is None:
-        raise ServiceError(502, "The news agent returned an invalid report", "invalid_news_report")
-    elapsed_ms = round((time.perf_counter() - started_at) * 1_000)
-    return await asyncio.to_thread(_load_response, body.userId, body.sessionId, elapsed_ms)
+    async with news_run_lock:
+        return await asyncio.to_thread(_run_analysis, body)
