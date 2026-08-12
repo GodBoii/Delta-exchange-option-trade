@@ -5,7 +5,7 @@ from agno.db.base import BaseDb
 from agno.models.openrouter import OpenRouter
 from agno.tools.websearch import WebSearchTools
 
-from .config import NewsAgentSettings
+from .config import MODEL_MAX_TOKENS, NewsAgentSettings
 from .database import create_session_db
 from .models import NewsAnalysisReport
 from .tools import NewsResearchTools
@@ -13,7 +13,7 @@ from .tools import NewsResearchTools
 
 def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRouter:
     api_key = settings.require_api_key() if require_api_key else settings.openrouter_api_key
-    return OpenRouter(id=settings.model_id, api_key=api_key)
+    return OpenRouter(id=settings.model_id, api_key=api_key, max_tokens=MODEL_MAX_TOKENS)
 
 
 def _create_research_tools(settings: NewsAgentSettings) -> list:
@@ -71,6 +71,8 @@ def create_news_agent(
         ),
         db=db or create_session_db(settings),
         add_history_to_context=True,
+        num_history_runs=settings.history_runs,
+        store_events=True,
         tools=_create_research_tools(settings),
         output_schema=NewsAnalysisReport,
         add_datetime_to_context=True,
