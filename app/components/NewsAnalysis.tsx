@@ -121,9 +121,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    request<NewsAnalysisResponse>(`/api/news/sessions/${DEFAULT_SESSION}`, {
-      signal: AbortSignal.timeout(10_000),
-    })
+    request<NewsAnalysisResponse>(`/api/news/sessions/${DEFAULT_SESSION}`)
       .then(setResult)
       .catch(() => undefined)
       .finally(() => setLoadingSaved(false));
@@ -136,7 +134,6 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
       const response = await request<NewsAnalysisResponse>("/api/news/analyze", {
         method: "POST",
         body: JSON.stringify({ query: DEFAULT_QUERY, sessionId: DEFAULT_SESSION }),
-        signal: AbortSignal.timeout(300_000),
       });
       setResult(response);
     } catch (runError) {
