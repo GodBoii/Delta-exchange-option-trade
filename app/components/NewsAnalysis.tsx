@@ -89,6 +89,7 @@ type NewsAnalysisResponse = SavedOutcome & {
 };
 
 const DEFAULT_SESSION = "btc-news-desk";
+const DEFAULT_QUERY = "Analyze today's highest-impact Bitcoin news, corroborate the material claims, and explain the likely BTC direction and volatility channels.";
 
 function readable(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, character => character.toUpperCase());
@@ -116,6 +117,8 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
   const root = useRef<HTMLDivElement>(null);
   const [result, setResult] = useState<NewsAnalysisResponse | null>(null);
   const [loadingSaved, setLoadingSaved] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     request<NewsAnalysisResponse>(`/api/news/sessions/${DEFAULT_SESSION}`, {
@@ -125,6 +128,23 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
       .catch(() => undefined)
       .finally(() => setLoadingSaved(false));
   }, [request]);
+
+  async function runAnalysis() {
+    setRunning(true);
+    setError(null);
+    try {
+      const response = await request<NewsAnalysisResponse>("/api/news/analyze", {
+        method: "POST",
+        body: JSON.stringify({ query: DEFAULT_QUERY, sessionId: DEFAULT_SESSION }),
+        signal: AbortSignal.timeout(300_000),
+      });
+      setResult(response);
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "The news analysis could not be completed.");
+    } finally {
+      setRunning(false);
+    }
+  }
 
   useGSAP(
     () => {
@@ -169,18 +189,26 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
         <div>
           <span className="eyebrow"><span />Agent outputs</span>
           <h1>News intelligence outcomes</h1>
-          <p>A read-only record of the latest BTC market assessment and earlier saved outcomes.</p>
+          <p>Run the BTC news agent, review its latest market assessment, and revisit earlier saved outcomes.</p>
         </div>
-        {result && <div className="outcome-saved-status"><i /><span>Saved in Supabase</span><time>{dateTime(result.report.analyzed_at)}</time></div>}
+        <div className="outcome-page-actions">
+          {result && <div className="outcome-saved-status"><i /><span>Saved in Supabase</span><time>{dateTime(result.report.analyzed_at)}</time></div>}
+          <button className="outcome-run-button" type="button" onClick={() => void runAnalysis()} disabled={running || loadingSaved}>
+            <Sparkles />{running ? "Running analysis…" : "Run analysis"}
+          </button>
+        </div>
       </header>
 
       <main aria-live="polite">
-        {loadingSaved ? (
+        {error && <div className="outcome-error" role="alert"><AlertTriangle /><span>{error}</span></div>}
+        {running ? (
+          <RunningOutcome />
+        ) : loadingSaved ? (
           <OutcomeSkeleton />
         ) : result ? (
           <CurrentOutcome result={result} />
         ) : (
-          <EmptyOutcome />
+          <EmptyOutcome onRun={() => void runAnalysis()} />
         )}
       </main>
 
@@ -303,9 +331,26 @@ function OutcomeSkeleton() {
   </section>;
 }
 
-function EmptyOutcome() {
+function RunningOutcome() {
+  return <section className="outcome-running-stage" aria-label="News agent is running">
+    <div className="outcome-running-copy">
+      <Sparkles />
+      <small>Agno research session</small>
+      <h2>Collecting and corroborating market evidence.</h2>
+      <p>The agent is searching current sources, assessing BTC transmission channels, validating its structured report, and saving the completed run in Supabase.</p>
+      <span><i />Analysis in progress</span>
+    </div>
+  </section>;
+}
+
+function EmptyOutcome({ onRun }: { onRun: () => void }) {
   return <section className="outcome-readonly-state">
     <History />
-    <div><small>No saved output</small><h2>Waiting for an agent outcome.</h2><p>This page only reads saved results. Agent execution will live in a separate workflow.</p></div>
+    <div>
+      <small>No saved output</small>
+      <h2>Run the first news analysis.</h2>
+      <p>The news agent will research current BTC-relevant events, save the Agno session in Supabase, and show the structured outcome here.</p>
+      <button className="outcome-run-button" type="button" onClick={onRun}><Sparkles />Run analysis</button>
+    </div>
   </section>;
 }
