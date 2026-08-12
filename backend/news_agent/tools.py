@@ -16,10 +16,6 @@ from ddgs import DDGS
 from .config import NewsAgentSettings
 
 USER_AGENT = "DeltaNewsResearchBot/0.1 (+local research prototype)"
-ARTICLE_TIMEOUT_SECONDS = 15
-MAX_ARTICLE_CHARS = 20_000
-MAX_DOWNLOAD_BYTES = 2_000_000
-MAX_REDIRECTS = 3
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src"}
 
@@ -130,14 +126,17 @@ def validate_public_url(url: str, allowed_domains: tuple[str, ...] = ()) -> str:
 
 
 def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
-    """Fetch a bounded public document while validating every redirect target."""
+    """Fetch a public document without app-imposed size, time, or redirect-count caps."""
     current_url = validate_public_url(url, settings.allowed_domains)
     requested_url = current_url
-    timeout = httpx.Timeout(ARTICLE_TIMEOUT_SECONDS)
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9"}
+    visited_urls: set[str] = set()
 
-    with httpx.Client(timeout=timeout, follow_redirects=False, headers=headers) as client:
-        for redirect_index in range(MAX_REDIRECTS + 1):
+    with httpx.Client(timeout=None, follow_redirects=False, headers=headers) as client:
+        while True:
+            if current_url in visited_urls:
+                raise UnsafeUrlError("Redirect cycle detected")
+            visited_urls.add(current_url)
             with client.stream("GET", current_url) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
@@ -147,8 +146,6 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
                             request=response.request,
                             response=response,
                         )
-                    if redirect_index >= MAX_REDIRECTS:
-                        raise UnsafeUrlError("Maximum redirect count exceeded")
                     current_url = validate_public_url(urljoin(current_url, location), settings.allowed_domains)
                     continue
 
@@ -156,18 +153,13 @@ def fetch_public_document(url: str, settings: NewsAgentSettings) -> FetchResult:
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if content_type not in {"text/html", "application/xhtml+xml", "text/plain", ""}:
                     raise ValueError(f"Unsupported article content type: {content_type or 'unknown'}")
-                body = bytearray()
-                for chunk in response.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_DOWNLOAD_BYTES:
-                        raise ValueError("Article download exceeded the safe fetch size")
+                body = b"".join(response.iter_bytes())
                 return FetchResult(
                     requested_url=requested_url,
                     final_url=str(response.url),
                     content_type=content_type or "unknown",
-                    body=bytes(body),
+                    body=body,
                 )
-    raise RuntimeError("Document fetch ended without a response")
 
 
 def _first_meta(soup: BeautifulSoup, *selectors: tuple[str, str]) -> str | None:
@@ -240,7 +232,7 @@ def _image_candidates(value: Any) -> list[dict[str, Any]]:
     return []
 
 
-def parse_article_html(html: str, final_url: str, max_article_chars: int) -> dict[str, Any]:
+def parse_article_html(html: str, final_url: str, max_article_chars: int | None = None) -> dict[str, Any]:
     """Extract article metadata, readable text, and image provenance from HTML."""
     soup = BeautifulSoup(html, "lxml")
     article_json = _json_ld_article(soup)
@@ -290,7 +282,8 @@ def parse_article_html(html: str, final_url: str, max_article_chars: int) -> dic
                 if len(text) >= 30:
                     paragraphs.append(text)
         article_body = "\n\n".join(paragraphs)
-    article_body = " ".join(str(article_body or "").split())[:max_article_chars]
+    full_article_body = " ".join(str(article_body or "").split())
+    article_body = full_article_body if max_article_chars is None else full_article_body[:max_article_chars]
 
     images: list[dict[str, Any]] = []
     images.extend(_image_candidates(article_json.get("image")))
@@ -346,7 +339,7 @@ def parse_article_html(html: str, final_url: str, max_article_chars: int) -> dic
         "modified_at": str(modified_at).strip() if modified_at else None,
         "description": str(description).strip() if description else None,
         "text": article_body,
-        "text_truncated": len(str(article_json.get("articleBody") or "")) > max_article_chars,
+        "text_truncated": max_article_chars is not None and len(full_article_body) > max_article_chars,
         "images": normalized_images,
     }
 
@@ -405,7 +398,7 @@ class NewsResearchTools(Toolkit):
         try:
             fetched = fetch_public_document(url, self.settings)
             html = fetched.body.decode("utf-8", errors="replace")
-            article = parse_article_html(html, fetched.final_url, MAX_ARTICLE_CHARS)
+            article = parse_article_html(html, fetched.final_url)
             article["requested_url"] = fetched.requested_url
             article["final_url"] = fetched.final_url
             article["source_class"] = classify_source_url(article["canonical_url"])["source_class"]
@@ -446,9 +439,10 @@ class NewsResearchTools(Toolkit):
     def search_news_images(self, query: str) -> str:
         """Search the public web for news-related image URLs and return their source-page provenance."""
         try:
-            results = DDGS().images(
+            results = DDGS(timeout=None).images(
                 query,
                 safesearch="moderate",
+                max_results=None,
             )
             normalized = []
             for item in results:
