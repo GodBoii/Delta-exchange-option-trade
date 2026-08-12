@@ -73,14 +73,26 @@ Tests do not require an OpenRouter key or live internet access.
 
 ```text
 OPENROUTER_API_KEY=
-NEWS_AGENT_MODEL=poolside/laguna-xs-2.1:free
-NEWS_AGENT_ALLOWED_DOMAINS=
-SUPABASE_DB_URL=postgresql://postgres:password@db.project-ref.supabase.co:5432/postgres
-NEWS_AGENT_DEFAULT_SESSION_ID=news-research-default
-NEWS_AGENT_DEFAULT_USER_ID=local-user
+SUPABASE_DB_URL=postgresql://postgres.project-ref:password@aws-1-region.pooler.supabase.com:5432/postgres
 ```
 
-When `NEWS_AGENT_ALLOWED_DOMAINS` is non-empty, the article reader only fetches those comma-separated domains and their subdomains. Leaving it empty permits public HTTP(S) domains while still blocking non-public network targets.
+For the shared Supabase Session pooler, the database username must be
+`postgres.<project-ref>`. Copy the complete URI from **Supabase Dashboard →
+Connect → Session pooler** rather than assembling it by hand, and use the
+intended application project. Percent-encode special characters in the database
+password. The analyzer adds SSL and bounded connection/keepalive settings
+without changing credentials.
+
+Agno v2 stores all runs for a session in one row. This service explicitly uses
+`ai.news_agent_sessions`, so the table location is deterministic. The schema
+and table are created on the first successful run.
+
+Non-secret operational settings live beside the implementation instead of in
+`.env`: model/session defaults and the 4,096-token report budget are in `config.py`; the 15-second article
+timeout, 20,000-character extraction limit, 2 MB download limit, three-redirect
+limit, and source allowlist are in `tools.py`. The allowlist is empty by
+default, which permits public HTTP(S) domains while still blocking localhost
+and non-public network targets.
 
 ## Important limitations
 
@@ -88,4 +100,4 @@ Search results and scraped pages can be incomplete, stale, copyrighted, adversar
 
 OpenRouter model availability, provider routing, pricing, and rate limits can change. The configured free fallback currently advertises tool calling but not native response formatting, so Agno places the Pydantic schema in the prompt and validates the returned JSON locally. The CLI warns if the returned content does not validate. OpenRouter may use free-model inputs and outputs for model improvement; do not send secrets or private trading data through this prototype.
 
-The production agent uses Agno `PostgresDb` with Supabase. `SUPABASE_DB_URL` is a server-only PostgreSQL connection URI and must never be exposed through a `NEXT_PUBLIC_` variable. The dedicated `news-analyzer` container is the only service that needs this URI and the OpenRouter key.
+The production agent uses Agno `PostgresDb` with Supabase. `SUPABASE_DB_URL` is a server-only PostgreSQL connection URI and must never be exposed through a `NEXT_PUBLIC_` variable. The dedicated `news-analyzer` container is the only service that needs this URI and the OpenRouter key. `GET /health` reports `databaseReady`, `databaseSchema`, and `sessionTable`; it never returns the connection URI or password.
