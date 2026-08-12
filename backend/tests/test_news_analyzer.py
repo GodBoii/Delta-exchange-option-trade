@@ -11,18 +11,11 @@ from agno.session.agent import AgentSession
 
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
-from news_agent.models import NewsAnalysisReport
 from news_analyzer import main
 
 
-def report(direction: str = "mixed") -> NewsAnalysisReport:
-    return NewsAnalysisReport(
-        query="Latest BTC macro news",
-        analyzed_at=datetime.now(UTC),
-        executive_summary="Evidence suggests mixed direction and elevated volatility.",
-        aggregate_btc_direction=direction,
-        aggregate_volatility_risk="high",
-    )
+def report(direction: str = "mixed") -> str:
+    return f"# BTC analysis\n\nThe evidence currently points to a **{direction}** outlook."
 
 
 def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
@@ -57,13 +50,13 @@ def test_saved_supabase_session_shapes_current_and_history() -> None:
             RunOutput(
                 run_id="previous-run",
                 model="model-a",
-                content=report("bearish").model_dump_json(),
+                content=report("bearish"),
                 status=RunStatus.completed,
             ),
             RunOutput(
                 run_id="current-run",
                 model="model-a",
-                content=report("bullish").model_dump(mode="json"),
+                content=report("bullish"),
                 status=RunStatus.completed,
             ),
         ],
@@ -76,9 +69,55 @@ def test_saved_supabase_session_shapes_current_and_history() -> None:
     )
 
     assert response["runId"] == "current-run"
-    assert response["report"]["aggregate_btc_direction"] == "bullish"
+    assert "**bullish**" in response["analysis"]
     assert response["history"][0]["runId"] == "previous-run"
     assert response["researchTools"] == ["search_news"]
+
+
+def test_session_list_is_user_scoped_and_returns_saved_session_summaries(monkeypatch) -> None:
+    owned_session = AgentSession(
+        session_id="news:user-9:btc-news-123",
+        agent_id="news-intelligence-analyst",
+        user_id="user-9",
+        runs=[RunOutput(run_id="owned-run", model="model-a", content=report("bullish"))],
+        created_at=1_786_533_339,
+        updated_at=1_786_533_400,
+    )
+    unrelated_session = AgentSession(
+        session_id="news:other-user:btc-news-456",
+        agent_id="news-intelligence-analyst",
+        user_id="other-user",
+        runs=[RunOutput(run_id="other-run", model="model-a", content=report("bearish"))],
+    )
+    captured: dict = {}
+
+    class FakeDb:
+        def get_sessions(self, **kwargs):
+            captured.update(kwargs)
+            return [owned_session, unrelated_session]
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    monkeypatch.setattr(main, "_open_session_db", lambda: FakeDb())
+
+    response = main._list_sessions("user-9")
+
+    assert captured["user_id"] == "user-9"
+    assert captured["component_id"] == "news-intelligence-analyst"
+    assert captured["limit"] is None
+    assert captured["closed"] is True
+    assert response["sessions"] == [
+        {
+            "sessionId": "btc-news-123",
+            "runId": "owned-run",
+            "model": "model-a",
+            "createdAt": 1_786_533_339,
+            "updatedAt": 1_786_533_400,
+            "runCount": 1,
+            "preview": "BTC analysis The evidence currently points to a bullish outlook.",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -111,7 +150,7 @@ def test_analysis_reads_the_persisted_run_from_the_same_database(monkeypatch) ->
         session_id="news:user-9:btc-news-desk",
         agent_id="news-intelligence-analyst",
         user_id="user-9",
-        runs=[RunOutput(run_id="saved-run", model="model-a", content=saved_report.model_dump(mode="json"))],
+        runs=[RunOutput(run_id="saved-run", model="model-a", content=saved_report)],
     )
     fake_db = SimpleNamespace(
         close=lambda: None,
@@ -121,7 +160,7 @@ def test_analysis_reads_the_persisted_run_from_the_same_database(monkeypatch) ->
 
     def fake_pipeline(prompt, **kwargs):
         captured.update({"prompt": prompt, **kwargs})
-        return SimpleNamespace(report=saved_report)
+        return SimpleNamespace(markdown=saved_report, research_tools=["search_news"])
 
     monkeypatch.setattr(main, "_open_session_db", lambda: fake_db)
     monkeypatch.setattr(main, "run_news_pipeline", fake_pipeline)
@@ -133,4 +172,4 @@ def test_analysis_reads_the_persisted_run_from_the_same_database(monkeypatch) ->
     assert captured["db"] is fake_db
     assert captured["session_id"] == "news:user-9:btc-news-desk"
     assert response["runId"] == "saved-run"
-    assert response["report"]["aggregate_btc_direction"] == "bullish"
+    assert "**bullish**" in response["analysis"]
