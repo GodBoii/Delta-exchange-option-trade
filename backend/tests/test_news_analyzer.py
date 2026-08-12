@@ -28,8 +28,6 @@ def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
     settings = replace(
         NewsAgentSettings.load(),
         supabase_db_url="postgresql://postgres:secret@example.supabase.co:5432/postgres",
-        session_db_schema="ai",
-        session_table="news_sessions",
     )
     captured: dict = {}
     fake_db = SimpleNamespace()
@@ -41,12 +39,7 @@ def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
     monkeypatch.setattr("news_agent.database.PostgresDb", fake_postgres)
 
     assert create_session_db(settings) is fake_db
-    assert captured == {
-        "db_url": "postgresql+psycopg://postgres:secret@example.supabase.co:5432/postgres",
-        "db_schema": "ai",
-        "session_table": "news_sessions",
-        "create_schema": True,
-    }
+    assert captured == {"db_url": "postgresql+psycopg://postgres:secret@example.supabase.co:5432/postgres"}
 
 
 def test_saved_supabase_session_shapes_current_and_history() -> None:
@@ -70,16 +63,10 @@ def test_saved_supabase_session_shapes_current_and_history() -> None:
             ),
         ],
     )
-    research = AgentSession(
-        session_id=f"{session_id}:research",
-        agent_id="news-intelligence-source-researcher",
-        user_id="user-9",
-        runs=[RunOutput(tools=[ToolExecution(tool_name="search_news", result="[]")])],
-    )
+    session.runs[-1].tools = [ToolExecution(tool_name="search_news", result="[]")]
 
     response = main._response_payload(
         session=session,
-        research_session=research,
         public_session_id="btc-news-desk",
     )
 
