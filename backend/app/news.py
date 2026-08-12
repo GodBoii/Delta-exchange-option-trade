@@ -1,4 +1,3 @@
-import os
 from typing import Annotated, Any
 
 import httpx
@@ -9,7 +8,7 @@ from .auth import require_user
 from .errors import AppError
 
 router = APIRouter(prefix="/api/news", tags=["news intelligence"])
-news_analyzer_url = os.getenv("NEWS_ANALYZER_URL", "http://news-analyzer:8002")
+news_analyzer_url = "http://news-analyzer:8002"
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,80}$")]
