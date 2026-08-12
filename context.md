@@ -16,3 +16,4 @@ https://docs.agno.com/database/chat-history
 https://docs.agno.com/database/providers/overview
 https://docs.agno.com/database/overview
 https://docs.agno.com/database/providers/json/overview
+https://docs.agno.com/database/providers/postgres/overview
