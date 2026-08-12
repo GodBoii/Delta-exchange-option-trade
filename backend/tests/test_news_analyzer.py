@@ -46,7 +46,7 @@ def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
     parsed_url = urlsplit(captured["db_url"])
     assert parsed_url.scheme == "postgresql+psycopg"
     assert parse_qs(parsed_url.query)["sslmode"] == ["require"]
-    assert parse_qs(parsed_url.query)["connect_timeout"] == ["10"]
+    assert "connect_timeout" not in parse_qs(parsed_url.query)
 def test_saved_supabase_session_shapes_current_and_history() -> None:
     session_id = "news:user-9:btc-news-desk"
     session = AgentSession(
