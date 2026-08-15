@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, RefreshCw, WifiOff } from "lucide-react";
+import { SectionHeading } from "@/app/components/ui";
+import {
+  bookPrice, compact, currencyCompact, humanize, money, price, signedCurrencyCompact, signedMoney,
+  signedPercent
+} from "@/lib/format";
 
 type Candle = {
   openTime: number;
@@ -331,18 +336,18 @@ export default function BtcMarketChart() {
   const positive = (data?.ticker.priceChangePercent || 0) >= 0;
 
   return <div className="market-page">
-    <section className="page-heading market-heading" data-reveal>
-      <div>
-        <div className="eyebrow"><span /> Deep data analysis</div>
-        <h1>Market analysis</h1>
-        <p>Order flow, liquidity, volatility, and market structure in real time.</p>
-      </div>
-      <button className="secondary-button" onClick={() => void load()} disabled={loading}>
-        <RefreshCw className={loading ? "spin" : ""} />Refresh
-      </button>
-    </section>
+    <SectionHeading
+      eyebrow="Live market data"
+      title="Market analysis"
+      description="Binance Spot order flow, liquidity, and volatility, with public Delta derivative context for the execution venue."
+      actions={
+        <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
+          <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
+        </button>
+      }
+    />
 
-    <section className="market-terminal panel" data-reveal>
+    <section className="market-terminal">
       <header className="market-toolbar">
         <div className="market-symbol">
           <span className="market-coin">₿</span>
@@ -835,43 +840,12 @@ function ChartLoading() {
 }
 
 function ChartError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return <div className="chart-error"><WifiOff /><h3>Market feed unavailable</h3><p>{message}</p><button className="secondary-button" onClick={onRetry}><RefreshCw />Try again</button></div>;
-}
-
-function money(value: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 1 }).format(value);
-}
-
-function signedMoney(value: number) {
-  return `${value >= 0 ? "+" : "-"}$${Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 1 })}`;
-}
-
-function currencyCompact(value: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 }).format(value);
-}
-
-function signedCurrencyCompact(value: number) {
-  return `${value >= 0 ? "+" : "-"}${currencyCompact(Math.abs(value))}`;
-}
-
-function signedPercent(value: number) {
-  return `${value >= 0 ? "+" : ""}${value.toFixed(3)}%`;
-}
-
-function humanize(value: string) {
-  return value.replaceAll("_", " ");
-}
-
-function price(value: number) {
-  return value.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
-
-function bookPrice(value: number) {
-  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function compact(value: number) {
-  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+  return <div className="chart-error">
+    <WifiOff aria-hidden="true" />
+    <h3>Market feed unavailable</h3>
+    <p>{message}</p>
+    <button type="button" className="button secondary" onClick={onRetry}><RefreshCw aria-hidden="true" />Try again</button>
+  </div>;
 }
 
 function shortTime(value: number) {
