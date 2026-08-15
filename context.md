@@ -17,3 +17,14 @@ https://docs.agno.com/database/providers/overview
 https://docs.agno.com/database/overview
 https://docs.agno.com/database/providers/json/overview
 https://docs.agno.com/database/providers/postgres/overview
+https://docs.agno.com/models/providers/gateways/openrouter/overview
+https://docs.agno.com/reference/models/openai
+
+https://openrouter.ai/docs/guides/best-practices/prompt-caching
+https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+https://openrouter.ai/docs/guides/features/input-output-logging 
+https://openrouter.ai/docs/guides/features/tool-calling
+https://openrouter.ai/docs/guides/features/response-caching
+https://openrouter.ai/docs/guides/overview/multimodal/overview
+https://openrouter.ai/docs/guides/overview/multimodal/image-understanding
+https://openrouter.ai/docs/quickstart
