@@ -244,7 +244,9 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
     rows = await request.app.state.db.select(
         "strategies",
         {
-            "select": "id,name,status,entry_at,exit_at,entry_execution_at,last_error,created_at",
+            "select": (
+                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,created_at"
+            ),
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
             "limit": "100",
@@ -260,12 +262,20 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "entryAt": row["entry_at"],
                 "exitAt": row["exit_at"],
                 "entryExecutedAt": row["entry_execution_at"],
+                "exitExecutedAt": row["exit_execution_at"],
                 "lastError": row["last_error"],
                 "createdAt": row["created_at"],
             }
             for row in rows
         ],
     }
+
+
+@app.get("/api/strategies/{strategy_id}")
+async def strategy_detail(request: Request, strategy_id: str, user: RequiredUser) -> dict[str, Any]:
+    await current_account(request.app.state.db, user, required=True)
+    result = await request.app.state.engine.run_detail(strategy_id, str(user["id"]))
+    return {"success": True, "result": result}
 
 
 @app.post("/api/strategies", status_code=201)
@@ -294,6 +304,13 @@ async def preview_strategy(request: Request, body: StrategyDefinition, user: Req
 @app.delete("/api/strategies/{strategy_id}")
 async def cancel_strategy(request: Request, strategy_id: str, user: RequiredUser) -> dict[str, bool]:
     await request.app.state.engine.cancel_strategy(strategy_id, str(user["id"]))
+    return {"success": True}
+
+
+@app.delete("/api/strategies/{strategy_id}/record")
+async def delete_strategy_record(request: Request, strategy_id: str, user: RequiredUser) -> dict[str, bool]:
+    """Erases the run and its execution history. Only allowed once it is settled."""
+    await request.app.state.engine.delete_strategy(strategy_id, str(user["id"]))
     return {"success": True}
 
 
