@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, type ReactNode } from "react";
-import { AlertTriangle, Check, ChevronDown, Info, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, Check, ChevronDown, Info, MoreHorizontal, X } from "lucide-react";
 
 /* ------------------------------------------------------------------ *
  * Shared shapes
@@ -198,37 +199,42 @@ export function InlineMessage({ tone, children }: { tone: NoticeTone | "info"; c
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
- * Confirmation dialog for actions that reach the exchange.
- *
- * Focus starts on the cancelling control and is trapped inside the dialog, so
- * a stray Enter keypress cannot submit a live order action. Escape and the
- * backdrop both cancel; only the explicit confirm button proceeds.
+ * Counted page scroll lock. Modals stack — a confirmation can open over a
+ * reading dialog — so the original overflow is only restored once the last
+ * surface has closed, independent of the order React unmounts them in.
  */
-export function ConfirmModal({ title, description, confirm, cancel = "Keep it", tone = "danger", busy = false, onClose, onConfirm }: {
-  title: string;
-  description: string;
-  confirm: string;
-  cancel?: string;
-  tone?: "danger" | "neutral";
-  busy?: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
+let scrollLocks = 0;
+let overflowBeforeLock = "";
+
+function lockPageScroll() {
+  if (scrollLocks === 0) {
+    overflowBeforeLock = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  scrollLocks += 1;
+  return () => {
+    scrollLocks = Math.max(0, scrollLocks - 1);
+    if (scrollLocks === 0) document.body.style.overflow = overflowBeforeLock;
+  };
+}
+
+/**
+ * Behaviour shared by every modal surface: the page behind stops scrolling,
+ * focus moves in and is trapped, Escape dismisses, and the previously focused
+ * control is restored on close.
+ */
+function useModalShell(onClose: () => void, initialFocus?: RefObject<HTMLElement | null>) {
   const dialog = useRef<HTMLDivElement>(null);
-  const cancelButton = useRef<HTMLButtonElement>(null);
-  const titleId = useId();
-  const descriptionId = useId();
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    cancelButton.current?.focus();
-    const { overflow } = document.body.style;
-    document.body.style.overflow = "hidden";
+    (initialFocus?.current ?? dialog.current?.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+    const releaseScroll = lockPageScroll();
     return () => {
-      document.body.style.overflow = overflow;
+      releaseScroll();
       previouslyFocused?.focus?.();
     };
-  }, []);
+  }, [initialFocus]);
 
   const onKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key === "Escape") {
@@ -249,6 +255,31 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
       first.focus();
     }
   }, [onClose]);
+
+  return { dialog, onKeyDown };
+}
+
+/**
+ * Confirmation dialog for actions that reach the exchange.
+ *
+ * Focus starts on the cancelling control, so a stray Enter keypress cannot
+ * submit a live order action. Escape and the backdrop both cancel; only the
+ * explicit confirm button proceeds.
+ */
+export function ConfirmModal({ title, description, confirm, cancel = "Keep it", tone = "danger", busy = false, onClose, onConfirm }: {
+  title: string;
+  description: string;
+  confirm: string;
+  cancel?: string;
+  tone?: "danger" | "neutral";
+  busy?: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const { dialog, onKeyDown } = useModalShell(onClose, cancelButton);
+  const titleId = useId();
+  const descriptionId = useId();
 
   return (
     <div className="modal-layer" onKeyDown={onKeyDown}>
@@ -275,6 +306,232 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Reading dialog for records that are too detailed for a table row.
+ *
+ * Unlike `ConfirmModal` this surface is wide, scrolls internally, and carries no
+ * implied action, so the header keeps a single unambiguous close control.
+ */
+export function Dialog({ title, subtitle, aside, footer, onClose, children }: {
+  title: string;
+  subtitle?: ReactNode;
+  aside?: ReactNode;
+  footer?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const { dialog, onKeyDown } = useModalShell(onClose, closeButton);
+  const titleId = useId();
+
+  return (
+    <div className="modal-layer" onKeyDown={onKeyDown}>
+      <button type="button" className="modal-backdrop" onClick={onClose} tabIndex={-1} aria-hidden="true" />
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialog}>
+        <header className="dialog-head">
+          <div className="dialog-head-text">
+            <h2 id={titleId}>{title}</h2>
+            {subtitle && <p>{subtitle}</p>}
+          </div>
+          <div className="dialog-head-side">
+            {aside}
+            <button type="button" className="icon-button" onClick={onClose} ref={closeButton} aria-label="Close details">
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+        <div className="dialog-body">{children}</div>
+        {footer && <footer className="dialog-foot">{footer}</footer>}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Row actions
+ * ------------------------------------------------------------------ */
+
+export type RowMenuItem = {
+  id: string;
+  label: string;
+  /** One line explaining the consequence, because these actions reach the exchange. */
+  hint?: string;
+  icon?: ReactNode;
+  tone?: "neutral" | "danger";
+  disabled?: boolean;
+  onSelect: () => void;
+};
+
+const ROW_MENU_WIDTH = 264;
+const ROW_MENU_ITEM_HEIGHT = 46;
+
+/**
+ * Overflow menu for a table row.
+ *
+ * The panel is portalled to the document and positioned from the trigger rect
+ * rather than nested in the cell, because the runs table scrolls horizontally
+ * and an absolutely positioned child would be clipped by that container. Any
+ * scroll or resize dismisses it instead of leaving a detached panel behind.
+ */
+export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
+  const [anchor, setAnchor] = useState<{ top: number; left: number; placement: "below" | "above" } | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const open = anchor !== null;
+
+  const close = useCallback((restoreFocus = true) => {
+    setAnchor(null);
+    if (restoreFocus) trigger.current?.focus();
+  }, []);
+
+  function openMenu() {
+    const rect = trigger.current?.getBoundingClientRect();
+    if (!rect) return;
+    const height = items.length * ROW_MENU_ITEM_HEIGHT + 12;
+    const fitsBelow = window.innerHeight - rect.bottom > height + 16;
+    setAnchor({
+      top: fitsBelow ? rect.bottom + 6 : Math.max(8, rect.top - 6 - height),
+      left: Math.max(8, Math.min(rect.right - ROW_MENU_WIDTH, window.innerWidth - ROW_MENU_WIDTH - 8)),
+      placement: fitsBelow ? "below" : "above"
+    });
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])')?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menu.current?.contains(target) || trigger.current?.contains(target)) return;
+      close(false);
+    };
+    const dismiss = () => close(false);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+    };
+  }, [close, open]);
+
+  function onMenuKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    const options = Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? []);
+    if (!options.length) return;
+    const index = options.indexOf(document.activeElement as HTMLElement);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      options[(index + 1) % options.length].focus();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      options[(index - 1 + options.length) % options.length].focus();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      options[0].focus();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      options[options.length - 1].focus();
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className={open ? "row-menu-trigger open" : "row-menu-trigger"}
+        ref={trigger}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => (open ? close() : openMenu())}
+      >
+        <MoreHorizontal aria-hidden="true" />
+      </button>
+
+      {open && createPortal(
+        <div
+          className={`row-menu from-${anchor.placement}`}
+          id={menuId}
+          role="menu"
+          aria-label={label}
+          ref={menu}
+          style={{ top: anchor.top, left: anchor.left, width: ROW_MENU_WIDTH }}
+          onKeyDown={onMenuKeyDown}
+        >
+          {items.map(item => (
+            <button
+              type="button"
+              role="menuitem"
+              key={item.id}
+              className={item.tone === "danger" ? "danger" : undefined}
+              disabled={item.disabled}
+              onClick={() => { close(false); item.onSelect(); }}
+            >
+              {item.icon && <span className="row-menu-icon" aria-hidden="true">{item.icon}</span>}
+              <span className="row-menu-text">
+                <strong>{item.label}</strong>
+                {item.hint && <small>{item.hint}</small>}
+              </span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Record display
+ * ------------------------------------------------------------------ */
+
+export type DetailItem = {
+  label: string;
+  value: ReactNode;
+  /** Identifiers and raw payloads read better in the mono stack. */
+  mono?: boolean;
+  /** Full-width row for long values such as errors. */
+  wide?: boolean;
+};
+
+/** Label and value pairs for a single record, laid out on one shared grid. */
+export function DetailList({ items }: { items: DetailItem[] }) {
+  return (
+    <dl className="detail-list">
+      {items.map(item => (
+        <div key={item.label} className={item.wide ? "wide" : undefined}>
+          <dt>{item.label}</dt>
+          <dd className={item.mono ? "mono" : undefined}>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** Titled block inside a `Dialog`, so long records stay scannable. */
+export function DetailSection({ title, meta, children }: { title: string; meta?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="detail-section">
+      <header>
+        <h3>{title}</h3>
+        {meta !== undefined && <span>{meta}</span>}
+      </header>
+      {children}
+    </section>
   );
 }
 
