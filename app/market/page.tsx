@@ -1,15 +1,26 @@
-import BtcMarketChart from "@/app/components/BtcMarketChart";
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import BtcMarketChart from "@/app/components/BtcMarketChart";
+import { Brand } from "@/app/components/ui";
 
+export const metadata = {
+  title: "Market analysis"
+};
+
+/**
+ * Public, read-only market surface. It carries no account context and never
+ * touches an authenticated endpoint, so it is safe to share as a link.
+ */
 export default function MarketPage() {
-  return <div className="app market-public-page">
-    <header className="connect-header market-public-header">
-      <Link className="brand" href="/" aria-label="Trade Cognition home">
-        <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
-        <span><strong>Trade Cognition</strong><small>Delta workspace</small></span>
-      </Link>
-      <Link href="/">Strategy builder</Link>
-    </header>
-    <main className="workspace"><BtcMarketChart /></main>
-  </div>;
+  return (
+    <div className="market-public-page">
+      <header className="market-public-header">
+        <Link href="/" aria-label="Trade Cognition home"><Brand subtitle="Public market data" /></Link>
+        <Link className="button ghost" href="/">Open workspace<ArrowRight aria-hidden="true" /></Link>
+      </header>
+      <main className="workspace">
+        <BtcMarketChart />
+      </main>
+    </div>
+  );
 }
