@@ -1,21 +1,71 @@
-<design_plan>
-Python RNG Execution
-seed = 3187  # deterministic prompt-context character count modulus
-random.choice -> hero: Artistic Asymmetry; typography: Geist; components: Horizontal Accordions, Inline Typography Images, Feedback Carousel
-random.sample -> GSAP: Card Stacking, Image Scale & Fade (adapted to initial reveal + expandable rows/drawer because this is a workstation, not a scroll narrative)
+# Interface design system
 
-AIDA Check
-The recipe's marketing AIDA sequence is intentionally translated to an authenticated application shell: Navigation becomes the persistent command bar; Attention becomes connection/account state; Interest becomes the dense strategy workspace; Desire becomes live contract preview and operational feedback; Action becomes Save Draft, Schedule, and Execute Now. There are no cinematic marketing sections or oversized vertical gaps because those would reduce trading safety and scan speed.
+Reference for `app/globals.css` and the components in `app/components`. Read this before
+adding a surface, so the next screen inherits the system instead of restating it.
 
-Hero Math Verification
-There is no marketing H1. The connect heading uses a full-width copy column capped at 640px and a fluid 42px maximum, guaranteeing two to three lines at phone widths and one to two on desktop. No decorative stamp icons, spam tags, or fake metrics exist.
+## Structure
 
-Bento Density Verification
-The main workspace uses a 12-column dense grid. Instrument and entry panels each occupy 6/12 columns; legwise occupies 12/12. On the dashboard, three metrics occupy 4 + 4 + 4 = 12 columns. `grid-auto-flow: dense` is applied, so every row sums to 12 and leaves no empty grid cell.
+`app/globals.css` is a single pass in a fixed order: tokens → base → utilities → primitives →
+shell → surfaces → responsive → motion. A selector is defined once. There are no "readability"
+or "theme" override passes appended to the end of the file; if a value needs to change, it
+changes at the token or at its single definition.
 
-Label Sweep & Button Check
-No numbered meta-labels or generic section markers are used. Primary actions use near-black text on lime; secondary actions use light text on charcoal; destructive actions use warm red text and borders with WCAG-aware contrast. Focus-visible rings are explicit on all controls.
+Components never hard-code a colour, radius, spacing step, or type size. Every value resolves
+through a custom property.
 
-Adaptation Notes
-Artistic Asymmetry is expressed through the offset connection panel and ambient technical grid. Horizontal Accordions become expandable leg rows; Inline Typography Images become the compact Delta prism mark embedded in the wordmark; Feedback Carousel becomes the dashboard's horizontally scrollable run-history rail. GSAP is limited to initial reveal, leg expansion, connection-state transitions, and preview drawer entry, and is disabled under prefers-reduced-motion.
-</design_plan>
+## Colour
+
+Three semantic families, and nothing else carries meaning:
+
+| Family | Token | Meaning |
+| --- | --- | --- |
+| Interactive | `--accent` | Focus, current navigation, selected state, links |
+| Long | `--long` | Buy side, positive P&L, healthy utilisation |
+| Short | `--short` | Sell side, negative P&L, destructive actions |
+| Caution | `--warn` | Degraded state, unsaved work, elevated risk |
+
+Surfaces step through `--canvas` → `--surface-1..4` for nesting depth. Text steps through
+`--text-1..3` for reading, support, and metadata. Primary buttons are near-white on dark
+because the accent is reserved for state, not emphasis.
+
+## Type
+
+`--t-xs` (12px) is the floor for anything a user reads; the previous 8–10px labels are gone.
+Numeric output uses tabular figures everywhere so streaming values do not shift columns.
+Fonts are self-hosted through `next/font` — the app's own CSP blocks a Google Fonts
+stylesheet, so an `@import` silently degrades to a system face.
+
+## Layout
+
+The authenticated app is a shell: a grouped navigation rail (`Operations` / `Research`), a
+sticky context bar carrying the page title, the scheduling clock, and the account menu, and a
+`--sidebar-w`-offset workspace. Below 960px the rail becomes a dismissible drawer.
+
+The builder uses a two-column arrangement: configuration on the left, a sticky review rail on
+the right holding the library, the derived summary, blocking issues, and the schedule action.
+Commit actions live next to the review of what is being committed.
+
+## Data display
+
+Tables are real tables with `scope`, captions, right-aligned numeric columns, and semantic
+side tags. Values are derived and labelled honestly:
+
+- Wallet balances are listed per asset and never summed across denominations.
+- Margin utilisation is a proportion of the balance it consumes.
+- Liquidation distance is stated against entry price, because the REST position payload
+  carries no mark price and inventing one would misstate live risk.
+- Missing values render as an em dash rather than a confident zero.
+
+Visualisations exist only where a picture answers a question faster than a number: the strike
+layout strip (is this a straddle, a strangle, or a spread?), the schedule timeline (how long
+until entry, how long is it held?), and utilisation meters.
+
+## Accessibility
+
+- Skip link to the workspace; `aria-current="page"` on the active navigation item.
+- Single-choice controls are radio groups with arrow-key movement, not tab lists.
+- The confirmation dialog traps focus, opens focused on the cancelling control, closes on
+  Escape, and restores focus on unmount.
+- Every icon-only control has a label; decorative glyphs are `aria-hidden`.
+- Motion is confined to short entry transitions and is disabled under
+  `prefers-reduced-motion`.
