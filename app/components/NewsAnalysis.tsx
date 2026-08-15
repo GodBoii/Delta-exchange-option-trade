@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
+import { useEffect, useState } from "react";
 import { AlertTriangle, History, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-
-type ApiRequester = <T>(url: string, init?: RequestInit) => Promise<T>;
+import type { ApiRequester } from "@/lib/api";
+import { titleCase } from "@/lib/format";
+import { InlineMessage, SectionHeading, StatusDot } from "@/app/components/ui";
 
 type SavedOutcome = {
   runId?: string | null;
@@ -41,12 +40,9 @@ type NewsSessionListResponse = {
 
 const DEFAULT_QUERY = "Analyze today's highest-impact Bitcoin news, corroborate the material claims, and explain the likely BTC direction and volatility channels.";
 
-function readable(value: string) {
-  return value.replaceAll("_", " ").replace(/\b\w/g, character => character.toUpperCase());
-}
-
-function dateTime(value?: string | number | null) {
-  if (!value) return "Time not provided";
+/** Agno timestamps arrive as ISO strings or epoch seconds depending on the store. */
+function agentDateTime(value?: string | number | null) {
+  if (!value) return "Time not recorded";
   const normalized = typeof value === "number" && value < 1_000_000_000_000 ? value * 1_000 : value;
   const parsed = new Date(normalized);
   return Number.isNaN(parsed.getTime())
@@ -57,24 +53,33 @@ function dateTime(value?: string | number | null) {
 function runDuration(milliseconds?: number) {
   if (!milliseconds) return "Stored run";
   const seconds = Math.round(milliseconds / 1000);
-  return seconds < 60 ? `${seconds}s run` : `${Math.floor(seconds / 60)}m ${seconds % 60}s run`;
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function MarkdownAnalysis({ children }: { children: string }) {
-  return <div className="news-markdown">
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a: ({ children: linkText, ...props }) => <a {...props} target="_blank" rel="noreferrer">{linkText}</a>,
-      }}
-    >
-      {children}
-    </ReactMarkdown>
-  </div>;
+  return (
+    <div className="news-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children: linkText, ...props }) => <a {...props} target="_blank" rel="noreferrer">{linkText}</a>
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
+/**
+ * Reader for the news agent's own Markdown output.
+ *
+ * The agent writes prose, so this surface does not attempt to reshape it into
+ * invented scorecards or sentiment gauges. It presents the run's provenance
+ * (model, research tools, runtime), the analysis as written, and the earlier
+ * saved outcomes for the same session.
+ */
 export default function NewsAnalysis({ request }: { request: ApiRequester }) {
-  const root = useRef<HTMLDivElement>(null);
   const [result, setResult] = useState<NewsAnalysisResponse | null>(null);
   const [sessions, setSessions] = useState<NewsSessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -123,7 +128,8 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
       const response = await request<NewsAnalysisResponse>("/api/news/analyze", {
         method: "POST",
         body: JSON.stringify({ query: DEFAULT_QUERY, sessionId }),
-        signal: null,
+        // Agent research runs far longer than a normal request; no client timeout.
+        signal: null
       });
       setResult(response);
       setSelectedSessionId(response.sessionId);
@@ -134,7 +140,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
         createdAt: response.createdAt,
         updatedAt: response.createdAt,
         runCount: response.history.length + 1,
-        preview: response.analysis.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, 220),
+        preview: response.analysis.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, 220)
       }, ...current.filter(session => session.sessionId !== response.sessionId)]);
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "The news analysis could not be completed.");
@@ -143,108 +149,158 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
     }
   }
 
-  useGSAP(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    gsap.from(".news-markdown-output", { y: 24, opacity: 0, duration: 0.7, ease: "power3.out" });
-  }, { scope: root, dependencies: [result?.runId], revertOnUpdate: true });
+  return (
+    <div className="news-page">
+      <SectionHeading
+        eyebrow="Agent research"
+        title="News intelligence"
+        description="Run the BTC news agent, read its analysis as written, and revisit earlier saved outcomes."
+        actions={
+          <>
+            {result && (
+              <div className="news-saved-state">
+                <span><StatusDot tone="active" />Saved in Supabase</span>
+                <time>{agentDateTime(result.createdAt)}</time>
+              </div>
+            )}
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => void runAnalysis()}
+              disabled={running || loadingSaved}
+            >
+              <Sparkles aria-hidden="true" />{running ? "Running analysis" : "Run analysis"}
+            </button>
+          </>
+        }
+      />
 
-  return <div className="news-page outcome-page" ref={root}>
-    <header className="outcome-page-intro">
-      <div>
-        <span className="eyebrow"><span />Agent outputs</span>
-        <h1>News intelligence outcomes</h1>
-        <p>Run the BTC news agent, read its native Markdown analysis, and revisit earlier saved outcomes.</p>
+      {sessions.length > 0 && (
+        <section className="news-sessions" aria-label="Saved news analysis sessions">
+          <header>
+            <span><History aria-hidden="true" />Sessions</span>
+            <small>{sessions.length} saved</small>
+          </header>
+          <div className="news-session-chips">
+            {sessions.map((session, index) => (
+              <button
+                type="button"
+                key={session.sessionId}
+                className={session.sessionId === selectedSessionId ? "active" : ""}
+                aria-pressed={session.sessionId === selectedSessionId}
+                disabled={running || loadingSaved}
+                onClick={() => void selectSession(session.sessionId)}
+                title={session.preview}
+              >
+                <span>{index === 0 ? "Latest" : `Session ${sessions.length - index}`}</span>
+                <strong>{agentDateTime(session.updatedAt || session.createdAt)}</strong>
+                <small>{session.runCount} {session.runCount === 1 ? "run" : "runs"}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div aria-live="polite">
+        {error && <InlineMessage tone="error">{error}</InlineMessage>}
+        {running ? <RunningState /> : loadingSaved ? <LoadingState /> : result ? <Report result={result} /> : <IdleState onRun={() => void runAnalysis()} />}
       </div>
-      <div className="outcome-page-actions">
-        {result && <div className="outcome-saved-status"><i /><span>Saved in Supabase</span><time>{dateTime(result.createdAt)}</time></div>}
-        <button className="outcome-run-button" type="button" onClick={() => void runAnalysis()} disabled={running || loadingSaved}>
-          <Sparkles />{running ? "Running analysis…" : "Run analysis"}
+
+      {result && <EarlierOutcomes outcomes={result.history} />}
+    </div>
+  );
+}
+
+function Report({ result }: { result: NewsAnalysisResponse }) {
+  return (
+    <article className="news-report">
+      <header className="news-report-meta">
+        <div><small>Model</small><strong>{result.model}</strong></div>
+        <div>
+          <small>Research tools</small>
+          <strong>{result.researchTools.map(titleCase).join(" · ") || "Pre-collected evidence"}</strong>
+        </div>
+        <div><small>Runtime</small><strong>{runDuration(result.elapsedMs)}</strong></div>
+      </header>
+      <MarkdownAnalysis>{result.analysis}</MarkdownAnalysis>
+      <footer className="news-report-footer">
+        <AlertTriangle aria-hidden="true" />
+        News analysis is probabilistic research, not a trade instruction or execution signal.
+      </footer>
+    </article>
+  );
+}
+
+function EarlierOutcomes({ outcomes }: { outcomes: SavedOutcome[] }) {
+  return (
+    <section className="news-history">
+      <header>
+        <h2>Earlier outcomes</h2>
+        <p>{outcomes.length
+          ? `${outcomes.length} stored ${outcomes.length === 1 ? "outcome" : "outcomes"} in this session`
+          : "No earlier outcome is stored in this session."}</p>
+      </header>
+      {outcomes.length > 0 && (
+        <div className="news-history-list">
+          {outcomes.map((outcome, index) => (
+            <details key={outcome.runId || index}>
+              <summary>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <time>{agentDateTime(outcome.createdAt)}</time>
+                <strong>{outcome.model}</strong>
+              </summary>
+              <MarkdownAnalysis>{outcome.analysis}</MarkdownAnalysis>
+            </details>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LoadingState() {
+  return (
+    <section className="news-status-panel" aria-label="Loading saved agent output">
+      <Sparkles aria-hidden="true" />
+      <div className="news-skeleton" aria-hidden="true">
+        <i className="skeleton" /><i className="skeleton" /><i className="skeleton" />
+      </div>
+    </section>
+  );
+}
+
+function RunningState() {
+  return (
+    <section className="news-status-panel" aria-label="News agent is running">
+      <Sparkles aria-hidden="true" />
+      <div>
+        <small>Agno research session</small>
+        <h2>Collecting and corroborating market evidence.</h2>
+        <p>
+          The agent is searching current sources, assessing BTC transmission channels, and writing
+          its analysis. Runs typically take one to three minutes.
+        </p>
+        <span className="news-progress"><i aria-hidden="true" />Analysis in progress</span>
+      </div>
+    </section>
+  );
+}
+
+function IdleState({ onRun }: { onRun: () => void }) {
+  return (
+    <section className="news-status-panel">
+      <History aria-hidden="true" />
+      <div>
+        <small>No saved output</small>
+        <h2>Run the first news analysis.</h2>
+        <p>
+          The agent researches current BTC-relevant events, saves the Agno session in Supabase, and
+          returns its written analysis here.
+        </p>
+        <button type="button" className="button primary" onClick={onRun}>
+          <Sparkles aria-hidden="true" />Run analysis
         </button>
       </div>
-    </header>
-
-    <SessionChips
-      sessions={sessions}
-      selectedSessionId={selectedSessionId}
-      disabled={running || loadingSaved}
-      onSelect={sessionId => void selectSession(sessionId)}
-    />
-
-    <main aria-live="polite">
-      {error && <div className="outcome-error" role="alert"><AlertTriangle /><span>{error}</span></div>}
-      {running ? <RunningOutcome /> : loadingSaved ? <OutcomeSkeleton /> : result ? <CurrentOutcome result={result} /> : <EmptyOutcome onRun={() => void runAnalysis()} />}
-    </main>
-
-    {result && <PastOutcomes outcomes={result.history} />}
-  </div>;
-}
-
-function SessionChips({ sessions, selectedSessionId, disabled, onSelect }: {
-  sessions: NewsSessionSummary[];
-  selectedSessionId: string | null;
-  disabled: boolean;
-  onSelect: (sessionId: string) => void;
-}) {
-  if (!sessions.length) return null;
-  return <section className="news-session-browser" aria-label="Saved news analysis sessions">
-    <header><span><History />Past sessions</span><small>{sessions.length} saved</small></header>
-    <div className="news-session-chips">
-      {sessions.map((session, index) => <button
-        type="button"
-        key={session.sessionId}
-        className={session.sessionId === selectedSessionId ? "active" : ""}
-        aria-pressed={session.sessionId === selectedSessionId}
-        disabled={disabled}
-        onClick={() => onSelect(session.sessionId)}
-        title={session.preview}
-      >
-        <span>{index === 0 ? "Latest" : `Session ${sessions.length - index}`}</span>
-        <strong>{dateTime(session.updatedAt || session.createdAt)}</strong>
-        <small>{session.runCount} {session.runCount === 1 ? "run" : "runs"}</small>
-      </button>)}
-    </div>
-  </section>;
-}
-
-function CurrentOutcome({ result }: { result: NewsAnalysisResponse }) {
-  return <section className="news-markdown-output">
-    <header className="news-markdown-meta">
-      <div><small>Model</small><strong>{result.model}</strong></div>
-      <div><small>Research</small><strong>{result.researchTools.map(readable).join(" · ") || "Pre-collected evidence"}</strong></div>
-      <div><small>Runtime</small><strong>{runDuration(result.elapsedMs)}</strong></div>
-    </header>
-    <MarkdownAnalysis>{result.analysis}</MarkdownAnalysis>
-    <footer><AlertTriangle />News analysis is probabilistic research, not a trade instruction or execution signal.</footer>
-  </section>;
-}
-
-function PastOutcomes({ outcomes }: { outcomes: SavedOutcome[] }) {
-  return <section className="outcome-history">
-    <header><div><span><History />Past outcomes</span><h2>Previous agent outcomes.</h2></div><p>{outcomes.length ? `${outcomes.length} saved outcome${outcomes.length === 1 ? "" : "s"}` : "No earlier outcome is stored."}</p></header>
-    {outcomes.length > 0 ? <div className="news-markdown-history">
-      {outcomes.map((outcome, index) => <details key={outcome.runId || index}>
-        <summary><span>{String(index + 1).padStart(2, "0")}</span><div><time>{dateTime(outcome.createdAt)}</time><strong>{outcome.model}</strong></div></summary>
-        <MarkdownAnalysis>{outcome.analysis}</MarkdownAnalysis>
-      </details>)}
-    </div> : <div className="outcome-history-empty"><History /><span>No previous outcome is stored yet.</span></div>}
-  </section>;
-}
-
-function OutcomeSkeleton() {
-  return <section className="outcome-readonly-state outcome-skeleton" aria-label="Loading saved agent output"><span /><div><i /><i /><i /></div></section>;
-}
-
-function RunningOutcome() {
-  return <section className="outcome-running-stage" aria-label="News agent is running"><div className="outcome-running-copy">
-    <Sparkles /><small>Agno research session</small><h2>Collecting and corroborating market evidence.</h2>
-    <p>The agent is searching current sources, assessing BTC transmission channels, and writing its native Markdown analysis.</p>
-    <span><i />Analysis in progress</span>
-  </div></section>;
-}
-
-function EmptyOutcome({ onRun }: { onRun: () => void }) {
-  return <section className="outcome-readonly-state"><History /><div><small>No saved output</small><h2>Run the first news analysis.</h2>
-    <p>The news agent will research current BTC-relevant events, save the Agno session in Supabase, and show its Markdown response here.</p>
-    <button className="outcome-run-button" type="button" onClick={onRun}><Sparkles />Run analysis</button>
-  </div></section>;
+    </section>
+  );
 }
