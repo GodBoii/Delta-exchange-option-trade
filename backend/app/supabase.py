@@ -56,6 +56,15 @@ class SupabaseAdmin:
         )
         return self._json(response, "Database update failed")
 
+    async def delete(self, table: str, params: dict[str, str]) -> list[dict[str, Any]]:
+        response = await self.client.request(
+            "DELETE",
+            f"{self.settings.supabase_url}/rest/v1/{table}",
+            headers={**self.admin_headers, "Prefer": "return=representation"},
+            params=params,
+        )
+        return self._json(response, "Database delete failed")
+
     async def rpc(self, function: str, payload: dict[str, Any]) -> Any:
         response = await self.client.post(
             f"{self.settings.supabase_url}/rest/v1/rpc/{function}", headers=self.admin_headers, json=payload
