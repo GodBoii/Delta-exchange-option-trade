@@ -83,6 +83,9 @@ export function titleCase(value: string) {
 const dayMonthYear = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
 const dayMonthTime = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 const clock = new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const fullTimestamp = new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit"
+});
 
 /** `YYYY-MM-DD` expiry input value rendered for humans. */
 export function formatExpiry(value: string) {
@@ -94,6 +97,32 @@ export function formatDateTime(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return EM_DASH;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? EM_DASH : dayMonthTime.format(date);
+}
+
+/**
+ * Audit-grade timestamp: full date plus seconds. Used wherever a user has to
+ * reason about execution timing rather than scan a column.
+ */
+export function formatTimestamp(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return EM_DASH;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? EM_DASH : fullTimestamp.format(date);
+}
+
+/** Fixed-precision decimal for recorded prices and quantities. */
+export function decimal(value: unknown, digits = 2) {
+  const parsed = toNumber(value);
+  return parsed === null
+    ? EM_DASH
+    : parsed.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+/** Signed decimal, so an adverse figure reads as adverse at a glance. */
+export function signedDecimal(value: unknown, digits = 2) {
+  const parsed = toNumber(value);
+  if (parsed === null) return EM_DASH;
+  const magnitude = Math.abs(parsed).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return `${parsed > 0 ? "+" : parsed < 0 ? "-" : ""}${magnitude}`;
 }
 
 export function formatClock(value: string | number) {
