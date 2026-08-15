@@ -16,6 +16,17 @@ from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
 
+# Columns added by migration 004. Execution must never fail because an audit
+# field is missing, so writes degrade to the pre-migration column set instead.
+OPTIONAL_ORDER_METADATA = (
+    "order_type",
+    "limit_price",
+    "reference_price",
+    "contract_value",
+    "slippage",
+    "slippage_percent",
+)
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -30,6 +41,122 @@ def decimal_value(value: Any, default: str = "0") -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return Decimal(default)
+
+
+def optional_decimal(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def slippage_fields(side: str, reference: Any, average: Any) -> dict[str, str]:
+    """
+    Execution slippage against the mark price observed before submission.
+
+    The sign is normalised so positive always means adverse: a buy that filled
+    above the reference, or a sell that filled below it. Without a usable
+    reference or fill price there is nothing honest to record, so nothing is.
+    """
+    reference_price = optional_decimal(reference)
+    average_price = optional_decimal(average)
+    if not reference_price or not average_price or reference_price <= 0 or average_price <= 0:
+        return {}
+    direction = Decimal("1") if side == "buy" else Decimal("-1")
+    slippage = (average_price - reference_price) * direction
+    return {
+        "slippage": str(slippage),
+        "slippage_percent": str(slippage / reference_price * Decimal("100")),
+    }
+
+
+def order_cash_flow(order: dict[str, Any]) -> Decimal:
+    """
+    Signed premium moved by one recorded order, in quote currency.
+
+    Selling collects premium (positive), buying pays it (negative). Contract
+    value converts lots into underlying units; it defaults to 1 so pre-migration
+    rows still produce a directionally correct figure.
+    """
+    filled = decimal_value(order.get("filled_size"))
+    if filled <= 0 and str(order.get("state")) == "closed":
+        filled = decimal_value(order.get("size"))
+    price = optional_decimal(order.get("average_fill_price")) or Decimal("0")
+    contract_value = optional_decimal(order.get("contract_value")) or Decimal("1")
+    direction = Decimal("1") if order.get("side") == "sell" else Decimal("-1")
+    return direction * price * filled * contract_value
+
+
+def settlement_summary(orders: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Money view of a run, rebuilt from the recorded orders rather than stored
+    running totals, so it is identical whether it is computed at exit time or
+    when the Information panel is opened months later.
+    """
+    entry_premium = Decimal("0")
+    exit_premium = Decimal("0")
+    commission = Decimal("0")
+    slippage_cost = Decimal("0")
+    requested_lots = Decimal("0")
+    filled_lots = Decimal("0")
+    closed_lots = Decimal("0")
+    symbols: dict[str, dict[str, Decimal]] = {}
+
+    for order in orders:
+        is_exit = str(order.get("kind")) == "exit"
+        cash = order_cash_flow(order)
+        filled = decimal_value(order.get("filled_size"))
+        if filled <= 0 and str(order.get("state")) == "closed":
+            filled = decimal_value(order.get("size"))
+        commission += decimal_value(order.get("commission"))
+        slippage = optional_decimal(order.get("slippage"))
+        contract_value = optional_decimal(order.get("contract_value")) or Decimal("1")
+        if slippage is not None:
+            slippage_cost += slippage * filled * contract_value
+        if is_exit:
+            exit_premium += cash
+            closed_lots += filled
+        else:
+            entry_premium += cash
+            requested_lots += decimal_value(order.get("size"))
+            filled_lots += filled
+        symbol = str(order.get("product_symbol") or "unknown")
+        bucket = symbols.setdefault(
+            symbol,
+            {"entryPremium": Decimal("0"), "exitPremium": Decimal("0"), "commission": Decimal("0"),
+             "entryLots": Decimal("0"), "exitLots": Decimal("0")},
+        )
+        bucket["exitPremium" if is_exit else "entryPremium"] += cash
+        bucket["exitLots" if is_exit else "entryLots"] += filled
+        bucket["commission"] += decimal_value(order.get("commission"))
+
+    gross = entry_premium + exit_premium
+    return {
+        "entryPremium": str(entry_premium),
+        "exitPremium": str(exit_premium),
+        "grossPnl": str(gross),
+        "commission": str(commission),
+        "realizedPnl": str(gross - commission),
+        "slippageCost": str(slippage_cost),
+        "requestedLots": str(requested_lots),
+        "filledLots": str(filled_lots),
+        "closedLots": str(closed_lots),
+        "fullyClosed": bool(filled_lots > 0 and closed_lots >= filled_lots),
+        "bySymbol": [
+            {
+                "symbol": symbol,
+                "entryPremium": str(bucket["entryPremium"]),
+                "exitPremium": str(bucket["exitPremium"]),
+                "commission": str(bucket["commission"]),
+                "entryLots": str(bucket["entryLots"]),
+                "exitLots": str(bucket["exitLots"]),
+                "realizedPnl": str(bucket["entryPremium"] + bucket["exitPremium"] - bucket["commission"]),
+            }
+            for symbol, bucket in sorted(symbols.items())
+        ],
+    }
 
 
 def base36(value: int) -> str:
@@ -177,8 +304,34 @@ class TradingEngine:
             raise AppError(409, "Strategy is already exiting or cannot be exited", "exit_in_progress")
 
     async def record_order(self, order: dict[str, Any]) -> None:
-        if not await self.db.insert("execution_orders", order):
+        payload = {
+            key: value
+            for key, value in order.items()
+            if value is not None or key not in OPTIONAL_ORDER_METADATA
+        }
+        try:
+            rows = await self.db.insert("execution_orders", payload)
+        except AppError:
+            stripped = {key: value for key, value in payload.items() if key not in OPTIONAL_ORDER_METADATA}
+            if stripped == payload:
+                raise
+            logger.warning(
+                "Recording execution metadata failed; retrying without the migration 004 columns. "
+                "Apply supabase/migrations/004_run_execution_metadata.sql to keep slippage and premium history."
+            )
+            rows = await self.db.insert("execution_orders", stripped)
+        if not rows:
             raise AppError(500, "Could not record an order result", "order_record_failed")
+
+    async def write_audit(self, table: str, payload: dict[str, Any], params: dict[str, str]) -> None:
+        """
+        Best-effort write for reporting-only columns. A failure here must never
+        change the outcome of a trade, so it is logged and swallowed.
+        """
+        try:
+            await self.db.update(table, payload, params)
+        except Exception as exc:
+            logger.warning("Could not persist run metadata on %s: %s", table, exc)
 
     async def live_position_size(self, client: DeltaClient, product_id: int) -> Decimal:
         response = await client.position(product_id)
@@ -341,6 +494,7 @@ class TradingEngine:
                     result = order["result"]
                     requested_size = decimal_value(leg["lots"])
                     unfilled_size = decimal_value(result.get("unfilled_size"), str(leg["lots"]))
+                    reference_price = str(mark) if mark > 0 else None
                     await self.record_order(
                         {
                             "execution_id": execution_id,
@@ -355,7 +509,13 @@ class TradingEngine:
                             "average_fill_price": result.get("average_fill_price"),
                             "commission": str(decimal_value(result.get("paid_commission") or result.get("commission"))),
                             "state": str(result.get("state") or "submitted"),
+                            "order_type": leg["orderType"],
+                            "limit_price": str(leg["limitPrice"]) if leg.get("limitPrice") is not None else None,
+                            "reference_price": reference_price,
                             "response_json": order,
+                            **slippage_fields(
+                                str(leg["position"]), reference_price, result.get("average_fill_price")
+                            ),
                         }
                     )
                 except Exception as exc:
@@ -370,6 +530,9 @@ class TradingEngine:
                             "side": leg["position"],
                             "size": leg["lots"],
                             "state": "failed",
+                            "order_type": leg["orderType"],
+                            "limit_price": str(leg["limitPrice"]) if leg.get("limitPrice") is not None else None,
+                            "reference_price": str(leg.get("markPrice")) if leg.get("markPrice") else None,
                             "response_json": {"error": str(exc)},
                         }
                     )
@@ -412,10 +575,9 @@ class TradingEngine:
         return await self.db.select(
             "execution_orders",
             {
-                "select": (
-                    "id,leg_id,delta_order_id,client_order_id,product_id,product_symbol,side,size,state,"
-                    "filled_size,average_fill_price,commission,created_at"
-                ),
+                # `*` keeps this reader working whether or not the execution
+                # metadata migration has been applied to the project.
+                "select": "*",
                 "execution_id": f"in.({','.join(execution_ids)})",
                 "state": "neq.failed",
             },
@@ -446,11 +608,15 @@ class TradingEngine:
                 )
                 average_fill_price = notional / filled_size if filled_size else Decimal("0")
                 commission = sum((decimal_value(fill.get("commission")) for fill in order_fills), Decimal("0"))
+                slippage = slippage_fields(
+                    str(order.get("side")), order.get("reference_price"), average_fill_price
+                )
                 order = {
                     **order,
                     "filled_size": str(filled_size),
                     "average_fill_price": str(average_fill_price),
                     "commission": str(commission),
+                    **slippage,
                 }
                 await self.db.update(
                     "execution_orders",
@@ -461,6 +627,8 @@ class TradingEngine:
                     },
                     {"id": f"eq.{order['id']}"},
                 )
+                if slippage:
+                    await self.write_audit("execution_orders", slippage, {"id": f"eq.{order['id']}"})
             reconciled.append(order)
         return reconciled
 
@@ -469,6 +637,198 @@ class TradingEngine:
             product = await client.product(symbol)
             self.contract_values[symbol] = decimal_value(product.get("result", {}).get("contract_value"), "1")
         return self.contract_values[symbol]
+
+    async def run_executions(self, strategy_id: str) -> list[dict[str, Any]]:
+        return await self.db.select(
+            "executions",
+            {
+                "select": "id,kind,status,error,started_at,completed_at",
+                "strategy_id": f"eq.{strategy_id}",
+                "order": "started_at.asc",
+            },
+        )
+
+    async def run_orders(
+        self, strategy_id: str, executions: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
+        """Every order the run placed, entry and exit, tagged with its phase."""
+        executions = executions if executions is not None else await self.run_executions(strategy_id)
+        kinds = {str(item["id"]): str(item["kind"]) for item in executions}
+        if not kinds:
+            return []
+        rows = await self.db.select(
+            "execution_orders",
+            {"select": "*", "execution_id": f"in.({','.join(kinds)})", "order": "created_at.asc"},
+        )
+        return [{**row, "kind": kinds.get(str(row["execution_id"]), "entry")} for row in rows]
+
+    async def enrich_contract_values(
+        self, client: DeltaClient, orders: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Backfill the per-lot contract value on recorded orders so premium maths
+        is exact. Delta's product endpoint is public and the result is cached, so
+        this costs at most one request per symbol per process.
+        """
+        resolved: dict[str, Decimal] = {}
+        for symbol in sorted({str(order["product_symbol"]) for order in orders if not order.get("contract_value")}):
+            try:
+                resolved[symbol] = await self.contract_value(client, symbol)
+            except Exception as exc:
+                logger.warning("Could not read the contract value for %s: %s", symbol, exc)
+
+        enriched: list[dict[str, Any]] = []
+        for order in orders:
+            value = resolved.get(str(order.get("product_symbol")))
+            if order.get("contract_value") or value is None:
+                enriched.append(order)
+                continue
+            if order.get("id"):
+                await self.write_audit(
+                    "execution_orders", {"contract_value": str(value)}, {"id": f"eq.{order['id']}"}
+                )
+            enriched.append({**order, "contract_value": str(value)})
+        return enriched
+
+    async def record_settlement(
+        self, client: DeltaClient, strategy_id: str
+    ) -> dict[str, Any] | None:
+        """
+        Persist the money view of a finished run. Reporting only: a failure here
+        is logged and never changes the execution outcome.
+        """
+        try:
+            orders = await self.enrich_contract_values(client, await self.run_orders(strategy_id))
+            summary = settlement_summary(orders)
+        except Exception as exc:
+            logger.warning("Could not summarise the settlement for strategy %s: %s", strategy_id, exc)
+            return None
+        summary["settledAt"] = iso_now()
+        await self.write_audit(
+            "strategies",
+            {
+                "result_json": summary,
+                "realized_pnl": summary["realizedPnl"] if decimal_value(summary["closedLots"]) > 0 else None,
+            },
+            {"id": f"eq.{strategy_id}"},
+        )
+        return summary
+
+    async def run_detail(self, strategy_id: str, user_id: str) -> dict[str, Any]:
+        """
+        Everything recorded about a single run: schedule, criteria, per-leg
+        fills with slippage, settlement, risk monitor state, and raw responses.
+        """
+        rows = await self.db.select(
+            "strategies",
+            {"select": "*", "id": f"eq.{strategy_id}", "user_id": f"eq.{user_id}", "limit": "1"},
+        )
+        if not rows:
+            raise AppError(404, "Strategy not found", "strategy_not_found")
+        row = rows[0]
+        executions = await self.run_executions(strategy_id)
+        orders = await self.run_orders(strategy_id, executions)
+        if orders and any(not order.get("contract_value") for order in orders):
+            client = DeltaClient(self.settings)
+            try:
+                orders = await self.enrich_contract_values(client, orders)
+            finally:
+                await client.close()
+
+        stored = row.get("result_json") or {}
+        settlement = settlement_summary(orders) if orders else {}
+        if stored.get("settledAt"):
+            settlement["settledAt"] = stored["settledAt"]
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "status": row["status"],
+            "createdAt": row.get("created_at"),
+            "updatedAt": row.get("updated_at"),
+            "entryAt": row.get("entry_at"),
+            "exitAt": row.get("exit_at"),
+            "entryExecutedAt": row.get("entry_execution_at"),
+            "exitExecutedAt": row.get("exit_execution_at"),
+            "lastError": row.get("last_error"),
+            "definition": row.get("definition_json") or {},
+            "savedStrategyId": row.get("saved_strategy_id"),
+            "riskState": row.get("risk_state") or {},
+            "riskMonitoredAt": row.get("risk_monitor_at"),
+            "combinedStopTriggeredAt": row.get("combined_stop_triggered_at"),
+            "settlement": settlement,
+            "executions": [
+                {
+                    "id": item["id"],
+                    "kind": item["kind"],
+                    "status": item["status"],
+                    "error": item.get("error"),
+                    "startedAt": item.get("started_at"),
+                    "completedAt": item.get("completed_at"),
+                }
+                for item in executions
+            ],
+            "orders": [
+                {
+                    "id": order["id"],
+                    "kind": order.get("kind"),
+                    "legId": order.get("leg_id"),
+                    "deltaOrderId": order.get("delta_order_id"),
+                    "clientOrderId": order.get("client_order_id"),
+                    "productId": order.get("product_id"),
+                    "productSymbol": order.get("product_symbol"),
+                    "side": order.get("side"),
+                    "size": str(order.get("size")),
+                    "filledSize": str(order.get("filled_size") or "0"),
+                    "averageFillPrice": order.get("average_fill_price"),
+                    "referencePrice": order.get("reference_price"),
+                    "slippage": order.get("slippage"),
+                    "slippagePercent": order.get("slippage_percent"),
+                    "contractValue": order.get("contract_value"),
+                    "orderType": order.get("order_type"),
+                    "limitPrice": order.get("limit_price"),
+                    "commission": str(order.get("commission") or "0"),
+                    "state": order.get("state"),
+                    "createdAt": order.get("created_at"),
+                    "response": order.get("response_json") or {},
+                }
+                for order in orders
+            ],
+        }
+
+    async def delete_strategy(self, strategy_id: str, user_id: str) -> None:
+        """
+        Remove a finished run and its execution audit trail. Refused while the
+        run could still hold an open Delta position, because deleting the record
+        would leave that position untracked.
+        """
+        rows = await self.db.select(
+            "strategies",
+            {
+                "select": "id,status,entry_execution_at,exit_execution_at",
+                "id": f"eq.{strategy_id}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            raise AppError(404, "Strategy not found", "strategy_not_found")
+        row = rows[0]
+        status = str(row["status"])
+        if status in {"executing_entry", "executing_exit"}:
+            raise AppError(409, "This run is executing right now. Wait for it to finish", "cannot_delete_running")
+        if status == "active":
+            raise AppError(409, "Exit this live run before deleting it from history", "cannot_delete_live")
+        if status == "attention" and row.get("entry_execution_at") and not row.get("exit_execution_at"):
+            raise AppError(
+                409,
+                "This run entered but never confirmed an exit, so it may still hold a position. "
+                "Exit it before deleting the record",
+                "cannot_delete_unresolved",
+            )
+        if not await self.db.delete(
+            "strategies", {"select": "id", "id": f"eq.{strategy_id}", "user_id": f"eq.{user_id}"}
+        ):
+            raise AppError(409, "The run could not be deleted", "delete_failed")
 
     async def monitor_combined_strategy(self, row: dict[str, Any]) -> bool:
         definition = StrategyDefinition.model_validate(row["definition_json"])
@@ -704,6 +1064,13 @@ class TradingEngine:
                     client_order_id = (
                         f"dx_{strategy_id[:8]}_{index}_{base36(int(time.time() * 1000))}"[:32]
                     )
+                    # Slippage baseline for the close. Never allowed to delay or
+                    # block the exit itself.
+                    reference_price: str | None = None
+                    with suppress(Exception):
+                        ticker = await client.ticker(str(product["product_symbol"]))
+                        mark = decimal_value((ticker.get("result") or {}).get("mark_price"))
+                        reference_price = str(mark) if mark > 0 else None
                     order = await self.place_reduce_only_close(
                         client,
                         product_id,
@@ -716,6 +1083,7 @@ class TradingEngine:
                     result = order.get("result") or {}
                     requested_size = Decimal(int(close_size))
                     unfilled_size = decimal_value(result.get("unfilled_size"), str(requested_size))
+                    close_side = "sell" if live_size > 0 else "buy"
                     await self.record_order(
                         {
                             "execution_id": execution_id,
@@ -724,7 +1092,7 @@ class TradingEngine:
                             "client_order_id": client_order_id,
                             "product_id": product_id,
                             "product_symbol": product["product_symbol"],
-                            "side": "sell" if live_size > 0 else "buy",
+                            "side": close_side,
                             "size": int(close_size),
                             "filled_size": str(max(Decimal("0"), requested_size - unfilled_size)),
                             "average_fill_price": result.get("average_fill_price"),
@@ -732,7 +1100,10 @@ class TradingEngine:
                                 decimal_value(result.get("paid_commission") or result.get("commission"))
                             ),
                             "state": str(result.get("state") or "submitted"),
+                            "order_type": "market_order",
+                            "reference_price": reference_price,
                             "response_json": order,
+                            **slippage_fields(close_side, reference_price, result.get("average_fill_price")),
                         }
                     )
                     remaining_size = await self.verify_position_reduction(
@@ -791,6 +1162,7 @@ class TradingEngine:
                     {"id": f"eq.{strategy_id}"},
                 ),
             )
+            settlement = await self.record_settlement(client, strategy_id)
             if failure:
                 raise failure
             return {
@@ -798,6 +1170,7 @@ class TradingEngine:
                 "ordersSubmitted": submitted,
                 "positionsVerified": verified,
                 "verified": True,
+                "settlement": settlement,
             }
         finally:
             await client.close()
