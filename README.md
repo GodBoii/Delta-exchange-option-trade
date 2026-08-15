@@ -19,8 +19,11 @@ The frontend also supports a backend-optional design mode. Supabase sign-in, the
 ## Repository layout
 
 ```text
-app/                         Next.js client UI and Supabase OAuth callback
-lib/                         Browser/server Supabase helpers and frontend types
+app/                         Next.js routes and the Supabase OAuth callback
+app/components/              Application shell, feature views, and shared UI primitives
+app/globals.css              Design tokens and the single application stylesheet
+lib/                         Supabase helpers, backend API client, formatters, shared types
+UI_DESIGN_PLAN.md            Design-system reference for the interface
 backend/app/                 FastAPI, Delta client, execution engine, scheduler
 backend/tests/               Python strategy safety tests
 backend/Dockerfile           Production Python image
@@ -106,7 +109,7 @@ The market service exposes:
 - `GET /api/market/btcusd/delta`: cached public Delta BTCUSD ticker, price bands, L2 depth, recent trades, contract specifications, and 48-hour OI/funding/mark-price histories.
 - `WS /ws/market/btcusd`: throttled real-time browser feed containing ticker, bid/ask, active candle, top-15 synchronized depth, recent aggressor-classified trades, analysis updates, and public Delta BTCUSD derivative context.
 
-The chart is available publicly at `http://localhost:3000/market` and inside the connected workspace under **BTC market**. A single server-side Binance connection fans out live updates to browsers; REST is used only for initial candle history and recovery. It supports 1-minute through daily candle views.
+The chart is available publicly at `http://localhost:3000/market` and inside the connected workspace under **Research → Market analysis**. A single server-side Binance connection fans out live updates to browsers; REST is used only for initial candle history and recovery. It supports 1-minute through daily candle views.
 
 No Binance API key is required because this service consumes public market data only. Delta remains the sole venue for credentials, order submission, positions, and execution. `BTCUSDT` is deliberately shown everywhere in the analysis UI so it is not confused with Delta's separate `BTCUSD` contract price.
 
@@ -218,7 +221,7 @@ Add the backend server's static public IP to the Delta API key allowlist. Vercel
 8. It checks Delta's real-time per-product position endpoint and marks the strategy complete only after the reduction is confirmed.
 9. Every execution and order response is recorded in Supabase. Failed or unconfirmed exits remain `attention` and can be retried from Run history.
 
-The builder's **Schedule strategy** action stores a scheduled run; it does not place orders immediately. Use **Exit strategy** in Run history to close a live or attention-required strategy early. The Dashboard's **Close** action closes the entire live position for one product after first cancelling that product's open orders. Both close actions use reduce-only market orders and verify the live position before reporting success.
+The builder's **Schedule strategy** action stores a scheduled run; it does not place orders immediately. Use **Exit** in Run history to close a live or attention-required strategy early. The **Close** action on the Portfolio page closes the entire live position for one product after first cancelling that product's open orders. Both close actions use reduce-only market orders and verify the live position before reporting success.
 
 Every scheduled strategy is a separate run identified by its generated UUID. Strategy names are labels and may be reused.
 
