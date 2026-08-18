@@ -3,6 +3,16 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, ChevronDown, Info, MoreHorizontal, X } from "lucide-react";
+import { readMs, SwapText, useSlidingPill } from "@/app/components/motion";
+
+/* Re-exported so a surface can pull a primitive and its motion from one place
+ * rather than importing the same recipe from two modules. */
+export {
+  AnimatedNumber, Badge, ClearableInput, DrawnTick, HoverGroup, IconSwap, LearnMoreChevron,
+  MorphMenu, PageEnter, readMs, Shimmer, SpinningCounter, SuccessCheck, SwapText, TiltCard, Tooltip,
+  useBurst, useClearDissolve, useDisclosure, useReducedMotion, useShake, useSlidingPill,
+  useTravelDirection
+} from "@/app/components/motion";
 
 /* ------------------------------------------------------------------ *
  * Shared shapes
@@ -78,6 +88,13 @@ export function SectionHeading({ eyebrow, title, description, actions }: {
   );
 }
 
+/**
+ * Empty state.
+ *
+ * Stacked copy entering with rhythm, so it uses the staggered text reveal: the
+ * eye lands on the icon, then the heading, then the explanation, then the way
+ * out. The whole stagger stays under 300ms so the action never feels late.
+ */
 export function EmptyState({ icon, title, description, action, compact = false }: {
   icon: ReactNode;
   title: string;
@@ -85,12 +102,20 @@ export function EmptyState({ icon, title, description, action, compact = false }
   action?: ReactNode;
   compact?: boolean;
 }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
-    <div className={compact ? "empty-state compact" : "empty-state"}>
-      <span className="empty-state-icon" aria-hidden="true">{icon}</span>
-      <h3>{title}</h3>
-      <p>{description}</p>
-      {action}
+    <div
+      className={`empty-state t-stagger${compact ? " compact" : ""}${shown ? " is-shown" : ""}`}
+    >
+      <span className="empty-state-icon t-stagger-line t-stagger-line--1" aria-hidden="true">{icon}</span>
+      <h3 className="t-stagger-line t-stagger-line--2">{title}</h3>
+      <p className="t-stagger-line t-stagger-line--3">{description}</p>
+      {action && <span className="t-stagger-line t-stagger-line--4">{action}</span>}
     </div>
   );
 }
@@ -99,6 +124,16 @@ export function EmptyState({ icon, title, description, action, compact = false }
  * Loading placeholders shaped like the content they replace
  * ------------------------------------------------------------------ */
 
+/**
+ * Placeholders keep the shimmer sweep as their in-progress signal — that is the
+ * documented use for shimmer, and it reads better than a pulse on bars that are
+ * already a gradient.
+ *
+ * They are deliberately *not* the absolute `t-skel-skeleton` layer: these render
+ * in flow and are unmounted when the record lands, so there is no second layer
+ * on the same coordinates to cross-fade against. The reveal is carried by the
+ * content instead, via `Revealed`, on the same clock, blur and easing.
+ */
 export function TileSkeleton({ count = 3 }: { count?: number }) {
   return (
     <div className="skeleton-tiles" aria-hidden="true">
@@ -119,6 +154,14 @@ export function TableSkeleton({ rows = 5, label }: { rows?: number; label: strin
       {Array.from({ length: rows }, (_, index) => <span className="skeleton skeleton-row" key={index} />)}
     </div>
   );
+}
+
+/**
+ * The content side of that same reveal, for records whose placeholder unmounts
+ * rather than sharing coordinates with them.
+ */
+export function Revealed({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={className ? `t-reveal ${className}` : "t-reveal"}>{children}</div>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -167,18 +210,50 @@ export function Meter({ value, max, label, tone = "neutral" }: {
 
 const TOAST_ICON = { ok: <Check />, error: <AlertTriangle />, warning: <AlertTriangle /> } as const;
 
+const TOAST_AUTO_DISMISS_MS = 7_000;
+
+/**
+ * Transient confirmation.
+ *
+ * Arrival and dismissal are asymmetric by design: it rises in over 350ms so the
+ * message is noticed, and leaves in 250ms so it gets out of the way. Because
+ * React would otherwise unmount it the instant the notice clears, the toast owns
+ * its own exit and only tells the parent once the animation has finished.
+ *
+ * Errors still never auto-dismiss — a failed exchange action has to be read.
+ */
 export function Toast({ notice, onClose }: { notice: Notice; onClose: () => void }) {
+  const [open, setOpen] = useState(false);
+  const closing = useRef(false);
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const dismiss = useCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    setOpen(false);
+    window.setTimeout(() => close.current(), readMs("--toast-close", 250));
+  }, []);
+
   useEffect(() => {
     if (notice.tone === "error") return;
-    const timer = window.setTimeout(onClose, 7_000);
+    const timer = window.setTimeout(dismiss, TOAST_AUTO_DISMISS_MS);
     return () => window.clearTimeout(timer);
-  }, [notice, onClose]);
+  }, [dismiss, notice.tone]);
 
   return (
-    <div className={`toast tone-${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>
+    <div
+      className={`toast t-toast tone-${notice.tone}${open ? " is-open" : ""}`}
+      role={notice.tone === "error" ? "alert" : "status"}
+    >
       <span className="toast-icon" aria-hidden="true">{TOAST_ICON[notice.tone]}</span>
       <p>{notice.text}</p>
-      <button type="button" className="toast-close" onClick={onClose} aria-label="Dismiss notification"><X /></button>
+      <button type="button" className="toast-close" onClick={dismiss} aria-label="Dismiss notification"><X /></button>
     </div>
   );
 }
@@ -260,6 +335,41 @@ function useModalShell(onClose: () => void, initialFocus?: RefObject<HTMLElement
 }
 
 /**
+ * Owns the surface's own entrance and exit.
+ *
+ * A modal is rendered conditionally by its parent, so without this the closing
+ * half of the transition would never be seen — the element would be gone from
+ * the tree before it could animate. The surface starts in the recipe's pre-open
+ * rest state, flips to `is-open` on the next frame so the transition has two
+ * frames to interpolate between, and on dismissal holds itself in `is-closing`
+ * for exactly the close duration before telling the parent it is finished.
+ *
+ * `requestClose` is idempotent: a backdrop click during the Escape close cannot
+ * start a second exit.
+ */
+function useModalExit(onClose: () => void) {
+  const [state, setState] = useState<"pre" | "open" | "closing">("pre");
+  const closing = useRef(false);
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setState(current => (current === "pre" ? "open" : current)));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const requestClose = useCallback(() => {
+    if (closing.current) return;
+    closing.current = true;
+    setState("closing");
+    window.setTimeout(() => close.current(), readMs("--modal-close-dur", 150));
+  }, []);
+
+  const className = state === "open" ? " is-open" : state === "closing" ? " is-closing" : "";
+  return { className, requestClose };
+}
+
+/**
  * Confirmation dialog for actions that reach the exchange.
  *
  * Focus starts on the cancelling control, so a stray Enter keypress cannot
@@ -277,15 +387,22 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
   onConfirm: () => void;
 }) {
   const cancelButton = useRef<HTMLButtonElement>(null);
-  const { dialog, onKeyDown } = useModalShell(onClose, cancelButton);
+  const { className, requestClose } = useModalExit(onClose);
+  const { dialog, onKeyDown } = useModalShell(requestClose, cancelButton);
   const titleId = useId();
   const descriptionId = useId();
 
   return (
     <div className="modal-layer" onKeyDown={onKeyDown}>
-      <button type="button" className="modal-backdrop" onClick={onClose} tabIndex={-1} aria-hidden="true" />
+      <button
+        type="button"
+        className={`modal-backdrop t-modal-scrim${className}`}
+        onClick={requestClose}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
       <div
-        className={`modal tone-${tone}`}
+        className={`modal t-modal tone-${tone}${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -296,7 +413,7 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
         <h2 id={titleId}>{title}</h2>
         <p id={descriptionId}>{description}</p>
         <div className="modal-actions">
-          <button type="button" className="button ghost" onClick={onClose} ref={cancelButton}>{cancel}</button>
+          <button type="button" className="button ghost" onClick={requestClose} ref={cancelButton}>{cancel}</button>
           <button
             type="button"
             className={tone === "danger" ? "button danger" : "button primary"}
@@ -324,13 +441,26 @@ export function Dialog({ title, subtitle, aside, footer, onClose, children }: {
   children: ReactNode;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
-  const { dialog, onKeyDown } = useModalShell(onClose, closeButton);
+  const { className, requestClose } = useModalExit(onClose);
+  const { dialog, onKeyDown } = useModalShell(requestClose, closeButton);
   const titleId = useId();
 
   return (
     <div className="modal-layer" onKeyDown={onKeyDown}>
-      <button type="button" className="modal-backdrop" onClick={onClose} tabIndex={-1} aria-hidden="true" />
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dialog}>
+      <button
+        type="button"
+        className={`modal-backdrop t-modal-scrim${className}`}
+        onClick={requestClose}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+      <div
+        className={`dialog t-modal${className}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={dialog}
+      >
         <header className="dialog-head">
           <div className="dialog-head-text">
             <h2 id={titleId}>{title}</h2>
@@ -338,7 +468,7 @@ export function Dialog({ title, subtitle, aside, footer, onClose, children }: {
           </div>
           <div className="dialog-head-side">
             {aside}
-            <button type="button" className="icon-button" onClick={onClose} ref={closeButton} aria-label="Close details">
+            <button type="button" className="icon-button" onClick={requestClose} ref={closeButton} aria-label="Close details">
               <X aria-hidden="true" />
             </button>
           </div>
@@ -378,14 +508,21 @@ const ROW_MENU_ITEM_HEIGHT = 46;
  */
 export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
   const [anchor, setAnchor] = useState<{ top: number; left: number; placement: "below" | "above" } | null>(null);
+  const [phase, setPhase] = useState<"pre" | "open" | "closing">("pre");
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const open = anchor !== null;
+  const open = anchor !== null && phase !== "closing";
 
+  /**
+   * The panel is held in `is-closing` for the close duration rather than being
+   * unmounted immediately, so dismissal plays its own quicker transition instead
+   * of the menu simply disappearing.
+   */
   const close = useCallback((restoreFocus = true) => {
-    setAnchor(null);
+    setPhase(current => (current === "closing" ? current : "closing"));
     if (restoreFocus) trigger.current?.focus();
+    window.setTimeout(() => setAnchor(null), readMs("--dropdown-close-dur", 150));
   }, []);
 
   function openMenu() {
@@ -393,12 +530,21 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
     if (!rect) return;
     const height = items.length * ROW_MENU_ITEM_HEIGHT + 12;
     const fitsBelow = window.innerHeight - rect.bottom > height + 16;
+    setPhase("pre");
     setAnchor({
       top: fitsBelow ? rect.bottom + 6 : Math.max(8, rect.top - 6 - height),
       left: Math.max(8, Math.min(rect.right - ROW_MENU_WIDTH, window.innerWidth - ROW_MENU_WIDTH - 8)),
       placement: fitsBelow ? "below" : "above"
     });
   }
+
+  // Flip to the open state one frame after mounting, so the growth transition
+  // has a pre-open state to interpolate from.
+  useEffect(() => {
+    if (anchor === null) return;
+    const frame = requestAnimationFrame(() => setPhase(current => (current === "pre" ? "open" : current)));
+    return () => cancelAnimationFrame(frame);
+  }, [anchor]);
 
   useEffect(() => {
     if (!open) return;
@@ -462,9 +608,14 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
         <MoreHorizontal aria-hidden="true" />
       </button>
 
-      {open && createPortal(
+      {anchor !== null && createPortal(
         <div
-          className={`row-menu from-${anchor.placement}`}
+          className={`row-menu t-dropdown from-${anchor.placement}${
+            phase === "open" ? " is-open" : phase === "closing" ? " is-closing" : ""
+          }`}
+          /* The panel's right edge is aligned to the trigger's, so it grows out
+             of the corner it is actually anchored to rather than the top left. */
+          data-origin={anchor.placement === "below" ? "top-right" : "bottom-right"}
           id={menuId}
           role="menu"
           aria-label={label}
@@ -631,6 +782,12 @@ export function OptionalNumberField({ label, value, onChange, invalid, hint, pla
 /**
  * Single-choice control exposed as a radio group rather than a tab list, so
  * assistive technology announces "1 of 3" and arrow keys move the selection.
+ *
+ * The selection is one pill that travels between the options rather than a
+ * background switching off one button and on to another, so the control shows
+ * which way the choice moved and not only where it ended up. On first paint the
+ * pill is positioned with its transition suspended, otherwise it would slide in
+ * from zero width at the left edge every time the control mounts.
  */
 export function Segmented({ label, value, options, onChange, disabled = false, invalid = false }: {
   label: string;
@@ -641,6 +798,7 @@ export function Segmented({ label, value, options, onChange, disabled = false, i
   invalid?: boolean;
 }) {
   const groupId = useId();
+  const { barRef, pill } = useSlidingPill(value, '[aria-checked="true"]');
 
   function move(offset: number) {
     const index = options.findIndex(option => option.value === value);
@@ -654,6 +812,7 @@ export function Segmented({ label, value, options, onChange, disabled = false, i
       <div
         className="segmented"
         role="radiogroup"
+        ref={barRef}
         aria-labelledby={groupId}
         aria-invalid={invalid || undefined}
         style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
@@ -663,6 +822,7 @@ export function Segmented({ label, value, options, onChange, disabled = false, i
           if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); move(-1); }
         }}
       >
+        {pill}
         {options.map(option => {
           const selected = option.value === value;
           return (
@@ -683,6 +843,16 @@ export function Segmented({ label, value, options, onChange, disabled = false, i
   );
 }
 
+/**
+ * On/off switch.
+ *
+ * The thumb travels with a double-bounce overshoot, so flipping it reads as a
+ * physical throw rather than a value being assigned. `is-init` is only added
+ * once the operator has actually interacted: without it, every switch on the
+ * page would play its return bounce on first paint.
+ *
+ * The label also swaps in place rather than being replaced between frames.
+ */
 export function Toggle({ label, description, checked, onChange }: {
   label: string;
   description?: string;
@@ -690,6 +860,8 @@ export function Toggle({ label, description, checked, onChange }: {
   onChange: (checked: boolean) => void;
 }) {
   const labelId = useId();
+  const [interacted, setInteracted] = useState(false);
+
   return (
     <div className="toggle-field">
       <span className="field-label" id={labelId}>{label}</span>
@@ -698,11 +870,12 @@ export function Toggle({ label, description, checked, onChange }: {
         role="switch"
         aria-checked={checked}
         aria-labelledby={labelId}
-        className={checked ? "toggle on" : "toggle"}
-        onClick={() => onChange(!checked)}
+        data-on={checked}
+        className={`toggle t-toggle${checked ? " on" : ""}${interacted ? " is-init" : ""}`}
+        onClick={() => { setInteracted(true); onChange(!checked); }}
       >
-        <i aria-hidden="true" />
-        <span>{checked ? "On" : "Off"}</span>
+        <i aria-hidden="true"><span className="t-toggle-thumb" /></i>
+        <SwapText>{checked ? "On" : "Off"}</SwapText>
       </button>
       {description && <small className="field-hint">{description}</small>}
     </div>
