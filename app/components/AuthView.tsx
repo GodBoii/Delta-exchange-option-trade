@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, BarChart3, CalendarClock, Check, LoaderCircle, LockKeyhole, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { errorMessage } from "@/lib/format";
-import { Brand, Field, InlineMessage, Segmented } from "@/app/components/ui";
+import {
+  Brand, Field, InlineMessage, LearnMoreChevron, Segmented, Shimmer, useShake
+} from "@/app/components/ui";
 
 type Mode = "sign-in" | "sign-up";
 
@@ -22,6 +24,20 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
   const [busy, setBusy] = useState<"email" | "google" | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [shown, setShown] = useState(false);
+
+  /**
+   * A rejected credential shakes the card that owns the border, and the shake is
+   * replayable: submitting the same wrong password twice shakes twice. The error
+   * treatment and the shake are separate classes precisely so re-triggering one
+   * does not flicker the other off and on in the same tick.
+   */
+  const { target: card, shake } = useShake<HTMLElement>();
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   function changeMode(next: string) {
     setMode(next as Mode);
@@ -29,6 +45,11 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
     setMessage("");
     setPassword("");
     setConfirmPassword("");
+  }
+
+  function reject(text: string) {
+    setError(text);
+    shake();
   }
 
   async function signInWithGoogle() {
@@ -42,7 +63,7 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
       });
       if (authError) throw authError;
     } catch (nextError) {
-      setError(errorMessage(nextError));
+      reject(errorMessage(nextError));
       setBusy(null);
     }
   }
@@ -52,7 +73,7 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
     setError("");
     setMessage("");
     if (mode === "sign-up" && password !== confirmPassword) {
-      setError("The two passwords do not match.");
+      reject("The two passwords do not match.");
       return;
     }
     setBusy("email");
@@ -78,7 +99,7 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
       setConfirmPassword("");
       setMessage("Account created. Confirm the address from your email to continue.");
     } catch (nextError) {
-      setError(errorMessage(nextError));
+      reject(errorMessage(nextError));
     } finally {
       setBusy(null);
     }
@@ -89,21 +110,25 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
       <header className="entry-bar">
         <Brand />
         <div className="entry-bar-actions">
-          <Link className="button ghost" href="/market"><BarChart3 aria-hidden="true" />Public market analysis</Link>
+          <Link className="button ghost t-learn" href="/market">
+            <BarChart3 aria-hidden="true" />Public market analysis<LearnMoreChevron />
+          </Link>
         </div>
       </header>
 
       <div className="entry-grid">
-        <section className="entry-copy">
-          <p className="eyebrow"><span aria-hidden="true" />Options strategy operations</p>
-          <h1>Build once, schedule precisely, review every run.</h1>
-          <p className="entry-lede">
+        {/* Stacked copy entering with rhythm: the eye lands on the eyebrow, then
+            the headline, then the explanation, then the capability list. */}
+        <section className={`entry-copy t-stagger${shown ? " is-shown" : ""}`}>
+          <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />Options strategy operations</p>
+          <h1 className="t-stagger-line t-stagger-line--2">Build once, schedule precisely, review every run.</h1>
+          <p className="entry-lede t-stagger-line t-stagger-line--3">
             A private workspace for Delta Exchange India option strategies. Configure multi-leg
             structures, hand them to a server-side scheduler, and keep an auditable record of
             what was submitted.
           </p>
 
-          <ul className="entry-capabilities">
+          <ul className="entry-capabilities t-stagger-line t-stagger-line--4">
             <li>
               <span aria-hidden="true"><SlidersHorizontal /></span>
               <div>
@@ -128,79 +153,89 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
           </ul>
         </section>
 
-        <section className="entry-card" aria-labelledby="auth-card-title">
-          <header className="entry-card-head">
-            <span className="panel-icon" aria-hidden="true"><LockKeyhole /></span>
-            <div>
-              <h2 id="auth-card-title">{mode === "sign-in" ? "Sign in" : "Create your workspace"}</h2>
-              <p>{mode === "sign-in" ? "Use the email and password for your workspace account." : "Accounts are managed by Supabase Auth."}</p>
-            </div>
-          </header>
+        <div className="entry-card-shell">
+          {/* `t-input` marks the element that owns the visible border, which is
+              what the shake and the error border-colour tween act on. The message
+              itself stays put in an `InlineMessage`, because a rejected
+              credential has to remain readable rather than auto-reverting. */}
+          <section
+            className={`entry-card t-input${error ? " is-error" : ""}`}
+            ref={card}
+            aria-labelledby="auth-card-title"
+          >
+            <header className="entry-card-head">
+              <span className="panel-icon" aria-hidden="true"><LockKeyhole /></span>
+              <div>
+                <h2 id="auth-card-title">{mode === "sign-in" ? "Sign in" : "Create your workspace"}</h2>
+                <p>{mode === "sign-in" ? "Use the email and password for your workspace account." : "Accounts are managed by Supabase Auth."}</p>
+              </div>
+            </header>
 
-          <Segmented
-            label="Account"
-            value={mode}
-            onChange={changeMode}
-            options={[{ value: "sign-in", label: "Sign in" }, { value: "sign-up", label: "Create account" }]}
-          />
+            <Segmented
+              label="Account"
+              value={mode}
+              onChange={changeMode}
+              options={[{ value: "sign-in", label: "Sign in" }, { value: "sign-up", label: "Create account" }]}
+            />
 
-          <form className="stack" onSubmit={submit}>
-            <Field label="Email address">
-              <input
-                type="email"
-                value={email}
-                onChange={event => setEmail(event.target.value)}
-                autoComplete="email"
-                placeholder="you@company.com"
-                required
-              />
-            </Field>
-            <Field label="Password" hint={mode === "sign-up" ? "At least 8 characters." : undefined}>
-              <input
-                type="password"
-                value={password}
-                onChange={event => setPassword(event.target.value)}
-                autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
-                minLength={8}
-                required
-              />
-            </Field>
-            {mode === "sign-up" && (
-              <Field label="Confirm password">
+            <form className="stack" onSubmit={submit}>
+              <Field label="Email address">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={event => setEmail(event.target.value)}
+                  autoComplete="email"
+                  placeholder="you@company.com"
+                  required
+                />
+              </Field>
+              <Field label="Password" hint={mode === "sign-up" ? "At least 8 characters." : undefined}>
                 <input
                   type="password"
-                  value={confirmPassword}
-                  onChange={event => setConfirmPassword(event.target.value)}
-                  autoComplete="new-password"
+                  value={password}
+                  onChange={event => setPassword(event.target.value)}
+                  autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
                   minLength={8}
                   required
                 />
               </Field>
-            )}
+              {mode === "sign-up" && (
+                <Field label="Confirm password">
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={event => setConfirmPassword(event.target.value)}
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                  />
+                </Field>
+              )}
 
-            {error && <InlineMessage tone="error">{error}</InlineMessage>}
-            {message && <InlineMessage tone="ok">{message}</InlineMessage>}
+              {error && <InlineMessage tone="error">{error}</InlineMessage>}
+              {message && <InlineMessage tone="ok">{message}</InlineMessage>}
 
-            <button className="button primary block" disabled={busy !== null}>
-              {busy === "email"
-                ? <><LoaderCircle className="spin" aria-hidden="true" />{mode === "sign-in" ? "Signing in" : "Creating account"}</>
-                : <>{mode === "sign-in" ? <><LockKeyhole aria-hidden="true" />Sign in</> : <><Check aria-hidden="true" />Create account</>}</>}
+              <button className="button primary block" disabled={busy !== null}>
+                {busy === "email"
+                  ? <><LoaderCircle className="spin" aria-hidden="true" /><Shimmer>{mode === "sign-in" ? "Signing in" : "Creating account"}</Shimmer></>
+                  : <>{mode === "sign-in" ? <><LockKeyhole aria-hidden="true" />Sign in</> : <><Check aria-hidden="true" />Create account</>}</>}
+              </button>
+            </form>
+
+            <div className="divider"><span>or</span></div>
+
+            <button type="button" className="button google block" onClick={() => void signInWithGoogle()} disabled={busy !== null}>
+              <span className="google-mark" aria-hidden="true">G</span>
+              {busy === "google" ? <Shimmer>Opening Google</Shimmer> : "Continue with Google"}
             </button>
-          </form>
 
-          <div className="divider"><span>or</span></div>
-
-          <button type="button" className="button google block" onClick={() => void signInWithGoogle()} disabled={busy !== null}>
-            <span className="google-mark" aria-hidden="true">G</span>
-            {busy === "google" ? "Opening Google" : "Continue with Google"}
-          </button>
-
-          <p className="fine-print">
-            <AlertTriangle aria-hidden="true" />
-            Signing in creates the workspace account only. Delta Exchange is connected separately,
-            once, after authentication.
-          </p>
-        </section>
+            <p className="fine-print">
+              <AlertTriangle aria-hidden="true" />
+              Signing in creates the workspace account only. Delta Exchange is connected separately,
+              once, after authentication.
+            </p>
+          </section>
+        </div>
       </div>
     </div>
   );
