@@ -2,18 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { LoaderCircle, RefreshCw, WifiOff } from "lucide-react";
+import { RefreshCw, WifiOff } from "lucide-react";
+import { ThinkingOrb } from "thinking-orbs";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { requestJson, resetApiOrigin } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
-import type { Account, AppUser, SessionResponse } from "@/lib/app-types";
-import { AppShell, type ConnectionState, type Tab } from "@/app/components/AppShell";
+import type { Account, AppUser, SessionResponse, StrategyRun } from "@/lib/app-types";
+import { AppShell, TAB_ORDER, type ConnectionState, type Tab } from "@/app/components/AppShell";
 import AuthView from "@/app/components/AuthView";
 import ConnectView from "@/app/components/ConnectView";
 import StrategyBuilder from "@/app/components/StrategyBuilder";
 import Dashboard from "@/app/components/Dashboard";
 import RunHistory from "@/app/components/RunHistory";
-import { Brand, ConfirmModal, TableSkeleton, Toast, type Notice } from "@/app/components/ui";
+import {
+  Brand, ConfirmModal, LearnMoreChevron, PageEnter, Shimmer, TableSkeleton, Toast,
+  useTravelDirection, type Notice
+} from "@/app/components/ui";
 
 /**
  * The research surfaces carry the heaviest dependencies — an SVG charting
@@ -33,6 +37,9 @@ type BackendStatus = "checking" | "online" | "offline";
 const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news"];
 const DESIGN_TABS: Tab[] = ["builder"];
 
+/** Cheap enough to run alongside the run list without straining rate limits. */
+const ATTENTION_POLL_MS = 60_000;
+
 /**
  * Session orchestration.
  *
@@ -49,6 +56,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("builder");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [attention, setAttention] = useState(0);
 
   const loadSession = useCallback(async () => {
     try {
@@ -86,6 +94,40 @@ export default function Home() {
   }, []);
 
   useEffect(() => { void loadSession(); }, [loadSession]);
+
+  const connected = Boolean(account);
+
+  /**
+   * Runs that did not complete cleanly are surfaced on the navigation itself, so
+   * a failed entry is noticed while the operator is on another surface rather
+   * than only when they happen to open the run list.
+   *
+   * Run history reports its own count up whenever it loads, so opening that tab
+   * or acting on a row updates the badge immediately; this slower poll only
+   * covers the case where the tab has never been opened. It is deliberately
+   * quieter than the 30-second list refresh because it is background awareness,
+   * not a live view.
+   */
+  useEffect(() => {
+    if (!connected) {
+      setAttention(0);
+      return;
+    }
+    let cancelled = false;
+
+    const count = async () => {
+      try {
+        const data = await requestJson<{ result: StrategyRun[] }>("/api/strategies");
+        if (!cancelled) setAttention(data.result.filter(run => run.status === "attention").length);
+      } catch {
+        // Background awareness only: a failed count must never raise a toast.
+      }
+    };
+
+    void count();
+    const timer = window.setInterval(() => { void count(); }, ATTENTION_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [connected]);
 
   async function disconnectDelta() {
     try {
@@ -128,7 +170,6 @@ export default function Home() {
     );
   }
 
-  const connected = Boolean(account);
   const connection: ConnectionState = connected
     ? { label: "Delta connected", detail: "Live production venue", tone: "active" }
     : { label: "Design mode", detail: "Trading backend offline", tone: "warning" };
@@ -143,21 +184,26 @@ export default function Home() {
           name: account?.accountName || user.displayName || "Workspace",
           detail: account?.email || user.email || "Signed in"
         }}
+        badges={{ runs: attention }}
         onNavigate={setTab}
         onDisconnect={connected ? () => setConfirmDisconnect(true) : undefined}
         onSignOut={signOut}
         banner={connected ? undefined : <OfflineBanner onRetry={loadSession} />}
       >
-        {tab === "builder" && <StrategyBuilder userId={user.id} onNotice={setNotice} liveEnabled={connected} />}
-        {tab === "runs" && connected && <RunHistory onNotice={setNotice} />}
-        {tab === "dashboard" && connected && <Dashboard onNotice={setNotice} />}
-        {tab === "market" && connected && <BtcMarketChart />}
-        {tab === "news" && connected && <NewsAnalysis request={requestJson} />}
+        <WorkspaceBody
+          tab={tab}
+          connected={connected}
+          userId={user.id}
+          onNotice={setNotice}
+          onAttention={setAttention}
+        />
       </AppShell>
 
       {notice && (
         <div className="toast-region">
-          <Toast notice={notice} onClose={() => setNotice(null)} />
+          {/* Keyed on the message so a second notice replays the entrance instead
+              of silently swapping text inside a toast that is already open. */}
+          <Toast key={`${notice.tone}:${notice.text}`} notice={notice} onClose={() => setNotice(null)} />
         </div>
       )}
 
@@ -175,12 +221,57 @@ export default function Home() {
   );
 }
 
+/**
+ * The workspace body.
+ *
+ * Exactly one section is mounted at a time, so switching tabs plays the
+ * entrance half of the side-by-side page slide: the incoming surface enters
+ * from the side it travelled from, which keeps the sections feeling spatially
+ * arranged rather than swapped at random. `PageEnter` is keyed on the tab, so
+ * React remounts the body and the animation restarts on every move.
+ */
+function WorkspaceBody({ tab, connected, userId, onNotice, onAttention }: {
+  tab: Tab;
+  connected: boolean;
+  userId: string;
+  onNotice: (notice: Notice) => void;
+  onAttention: (count: number) => void;
+}) {
+  const direction = useTravelDirection(tab, TAB_ORDER);
+
+  return (
+    // The key is what remounts the body, which is what restarts the entrance.
+    <PageEnter key={tab} direction={direction}>
+      {tab === "builder" && <StrategyBuilder userId={userId} onNotice={onNotice} liveEnabled={connected} />}
+      {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
+      {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
+      {tab === "market" && connected && <BtcMarketChart />}
+      {tab === "news" && connected && <NewsAnalysis request={requestJson} />}
+    </PageEnter>
+  );
+}
+
+/**
+ * Boot surface.
+ *
+ * The orb states what the app is actually doing — restoring a session — instead
+ * of a spinner that only says "busy", and the copy rises with the staggered text
+ * reveal so the first screen reads as a sequence rather than a flash.
+ */
 function LoadingScreen() {
   return (
-    <div className="boot-screen" role="status">
-      <Brand />
-      <LoaderCircle className="spin" aria-hidden="true" />
-      <p>Restoring your secure session</p>
+    <div className="boot-screen t-stagger is-shown" role="status">
+      <span className="t-stagger-line t-stagger-line--1"><Brand /></span>
+      <span className="news-orb t-stagger-line t-stagger-line--2">
+        <ThinkingOrb state="connecting" size={64} theme="dark" aria-label="Restoring your secure session" />
+      </span>
+      <div className="boot-copy">
+        <strong className="t-stagger-line t-stagger-line--3">
+          <Shimmer>Restoring your secure session</Shimmer>
+        </strong>
+        <small className="t-stagger-line t-stagger-line--4">Checking the workspace account and the trading backend</small>
+      </div>
+      <div className="boot-progress t-stagger-line t-stagger-line--5" aria-hidden="true"><i /></div>
     </div>
   );
 }
@@ -190,16 +281,25 @@ function LoadingScreen() {
  * absence of live data reads as a known state rather than a failure.
  */
 function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
+  // A panel sliding into a region of the page: it opens on the slower panel
+  // clock with a cross-blur, so losing the backend announces itself rather than
+  // a banner simply existing on the next paint.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
-    <div className="callout tone-warning" role="status">
+    <div className="callout tone-warning t-panel-slide" data-open={open} role="status">
       <WifiOff aria-hidden="true" />
       <span>
         <strong>Trading backend unreachable — design mode.</strong>
         {" "}Configuration, the saved library, and JSON export stay available. Contract resolution,
         scheduling, execution, portfolio, and research need the local Docker backend.
       </span>
-      <button type="button" className="button secondary" onClick={() => void onRetry()}>
-        <RefreshCw aria-hidden="true" />Retry
+      <button type="button" className="button secondary t-learn" onClick={() => void onRetry()}>
+        <RefreshCw aria-hidden="true" />Retry<LearnMoreChevron />
       </button>
     </div>
   );
