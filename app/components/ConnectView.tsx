@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck, Zap } from "lucide-react";
+import { MetalFx } from "metal-fx";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import type { Account, AppUser } from "@/lib/app-types";
-import { Brand, Field, InlineMessage } from "@/app/components/ui";
+import {
+  Brand, Field, InlineMessage, readMs, Shimmer, SuccessCheck, useShake
+} from "@/app/components/ui";
 
 /**
  * One-time Delta Exchange connection.
@@ -24,6 +27,14 @@ export default function ConnectView({ user, onConnected, onSignOut }: {
   const [apiSecret, setApiSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [verified, setVerified] = useState(false);
+  const [shown, setShown] = useState(false);
+  const { target: card, shake } = useShake<HTMLElement>();
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   async function connect(event: React.FormEvent) {
     event.preventDefault();
@@ -36,10 +47,17 @@ export default function ConnectView({ user, onConnected, onSignOut }: {
       });
       setApiKey("");
       setApiSecret("");
-      onConnected(result.account);
+      /**
+       * The check is held for exactly its own animation before the workspace
+       * takes over. This is the one place a deliberate pause is worth it: a live
+       * trading credential was just accepted by the exchange, and confirming
+       * that explicitly is better than the screen vanishing mid-verification.
+       */
+      setVerified(true);
+      window.setTimeout(() => onConnected(result.account), readMs("--check-opacity-dur", 500) + 250);
     } catch (nextError) {
       setError(errorMessage(nextError));
-    } finally {
+      shake();
       setBusy(false);
     }
   }
@@ -55,15 +73,15 @@ export default function ConnectView({ user, onConnected, onSignOut }: {
       </header>
 
       <div className="entry-grid">
-        <section className="entry-copy">
-          <p className="eyebrow"><span aria-hidden="true" />One-time setup</p>
-          <h1>Connect Delta Exchange to enable execution.</h1>
-          <p className="entry-lede">
+        <section className={`entry-copy t-stagger${shown ? " is-shown" : ""}`}>
+          <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />One-time setup</p>
+          <h1 className="t-stagger-line t-stagger-line--2">Connect Delta Exchange to enable execution.</h1>
+          <p className="entry-lede t-stagger-line t-stagger-line--3">
             Your workspace account is ready. This connection lets the backend resolve live option
             contracts and submit the strategies you schedule.
           </p>
 
-          <dl className="entry-facts">
+          <dl className="entry-facts t-stagger-line t-stagger-line--4">
             <div>
               <dt><ShieldCheck aria-hidden="true" />Stored in Supabase Vault</dt>
               <dd>The API secret is encrypted at rest and is never returned to the browser.</dd>
@@ -79,58 +97,79 @@ export default function ConnectView({ user, onConnected, onSignOut }: {
           </dl>
         </section>
 
-        <section className="entry-card">
-          <header className="entry-card-head">
-            <span className="panel-icon" aria-hidden="true"><KeyRound /></span>
-            <div>
-              <h2>Delta Exchange India</h2>
-              <p>Live production account.</p>
-            </div>
-          </header>
+        <div className="entry-card-shell">
+          <section className={`entry-card t-input${error ? " is-error" : ""}`} ref={card}>
+            {verified ? (
+              <div className="connect-verified" role="status">
+                <SuccessCheck shown label="Trading access verified" size={56} />
+                <strong>Trading access verified</strong>
+                <small>Opening your workspace</small>
+              </div>
+            ) : (
+              <>
+                <header className="entry-card-head">
+                  <span className="panel-icon" aria-hidden="true"><KeyRound /></span>
+                  <div>
+                    <h2>Delta Exchange India</h2>
+                    <p>Live production account.</p>
+                  </div>
+                </header>
 
-          <InlineMessage tone="warning">
-            This is a live venue. Connecting does not place an order; execution starts only from a
-            strategy you schedule.
-          </InlineMessage>
+                <InlineMessage tone="warning">
+                  This is a live venue. Connecting does not place an order; execution starts only from a
+                  strategy you schedule.
+                </InlineMessage>
 
-          <form className="stack" onSubmit={connect}>
-            <Field label="API key">
-              <input
-                value={apiKey}
-                onChange={event => setApiKey(event.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Paste your API key"
-                minLength={16}
-                required
-              />
-            </Field>
-            <Field label="API secret" hint="Use a dedicated key with only the permissions this workstation needs.">
-              <input
-                type="password"
-                value={apiSecret}
-                onChange={event => setApiSecret(event.target.value)}
-                autoComplete="new-password"
-                placeholder="Paste your API secret"
-                minLength={24}
-                required
-              />
-            </Field>
+                <form className="stack" onSubmit={connect}>
+                  <Field label="API key">
+                    <input
+                      value={apiKey}
+                      onChange={event => setApiKey(event.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="Paste your API key"
+                      minLength={16}
+                      required
+                    />
+                  </Field>
+                  <Field label="API secret" hint="Use a dedicated key with only the permissions this workstation needs.">
+                    <input
+                      type="password"
+                      value={apiSecret}
+                      onChange={event => setApiSecret(event.target.value)}
+                      autoComplete="new-password"
+                      placeholder="Paste your API secret"
+                      minLength={24}
+                      required
+                    />
+                  </Field>
 
-            {error && <InlineMessage tone="error">{error}</InlineMessage>}
+                  {error && <InlineMessage tone="error">{error}</InlineMessage>}
 
-            <button className="button primary block" disabled={busy}>
-              {busy
-                ? <><LoaderCircle className="spin" aria-hidden="true" />Verifying trading access</>
-                : <><Zap aria-hidden="true" />Connect securely</>}
-            </button>
-          </form>
+                  {/*
+                    The single premium treatment in the product, on the one
+                    irreversible one-time action: attaching a live trading
+                    credential. `silver` is used rather than the iridescent
+                    preset because the design language reserves hue for meaning,
+                    and neutral chrome introduces none.
+                  */}
+                  <MetalFx className="metal-cta" variant="button" preset="silver" theme="dark" strength={0.55} paused={busy}>
+                    <button className="button primary block" disabled={busy}>
+                      {busy
+                        ? <><LoaderCircle className="spin" aria-hidden="true" /><Shimmer>Verifying trading access</Shimmer></>
+                        : <><Zap aria-hidden="true" />Connect securely</>}
+                    </button>
+                  </MetalFx>
+                </form>
 
-          <p className="fine-print">
-            <AlertTriangle aria-hidden="true" />
-            The static public IP of the backend server must be allowlisted on the Delta API key.
-          </p>
-        </section>
+                <p className="fine-print">
+                  <AlertTriangle aria-hidden="true" />
+                  The static public IP of the backend server must be allowlisted on the Delta API key.
+                </p>
+              </>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );
