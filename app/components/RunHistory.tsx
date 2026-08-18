@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Ban, CircleStop, Copy, Info, RefreshCw, Trash2
 } from "lucide-react";
@@ -11,9 +11,9 @@ import {
 } from "@/lib/format";
 import type { RunDetail, RunOrder, StrategyRun } from "@/lib/app-types";
 import {
-  ConfirmModal, DetailList, DetailSection, Dialog, EmptyState, InlineMessage, Panel, RowMenu,
-  SectionHeading, StatusChip, StatusDot, TableSkeleton,
-  type DetailItem, type NoticeHandler, type RowMenuItem, type StatusTone
+  AnimatedNumber, ConfirmModal, DetailList, DetailSection, Dialog, EmptyState, IconSwap,
+  InlineMessage, Panel, RowMenu, SectionHeading, StatusChip, StatusDot, TableSkeleton,
+  useSlidingPill, type DetailItem, type NoticeHandler, type RowMenuItem, type StatusTone
 } from "@/app/components/ui";
 
 const AUTO_REFRESH_MS = 30_000;
@@ -72,7 +72,15 @@ function canDeleteRun(run: StrategyRun) {
  * same way whether a run is waiting, live, or settled: read the record, exit it,
  * cancel it before entry, or erase it once it is finished.
  */
-export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
+export default function RunHistory({ onNotice, onAttentionChange }: {
+  onNotice: NoticeHandler;
+  /**
+   * Reports the count of runs needing attention up to the shell, so the
+   * navigation badge is correct the moment this view loads or an action lands,
+   * rather than waiting for the shell's own slower background count.
+   */
+  onAttentionChange?: (count: number) => void;
+}) {
   const [runs, setRuns] = useState<StrategyRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterId>("all");
@@ -80,12 +88,15 @@ export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
   const [detailToken, setDetailToken] = useState(0);
   const [action, setAction] = useState<{ run: StrategyRun; kind: ActionKind } | null>(null);
   const [busy, setBusy] = useState(false);
+  const report = useRef(onAttentionChange);
+  report.current = onAttentionChange;
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const data = await requestJson<{ result: StrategyRun[] }>("/api/strategies");
       setRuns(data.result);
+      report.current?.(data.result.filter(run => run.status === "attention").length);
     } catch (loadError) {
       onNotice({ tone: "error", text: errorMessage(loadError) });
     } finally {
@@ -112,6 +123,7 @@ export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
   }, [filter, runs]);
 
   const needsAttention = counts.attention ?? 0;
+  const { barRef: filterBar, pill: filterPill } = useSlidingPill(filter, '[aria-pressed="true"]');
 
   async function copyRunId(run: StrategyRun) {
     try {
@@ -157,7 +169,8 @@ export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
         description="Every schedule creates a separate immutable run. Use the row menu to read the full record, cancel before entry, exit while live, or delete a settled run."
         actions={
           <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
+            <IconSwap showB={loading} a={<RefreshCw />} b={<RefreshCw className="spin" />} />
+            Refresh
           </button>
         }
       />
@@ -173,7 +186,12 @@ export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
       )}
 
       <Panel className="runs-panel">
-        <div className="filter-bar" role="group" aria-label="Filter runs by status">
+        {/* One highlight travels between the filters, so the control shows which
+            way the selection moved rather than only where it ended up. The counts
+            re-enter when they change, because a run moving into Attention while
+            the list is open is exactly the thing worth noticing. */}
+        <div className="filter-bar" role="group" aria-label="Filter runs by status" ref={filterBar}>
+          {filterPill}
           {FILTERS.map(item => (
             <button
               type="button"
@@ -182,7 +200,7 @@ export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
               className="filter-tab"
               onClick={() => setFilter(item.id)}
             >
-              {item.label}<span>{counts[item.id] ?? 0}</span>
+              {item.label}<span><AnimatedNumber value={String(counts[item.id] ?? 0)} /></span>
             </button>
           ))}
         </div>
@@ -190,7 +208,7 @@ export default function RunHistory({ onNotice }: { onNotice: NoticeHandler }) {
         {loading && !runs.length ? (
           <TableSkeleton label="run history" rows={6} />
         ) : visible.length ? (
-          <div className="table-scroll">
+          <div className="table-scroll t-reveal">
             <table className="data-table runs-table">
               <caption className="visually-hidden">Strategy runs with schedule and status</caption>
               <thead>
