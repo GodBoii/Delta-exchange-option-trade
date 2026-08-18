@@ -3,8 +3,13 @@
    --------------------------------------------------------------------------
    One pass, one source of truth. Every value below comes from the token layer;
    components never restate a colour, radius, or type size literally. Sections
-   are ordered foundations â†’ primitives â†’ shell â†’ surfaces, so a rule is always
-   defined once and read in the order the page is composed.
+   are ordered foundations -> motion -> primitives -> shell -> surfaces, so a
+   rule is always defined once and read in the order the page is composed.
+
+   Motion is a foundation here, not decoration. Section 1b names every timing
+   the interface uses and section 3 installs the transitions that read them, so
+   a surface further down composes motion the same way it composes a colour:
+   by referencing a token, never by inventing a duration.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -89,11 +94,287 @@
   --sidebar-w: 268px;
   --context-h: 64px;
 
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --dur: 200ms;
+  /* Motion scale. Every transition in section 3 reads from these names, and a
+     value is chosen by what the motion *does*, never by the nearest number. */
+  --duration-stagger: 40ms;        /* per-item stagger offset */
+  --duration-micro: 80ms;          /* intent delay, shake segment */
+  --duration-quick: 150ms;         /* modal/dropdown close, text swap */
+  --duration-fast: 250ms;          /* icon swap, dropdown/modal open, tabs, page slide */
+  --duration-medium: 350ms;        /* panel close, toast close */
+  --duration-slow: 400ms;          /* panel open, skeleton reveal */
+  --duration-very-slow: 500ms;     /* emphasis: badge appear, text reveal, success check */
+
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);   /* surfaces: open, close, slide, resize */
+  --ease-in-out: ease-in-out;                          /* symmetric swaps */
+  --ease-out: ease-out;                                /* tooltip */
+  --ease-linear: linear;                               /* shimmer, pulse, spinner */
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);    /* entrance pop */
+  --ease-bounce-strong: cubic-bezier(0.34, 3.85, 0.64, 1); /* hover-out settle */
+
+  --distance-micro: 4px;    /* text swap */
+  --distance-small: 6px;    /* shake, small segment */
+  --distance-base: 8px;     /* page slide, badge reveal */
+  --distance-medium: 12px;  /* text reveal */
+  --distance-large: 30px;   /* check badge appear */
+
+  --scale-large: 0.96;   /* modal */
+  --scale-medium: 0.97;  /* dropdown open */
+  --scale-small: 0.98;   /* tooltip */
+  --scale-tiny: 0.99;    /* dropdown close */
+
+  --blur-small: 2px;   /* cross-blur on swaps and panels */
+  --blur-medium: 3px;  /* page slide, text reveal */
+  --blur-large: 8px;   /* success check */
+
+  /* `--ease` is the surface curve; `--dur` stays deliberately off the scale
+     because a colour-only hover change matches no documented token usage, and
+     snapping it to 250ms would make every hover feel slower than it reads. */
+  --ease: var(--ease-smooth-out);
+  --dur: 180ms;
 
   --font-sans-stack: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono-stack: var(--font-mono), ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  /* Depth. On a dark interface a lit top edge reads as elevation far more
+     cheaply than a heavier shadow, so every raised surface gets one. */
+  --edge-lit: rgb(255 255 255 / 7%);
+  --edge-lit-strong: rgb(255 255 255 / 11%);
+  --inset-lit: inset 0 1px 0 var(--edge-lit);
+  --glow-accent: 0 0 0 1px rgb(130 169 240 / 24%), 0 10px 34px -12px rgb(130 169 240 / 34%);
+  --glow-short: 0 0 0 1px rgb(229 105 95 / 26%), 0 10px 34px -12px rgb(229 105 95 / 30%);
+  --gradient-primary: linear-gradient(180deg, #fff, var(--text-1));
+  --gradient-accent: linear-gradient(135deg, var(--accent-strong), var(--accent));
+  --gradient-raised: linear-gradient(180deg, rgb(255 255 255 / 3.5%), rgb(255 255 255 / 0%) 42%);
+
+  /* Ambient blooms, reused by every full-height surface. */
+  --bloom-accent: radial-gradient(circle at 12% -8%, rgb(130 169 240 / 9%), transparent 34%);
+  --bloom-long: radial-gradient(circle at 92% 2%, rgb(69 191 154 / 5%), transparent 26%);
+}
+
+/* --------------------------------------------------------------------------
+   1b. Motion recipe variables
+
+   Semantic names for the twenty-seven transitions installed in section 3.
+   Four recipes ship light-theme colours upstream; this interface is dark only,
+   so those are bound to the token ramp here instead of being restated per
+   snippet.
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Card resize.
+
+     A container whose height is content-driven cannot be tweened from `auto` in
+     CSS alone, so this opts in to keyword interpolation. Where it is supported
+     the panel tweens between its two heights; where it is not, the height snaps
+     and the incoming content still cross-fades, so nothing is lost — the tween
+     is the enhancement, not the message. */
+  interpolate-size: allow-keywords;
+  --resize-dur: 300ms;
+  --resize-ease: var(--ease-smooth-out);
+  /* Number pop-in */
+  --digit-dur: var(--duration-very-slow);
+  --digit-distance: var(--distance-base);
+  --digit-stagger: 70ms;
+  --digit-blur: var(--blur-small);
+  --digit-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --digit-dir-x: 0;
+  --digit-dir-y: 1;
+  /* Notification badge */
+  --badge-slide-dur: 260ms;
+  --badge-pop-dur: var(--duration-very-slow);
+  --badge-pop-close-dur: 180ms;
+  --badge-fade-dur: var(--duration-slow);
+  --badge-fade-close-dur: 180ms;
+  --badge-blur: var(--blur-small);
+  --badge-offset-x: -8.2px;
+  --badge-offset-y: 12.4px;
+  --badge-slide-ease: var(--ease-smooth-out);
+  --badge-pop-ease: var(--ease-bounce);
+  --badge-close-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Text states swap */
+  --text-swap-dur: var(--duration-quick);
+  --text-swap-translate-y: var(--distance-micro);
+  --text-swap-blur: var(--blur-small);
+  --text-swap-ease: var(--ease-in-out);
+  /* Menu dropdown */
+  --dropdown-open-dur: var(--duration-fast);
+  --dropdown-close-dur: var(--duration-quick);
+  --dropdown-pre-scale: var(--scale-medium);
+  --dropdown-closing-scale: var(--scale-tiny);
+  --dropdown-ease: var(--ease-smooth-out);
+  /* Modal open / close */
+  --modal-open-dur: var(--duration-fast);
+  --modal-close-dur: var(--duration-quick);
+  --modal-scale: var(--scale-large);
+  --modal-scale-close: var(--scale-large);
+  --modal-ease: var(--ease-smooth-out);
+  /* Panel reveal */
+  --panel-open-dur: var(--duration-slow);
+  --panel-close-dur: var(--duration-medium);
+  --panel-translate-y: 24px;
+  --panel-blur: var(--blur-small);
+  --panel-ease: var(--ease-smooth-out);
+  /* Page side-by-side */
+  --page-slide-dur: var(--duration-fast);
+  --page-fade-dur: var(--duration-fast);
+  --page-slide-distance: var(--distance-base);
+  --page-blur: var(--blur-medium);
+  --page-stagger: 0ms;
+  --page-exit-enabled: 1;
+  --page-slide-ease: var(--ease-smooth-out);
+  --page-fade-ease: var(--ease-smooth-out);
+  /* Icon swap */
+  --icon-swap-dur: var(--duration-fast);
+  --icon-swap-blur: var(--blur-small);
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: var(--ease-in-out);
+  /* Success check */
+  --check-opacity-dur: var(--duration-very-slow);
+  --check-rotate-dur: var(--duration-very-slow);
+  --check-rotate-from: 80deg;
+  --check-bob-dur: var(--duration-very-slow);
+  --check-y-amount: var(--distance-large);
+  --check-blur-dur: var(--duration-very-slow);
+  --check-blur-from: 10px;
+  --check-path-dur: var(--duration-very-slow);
+  --check-path-delay: var(--duration-micro);
+  --check-ease-out: var(--ease-smooth-out);
+  --check-ease-opacity: var(--ease-smooth-out);
+  --check-ease-rotate: var(--ease-smooth-out);
+  --check-ease-bob: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --check-ease-path: var(--ease-smooth-out);
+  /* Avatar group hover */
+  --avatar-lift: -4px;
+  --avatar-dur: 320ms;
+  --avatar-scale: 1.05;
+  --avatar-falloff: 0.45;
+  --avatar-ease-in: var(--ease-smooth-out);
+  --avatar-ease-out: var(--ease-bounce-strong);
+  /* Error state shake */
+  --shake-distance: var(--distance-small);
+  --shake-overshoot: var(--distance-micro);
+  --shake-dur-a: var(--duration-micro);
+  --shake-dur-b: 60ms;
+  --shake-ease: var(--ease-smooth-out);
+  --revert-hold: 3000ms;
+  --revert-dur: 280ms;
+  /* Input clear with dissolve */
+  --clear-dur: 1000ms;
+  --clear-out-dur: var(--duration-slow);
+  --clear-in-dur: var(--duration-slow);
+  --clear-out-fly: var(--distance-medium);
+  --clear-in-fly: var(--distance-medium);
+  --clear-out-ease: var(--ease-smooth-out);
+  --clear-in-ease: var(--ease-smooth-out);
+  --clear-blur: var(--blur-small);
+  --glow-delay: 50ms;
+  --glow-peak-at: 0.15;
+  /* Dark surface: the streak lightens with `screen`, so alpha runs higher. */
+  --glow-opacity: 0.85;
+  --glow-spread: 1.5;
+  /* Skeleton loader and reveal */
+  --pulse-dur: 1000ms;
+  --pulse-count: infinite;
+  --pulse-min: 0.5;
+  --reveal-dur: var(--duration-slow);
+  --reveal-blur: var(--blur-small);
+  --reveal-ease: var(--ease-in-out);
+  /* Shimmer text — dark theme values */
+  --shimmer-dur: 2000ms;
+  --shimmer-base: var(--text-3);
+  --shimmer-highlight: var(--text-1);
+  --shimmer-band: 400%;
+  --shimmer-ease: var(--ease-linear);
+  /* Tabs sliding — dark theme values */
+  --tabs-dur: var(--duration-fast);
+  --tabs-ease: var(--ease-smooth-out);
+  --tabs-text-muted: var(--text-3);
+  --tabs-text-active: var(--text-1);
+  --tabs-bar-bg: var(--canvas);
+  --tabs-pill-bg: var(--surface-4);
+  /* Tooltip — dark theme values */
+  --tt-in-dur: var(--duration-quick);
+  --tt-out-dur: 50ms;
+  --tt-scale: var(--scale-small);
+  --tt-delay: var(--duration-micro);
+  --tt-in-ease: var(--ease-out);
+  --tt-out-ease: var(--ease-out);
+  --tt-bg: var(--surface-4);
+  --tt-fg: var(--text-1);
+  /* Texts reveal */
+  --stagger-dur: var(--duration-very-slow);
+  --stagger-distance: var(--distance-medium);
+  --stagger-stagger: var(--duration-stagger);
+  --stagger-blur: var(--blur-medium);
+  --stagger-ease: var(--ease-smooth-out);
+  /* Card hover tilt */
+  --tilt-perspective: 1000px;
+  --tilt-return: 1000ms;
+  --tilt-return-ease: var(--ease-smooth-out);
+  --tilt-follow: var(--duration-slow);
+  --tilt-follow-ease: var(--ease-smooth-out);
+  --tilt-glare-opacity: 0.12;
+  --tilt-glare-fade: 300ms;
+  --tilt-glare-ease: var(--ease-smooth-out);
+  /* Plus to menu morph */
+  --morph-open-dur: var(--duration-medium);
+  --morph-close-dur: var(--duration-fast);
+  --morph-ease: cubic-bezier(0.34, 1.25, 0.64, 1);
+  --morph-close-ease: var(--ease-smooth-out);
+  --morph-r-closed: var(--r-md);
+  --morph-r-open: var(--r-md);
+  --morph-fade-dur: 200ms;
+  --morph-slide: 40px;
+  --morph-rotate: 45deg;
+  --morph-scale: var(--scale-medium);
+  --morph-blur: var(--blur-small);
+  /* Accordion expand */
+  --acc-expand: var(--duration-fast);
+  --acc-collapse: var(--duration-fast);
+  --acc-chevron: var(--duration-fast);
+  --acc-ease: var(--ease-smooth-out);
+  /* Toast open / close */
+  --toast-open: var(--duration-medium);
+  --toast-close: var(--duration-fast);
+  --toast-distance: 16px;
+  --toast-blur: var(--blur-small);
+  --toast-scale: var(--scale-medium);
+  --toast-ease: var(--ease-smooth-out);
+  /* Like / saved fill — bound to the accent family, because the design
+     language reserves hue for meaning and no new colour may be introduced. */
+  --like-color: var(--accent);
+  --like-fill: var(--duration-quick);
+  --like-pop: var(--duration-medium);
+  --like-pop-ease: cubic-bezier(0.34, 1.96, 0.64, 1);
+  --like-particle-dur: 600ms;
+  --like-particle-dist: 20px;
+  --like-particle-size: 2.5px;
+  --like-ease: var(--ease-smooth-out);
+  /* Learn more hover */
+  --learn-shift: 2px;
+  --learn-spread: 8deg;
+  --learn-in: var(--duration-medium);
+  --learn-out: var(--duration-medium);
+  --learn-ease: var(--ease-smooth-out);
+  /* Checkbox check */
+  --check-box: var(--duration-quick);
+  --check-draw: var(--duration-medium);
+  --check-delay: 0ms;
+  --check-uncheck: var(--duration-quick);
+  --check-ease: var(--ease-smooth-out);
+  /* Spinning counter */
+  --reel-dur: 1400ms;
+  --reel-cell: 30px;
+  --reel-spin-blur: var(--blur-medium);
+  --reel-stagger: 90ms;
+  --reel-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Toggle */
+  --toggle-dur: var(--duration-medium);
+  --toggle-travel: 14px;
+  --toggle-ov1: 1px;
+  --toggle-ov2: 0px;
+  --toggle-track: 0ms;
+  --toggle-ease: cubic-bezier(0.34, 1.35, 0.64, 1);
 }
 
 /* --------------------------------------------------------------------------
@@ -197,9 +478,29 @@ time,
   border: 0 !important;
 }
 
-.spin { animation: spin 0.9s linear infinite; }
+.spin { animation: spin 0.9s var(--ease-linear) infinite; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scrollbars are part of the surface on a dark interface: the default light
+   track punches a hole through every panel it appears in. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-4) transparent;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--r-pill);
+  background-clip: content-box;
+  background-color: var(--surface-4);
+}
+
+::-webkit-scrollbar-thumb:hover { background-color: var(--line-strong); }
+::-webkit-scrollbar-corner { background: transparent; }
 
 .skip-link {
   position: fixed;
@@ -220,7 +521,1178 @@ time,
 .skip-link:focus-visible { transform: translateY(0); }
 
 /* --------------------------------------------------------------------------
-   3. Layout utilities
+   3. Motion recipes
+
+   The twenty-seven transitions from the motion catalogue, namespaced `t-*` so
+   they never collide with a component class. They are installed once here, as
+   primitives, and composed by the surfaces further down the file — a surface
+   may override a recipe's cosmetics (radius, background, height) because it
+   comes later in the cascade, but never its timing.
+
+   Two rules are load-bearing and must not be edited away:
+     - every recipe keeps its own `prefers-reduced-motion` guard, so removing
+       the blanket rule in the last section would still leave motion off for
+       users who asked for less of it;
+     - each `transition` enumerates its exact properties. Collapsing one to
+       `transition: all` lets unrelated style changes ride in for free.
+   -------------------------------------------------------------------------- */
+
+/* 01 · Card resize — tween a container when its width or height changes. */
+
+.t-resize {
+  transition:
+    width  var(--resize-dur) var(--resize-ease),
+    height var(--resize-dur) var(--resize-ease);
+  will-change: width, height;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-resize { transition: none !important; }
+}
+
+/* 02 · Number pop-in — re-enter each glyph with a blurred slide on update. */
+
+@keyframes t-digit-pop-in {
+  0% {
+    transform: translate(
+      calc(var(--digit-distance) * var(--digit-dir-x)),
+      calc(var(--digit-distance) * var(--digit-dir-y))
+    );
+    opacity: 0;
+    filter: blur(var(--digit-blur));
+  }
+  100% { transform: translate(0, 0); opacity: 1; filter: blur(0); }
+}
+
+.t-digit-group {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.t-digit {
+  display: inline-block;
+  will-change: transform, opacity, filter;
+}
+
+.t-digit-group.is-animating .t-digit {
+  animation: t-digit-pop-in var(--digit-dur) var(--digit-ease) both;
+}
+
+.t-digit-group.is-animating .t-digit[data-stagger="1"] { animation-delay: var(--digit-stagger); }
+.t-digit-group.is-animating .t-digit[data-stagger="2"] { animation-delay: calc(var(--digit-stagger) * 2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-digit-group .t-digit { animation: none !important; }
+}
+
+/* 03 · Notification badge — slide the badge onto a trigger, pop the dot.
+   Only the badge moves; the trigger it is anchored to never shifts. */
+
+@keyframes t-badge-slide-in {
+  from { transform: translate(var(--badge-offset-x), var(--badge-offset-y)); }
+  to   { transform: translate(0, 0); }
+}
+
+.t-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.t-badge[data-open="true"] {
+  animation: t-badge-slide-in var(--badge-slide-dur) var(--badge-slide-ease);
+}
+
+.t-badge-dot {
+  display: block;
+  transform-origin: center;
+  transform: scale(1);
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    transform var(--badge-pop-dur)  var(--badge-pop-ease),
+    opacity   var(--badge-fade-dur) var(--badge-pop-ease),
+    filter    var(--badge-pop-dur)  var(--badge-pop-ease);
+  will-change: transform, opacity, filter;
+}
+
+.t-badge[data-open="false"] .t-badge-dot {
+  transform: scale(0);
+  opacity: 0;
+  filter: blur(var(--badge-blur));
+  transition:
+    transform var(--badge-pop-close-dur)  var(--badge-close-ease),
+    opacity   var(--badge-fade-close-dur) var(--badge-close-ease),
+    filter    var(--badge-pop-close-dur)  var(--badge-close-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-badge,
+  .t-badge-dot { animation: none !important; transition: none !important; }
+}
+
+/* 04 · Text states swap — replace a label in place: old text exits up with
+   blur, new text enters from below. Symmetric, so both directions match. */
+
+.t-text-swap {
+  display: inline-block;
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--text-swap-dur) var(--text-swap-ease),
+    filter    var(--text-swap-dur) var(--text-swap-ease),
+    opacity   var(--text-swap-dur) var(--text-swap-ease);
+  will-change: transform, filter, opacity;
+}
+
+.t-text-swap.is-exit {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+}
+
+.t-text-swap.is-enter-start {
+  transform: translateY(var(--text-swap-translate-y));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-text-swap { transition: none !important; }
+}
+
+/* 05 · Menu dropdown — grows from the trigger it is anchored to. The close
+   state is a separate, quicker class so dismissal gets out of the way. */
+
+.t-dropdown {
+  transform-origin: top left;
+  transform: scale(var(--dropdown-pre-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dropdown-open-dur) var(--dropdown-ease),
+    opacity   var(--dropdown-open-dur) var(--dropdown-ease);
+  will-change: transform, opacity;
+}
+
+.t-dropdown[data-origin="top-right"]     { transform-origin: top right; }
+.t-dropdown[data-origin="top-center"]    { transform-origin: top center; }
+.t-dropdown[data-origin="bottom-left"]   { transform-origin: bottom left; }
+.t-dropdown[data-origin="bottom-center"] { transform-origin: bottom center; }
+.t-dropdown[data-origin="bottom-right"]  { transform-origin: bottom right; }
+
+.t-dropdown.is-open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.t-dropdown.is-closing {
+  transform: scale(var(--dropdown-closing-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dropdown-close-dur) var(--dropdown-ease),
+    opacity   var(--dropdown-close-dur) var(--dropdown-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-dropdown { transition: none !important; }
+}
+
+/* 06 · Modal — centred surface, scales up on open and settles back down on
+   close. Opening is an invitation at 250ms; closing is 150ms. */
+
+.t-modal {
+  transform-origin: center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity   var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
+}
+
+.t-modal.is-open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.t-modal.is-closing {
+  transform: scale(var(--modal-scale-close));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-close-dur) var(--modal-ease),
+    opacity   var(--modal-close-dur) var(--modal-ease);
+}
+
+/* The scrim shares the modal's clock so the two never separate. */
+.t-modal-scrim {
+  opacity: 0;
+  transition: opacity var(--modal-open-dur) var(--modal-ease);
+}
+
+.t-modal-scrim.is-open { opacity: 1; }
+.t-modal-scrim.is-closing { opacity: 0; transition-duration: var(--modal-close-dur); }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-modal,
+  .t-modal-scrim { transition: none !important; }
+}
+
+/* 07 · Panel reveal — slides a panel into a region of the page with a
+   cross-blur, so a short travel still reads as a full open. */
+
+.t-panel-slide {
+  transform: translateY(var(--panel-translate-y));
+  opacity: 0;
+  filter: blur(var(--panel-blur));
+  pointer-events: none;
+  transition:
+    transform var(--panel-close-dur) var(--panel-ease),
+    opacity   var(--panel-close-dur) var(--panel-ease),
+    filter    var(--panel-close-dur) var(--panel-ease);
+  will-change: transform, opacity, filter;
+}
+
+.t-panel-slide[data-open="true"] {
+  transform: translateY(0);
+  opacity: 1;
+  filter: blur(0);
+  pointer-events: auto;
+  transition:
+    transform var(--panel-open-dur) var(--panel-ease),
+    opacity   var(--panel-open-dur) var(--panel-ease),
+    filter    var(--panel-open-dur) var(--panel-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-panel-slide { transition: none !important; }
+}
+
+/* 08 · Page side-by-side — two adjacent views, page one exiting left and
+   page two exiting right. Symmetric: the same clock in both directions. */
+
+.t-page-slide { position: relative; }
+.t-page-slide .t-page[data-page-id="1"] { --t-page-from-x: calc(var(--page-slide-distance) * -1); }
+.t-page-slide .t-page[data-page-id="2"] { --t-page-from-x: var(--page-slide-distance); }
+
+.t-page-slide .t-page {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(var(--t-page-from-x, 0px) * var(--page-exit-enabled)));
+  filter: blur(calc(var(--page-blur) * var(--page-exit-enabled)));
+  transition:
+    opacity   var(--page-fade-dur)  var(--page-fade-ease),
+    transform var(--page-slide-dur) var(--page-slide-ease),
+    filter    var(--page-slide-dur) var(--page-slide-ease);
+  will-change: opacity, transform, filter;
+}
+
+.t-page-slide[data-page="1"] .t-page[data-page-id="1"],
+.t-page-slide[data-page="2"] .t-page[data-page-id="2"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  filter: blur(0);
+  transition-delay: var(--page-stagger);
+}
+
+/* In-flow variant. The workspace mounts exactly one tab body at a time, so
+   there is no outgoing page to hold in an absolute layer — the surface is
+   remounted and plays only the entrance, in the direction of travel. Same
+   distance, blur, duration and easing as the recipe above. */
+.t-page-enter {
+  animation: t-page-enter var(--page-slide-dur) var(--page-slide-ease) both;
+}
+
+.t-page-enter[data-direction="backward"] { --t-page-from-x: calc(var(--page-slide-distance) * -1); }
+.t-page-enter[data-direction="forward"]  { --t-page-from-x: var(--page-slide-distance); }
+
+@keyframes t-page-enter {
+  from {
+    opacity: 0;
+    transform: translateX(var(--t-page-from-x, 0px));
+    filter: blur(var(--page-blur));
+  }
+  to { opacity: 1; transform: translateX(0); filter: blur(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-page-slide .t-page { transition: none !important; }
+  .t-page-enter { animation: none !important; }
+}
+
+/* 09 · Icon swap — cross-fade two icons in one slot. Both stay in the DOM,
+   stacked in the same grid cell, so the slot never changes size. */
+
+.t-icon-swap {
+  position: relative;
+  display: inline-grid;
+}
+
+.t-icon-swap .t-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity   var(--icon-swap-dur) var(--icon-swap-ease),
+    filter    var(--icon-swap-dur) var(--icon-swap-ease),
+    transform var(--icon-swap-dur) var(--icon-swap-ease);
+  will-change: opacity, filter, transform;
+}
+
+.t-icon-swap[data-state="a"] .t-icon[data-icon="a"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="b"] {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.t-icon-swap[data-state="a"] .t-icon[data-icon="b"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="a"] {
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+  transform: scale(var(--icon-swap-start-scale));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-icon-swap .t-icon { transition: none !important; }
+}
+
+/* 10 · Success check — fade, rotate upright, settle with a Y-bob, and draw
+   the stroke. Appear only; the surface owns its own dismissal.
+   `--check-len` is measured with path.getTotalLength() at mount, so the
+   stroke never pre-reveals or over-draws. */
+
+.t-success-check {
+  display: inline-block;
+  transform-origin: center;
+  opacity: 0;
+  will-change: transform, opacity, filter;
+}
+
+.t-success-check svg { display: block; overflow: visible; }
+
+.t-success-check svg path {
+  stroke-dasharray: var(--check-len, 20);
+  stroke-dashoffset: var(--check-len, 20);
+}
+
+.t-success-check[data-state="in"] {
+  animation:
+    t-check-fade   var(--check-opacity-dur) var(--check-ease-opacity) forwards,
+    t-check-rotate var(--check-rotate-dur)  var(--check-ease-rotate)  forwards,
+    t-check-blur   var(--check-blur-dur)    var(--check-ease-out)     forwards,
+    t-check-bob    var(--check-bob-dur)     var(--check-ease-bob)     forwards;
+}
+
+.t-success-check[data-state="in"] svg path {
+  animation: t-check-draw var(--check-path-dur) var(--check-ease-path) var(--check-path-delay, 0ms) forwards;
+}
+
+@keyframes t-check-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes t-check-rotate {
+  from { transform: rotate(var(--check-rotate-from)); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes t-check-blur {
+  from { filter: blur(var(--check-blur-from)); }
+  to   { filter: blur(0); }
+}
+@keyframes t-check-bob {
+  from { translate: 0 var(--check-y-amount); }
+  to   { translate: 0 0; }
+}
+@keyframes t-check-draw { to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-success-check { animation: none !important; opacity: 1; }
+  .t-success-check svg path { animation: none !important; stroke-dashoffset: 0 !important; }
+}
+
+/* 11 · Group hover — lift the hovered item in a horizontal row and its
+   neighbours with a distance falloff. The timing function is written inline
+   from JS before the variables change, so the return springs and the lift
+   does not; that is the one case where hover-out is the richer motion. */
+
+.t-avatar {
+  transform-origin: center;
+  transform:
+    translateY(var(--shift, 0px))
+    scale(var(--scale-active, 1));
+  transition: transform var(--avatar-dur) var(--avatar-ease-in);
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-avatar { transition: none !important; transform: none !important; }
+}
+
+/* 12 · Error state shake — per-segment easing, an error border that reverts
+   on a hold timer, and a message that stays painted for its whole fade.
+   `.is-error` and `.is-shaking` stay orthogonal so the shake can replay
+   without flickering the error treatment off and on in the same tick. */
+
+.t-input {
+  transition: border-color var(--duration-quick) var(--ease-out);
+  will-change: transform;
+}
+
+.t-input.is-error {
+  transition: border-color var(--revert-dur) var(--ease-out);
+}
+
+.t-error-msg {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity    var(--revert-dur) var(--ease-out),
+    visibility 0s linear var(--revert-dur);
+}
+
+.t-input-wrap.is-error .t-error-msg {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity    var(--revert-dur) var(--ease-out),
+    visibility 0s linear 0s;
+}
+
+/* Stops are cumulative leg durations over the total (80, 60, 80, 60 = 280ms).
+   Recompute them by hand if the A:B ratio changes. */
+.t-input.is-shaking {
+  animation: t-input-shake calc(
+      var(--shake-dur-a) * 2 + var(--shake-dur-b) * 2
+    ) linear;
+}
+
+@keyframes t-input-shake {
+  0%     { transform: translateX(0);                                animation-timing-function: var(--shake-ease); }
+  28.57% { transform: translateX(var(--shake-distance));            animation-timing-function: var(--shake-ease); }
+  57.14% { transform: translateX(calc(var(--shake-distance) * -1)); animation-timing-function: var(--shake-ease); }
+  78.57% { transform: translateX(var(--shake-overshoot));           animation-timing-function: var(--shake-ease); }
+  100%   { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-input { animation: none !important; transform: none !important; }
+}
+
+/* 13 · Input clear with dissolve — the typed value flies down and blurs while
+   a per-word streak ignites beneath it and the placeholder falls in from
+   above. The streak envelope is written per frame from JS; `screen` blending
+   is the dark-surface form, because `multiply` over a dark field vanishes. */
+
+.t-clear {
+  position: relative;
+  overflow: hidden;
+}
+
+.t-clear-mirror,
+.t-clear-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.t-clear-mirror { opacity: 0; }
+
+.t-clear.has-value .t-clear-mirror,
+.t-clear.is-clearing .t-clear-mirror { opacity: 1; }
+
+/* The mirror owns the glyphs during a clear, so the input's own text is
+   hidden and the value cannot double-render with the fly-out. */
+.t-clear.has-value > input,
+.t-clear.is-clearing > input { -webkit-text-fill-color: transparent; }
+
+.t-clear.has-value .t-clear-placeholder { opacity: 0; }
+
+.t-clear-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 3;
+  mix-blend-mode: screen;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-clear-glow { opacity: 0 !important; }
+}
+
+/* 14 · Skeleton loader and reveal — the placeholder pulses, then both layers
+   cross-fade with a matching cross-blur so the swap reads as one motion. */
+
+.t-skel { position: relative; }
+
+.t-skel-skeleton,
+.t-skel-content {
+  position: absolute;
+  inset: 0;
+}
+
+.t-skel-skeleton {
+  z-index: 1;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+
+.t-skel-content {
+  z-index: 2;
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+
+.t-skel.is-revealed .t-skel-skeleton { opacity: 0; filter: blur(var(--reveal-blur)); }
+.t-skel.is-revealed .t-skel-content { opacity: 1; filter: blur(0); }
+
+.t-skel.is-resetting .t-skel-skeleton,
+.t-skel.is-resetting .t-skel-content { transition: none !important; }
+
+/* The pulse rides the bars, not the skeleton, so the skeleton's own opacity
+   and filter stay free for the cross-fade above. */
+.t-skel-skeleton.is-pulsing > * {
+  animation: t-skel-pulse var(--pulse-dur) var(--ease-in-out) var(--pulse-count);
+}
+
+@keyframes t-skel-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: var(--pulse-min); }
+}
+
+/* In-flow variant. Records here are variable height and their placeholder
+   unmounts when the data lands, so there is no second layer to hold on the
+   same coordinates. This plays the content side of the same cross-fade, on
+   the same clock, blur and easing. */
+.t-reveal { animation: t-reveal var(--reveal-dur) var(--reveal-ease) both; }
+
+@keyframes t-reveal {
+  from { opacity: 0; filter: blur(var(--reveal-blur)); }
+  to   { opacity: 1; filter: blur(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-skel-skeleton,
+  .t-skel-content { transition: none !important; }
+  .t-skel-skeleton.is-pulsing > * { animation: none !important; }
+  .t-reveal { animation: none !important; }
+}
+
+/* 15 · Shimmer text — a highlight band sweeps muted copy on a loop. Pure CSS:
+   the visible string is duplicated into `data-text` so ::before can clip the
+   gradient to the same glyphs. Keep the two in sync. */
+
+.t-shimmer {
+  position: relative;
+  display: inline-block;
+  color: var(--shimmer-base);
+}
+
+.t-shimmer::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    90deg,
+    transparent               0%,
+    transparent              40%,
+    var(--shimmer-highlight) 50%,
+    transparent              60%,
+    transparent             100%
+  );
+  background-size: var(--shimmer-band) 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: t-shimmer var(--shimmer-dur) var(--shimmer-ease) infinite;
+}
+
+@keyframes t-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-shimmer::before { animation: none !important; }
+}
+
+/* 16 · Tabs sliding — the active pill travels between options. JS writes the
+   measured offsetLeft/offsetWidth; CSS owns the tween. Symmetric both ways.
+   Bar and pill cosmetics are re-stated by each surface further down. */
+
+.t-tabs {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 48px;
+  background: var(--tabs-bar-bg);
+}
+
+.t-tab {
+  position: relative;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  height: 30px;
+  padding: 4px 12px;
+  color: var(--tabs-text-muted);
+  cursor: pointer;
+  border-radius: 48px;
+  z-index: 1;
+  transition: color var(--tabs-dur) var(--tabs-ease);
+}
+
+.t-tab:not([aria-selected="true"]):hover,
+.t-tab[aria-selected="true"] { color: var(--tabs-text-active); }
+
+.t-tabs-pill {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--tabs-pill-bg);
+  border-radius: 48px;
+  transform: translateX(0);
+  transition:
+    transform var(--tabs-dur) var(--tabs-ease),
+    width     var(--tabs-dur) var(--tabs-ease);
+  will-change: transform, width;
+  z-index: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-tabs-pill,
+  .t-tab { transition: none !important; }
+}
+
+/* 17 · Tooltip — an 80ms intent delay filters a passing cursor, and the delay
+   belongs only to the hover rule so dismissal is immediate. The wrap is the
+   hover target, so the pointer can drift onto the bubble without flicker. */
+
+.t-tt-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.t-tt-trigger { display: inline-flex; }
+
+.t-tt {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 130;
+  transform: translate(-50%, 0) scale(var(--tt-scale));
+  transform-origin: 50% 100%;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--tt-bg);
+  color: var(--tt-fg);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity   var(--tt-out-dur) var(--tt-out-ease),
+    transform var(--tt-out-dur) var(--tt-out-ease);
+}
+
+/* Triggers pinned near the top of the viewport open downwards instead, so the
+   bubble is not clipped off the top of the page. */
+.t-tt[data-placement="bottom"] {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform-origin: 50% 0;
+}
+
+.t-tt-wrap:hover .t-tt,
+.t-tt-trigger:focus-within + .t-tt {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  transition-duration: var(--tt-in-dur);
+  transition-timing-function: var(--tt-in-ease);
+  transition-delay: var(--tt-delay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-tt { transition: none !important; }
+}
+
+/* 18 · Texts reveal — stacked copy rises with a staggered blur. The exit is
+   decoupled: one quiet fade, no Y return, so dismissing does not replay the
+   reveal backwards. */
+
+.t-stagger-line {
+  display: block;
+  opacity: 0;
+  transform: translateY(var(--stagger-distance));
+  filter: blur(var(--stagger-blur));
+  transition:
+    opacity   var(--stagger-dur) var(--stagger-ease),
+    transform var(--stagger-dur) var(--stagger-ease),
+    filter    var(--stagger-dur) var(--stagger-ease);
+  will-change: transform, opacity, filter;
+}
+
+/* Total stagger is held under ~300ms, so the last line never feels late. */
+.t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
+.t-stagger-line--3 { transition-delay: calc(var(--stagger-stagger) * 2); }
+.t-stagger-line--4 { transition-delay: calc(var(--stagger-stagger) * 3); }
+.t-stagger-line--5 { transition-delay: calc(var(--stagger-stagger) * 4); }
+.t-stagger-line--6 { transition-delay: calc(var(--stagger-stagger) * 5); }
+
+.t-stagger.is-shown .t-stagger-line {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+
+.t-stagger.is-hiding .t-stagger-line {
+  opacity: 0;
+  transform: translateY(0);
+  filter: blur(0);
+  transition:
+    opacity 200ms ease,
+    transform 0s linear,
+    filter 0s linear;
+  transition-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-stagger-line { transition: none !important; }
+}
+
+/* 19 · Card hover tilt — the pointer is tracked on the flat outer wrapper,
+   which never transforms, so the rotating edges cannot slip out from under
+   the cursor and flicker the hover. */
+
+.t-tilt { touch-action: none; }
+
+.t-tilt-card {
+  position: relative;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  transform:
+    perspective(var(--tilt-perspective))
+    rotateX(var(--tilt-rx, 0deg))
+    rotateY(var(--tilt-ry, 0deg));
+  transform-style: preserve-3d;
+  transition: transform var(--tilt-return) var(--tilt-return-ease);
+  will-change: transform;
+}
+
+.t-tilt-card.is-tilting {
+  transition: transform var(--tilt-follow) var(--tilt-follow-ease);
+}
+
+.t-tilt-glare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: screen;
+  background:
+    radial-gradient(circle 95px at var(--tilt-gx, 50%) var(--tilt-gy, 50%),
+      rgb(255 255 255 / 48%), rgb(255 255 255 / 6%) 52%, rgb(255 255 255 / 0%) 84%),
+    radial-gradient(circle 200px at var(--tilt-gx, 50%) var(--tilt-gy, 50%),
+      rgb(255 255 255 / 22%), rgb(255 255 255 / 4%) 58%, rgb(255 255 255 / 0%) 78%),
+    radial-gradient(circle 360px at var(--tilt-gx, 50%) var(--tilt-gy, 50%),
+      rgb(255 255 255 / 10%), rgb(255 255 255 / 0%) 88%);
+  transition: opacity var(--tilt-glare-fade) var(--tilt-glare-ease);
+}
+
+.t-tilt.is-hover .t-tilt-glare { opacity: var(--tilt-glare-opacity); }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-tilt-card { transform: none !important; transition: none !important; }
+}
+
+/* 20 · Trigger-to-menu morph — the control becomes the surface it opens,
+   rather than popping a separate panel beside it. `overflow: hidden` is
+   load-bearing: it clips the menu while the box grows. Open and close keep
+   different curves — the bounce belongs to the entrance only. */
+
+.t-morph {
+  position: relative;
+  width: var(--morph-w-closed, 40px);
+  height: var(--morph-h-closed, 40px);
+  border-radius: var(--morph-r-closed);
+  overflow: hidden;
+  transition:
+    width var(--morph-close-dur) var(--morph-close-ease),
+    height var(--morph-close-dur) var(--morph-close-ease),
+    border-radius var(--morph-close-dur) var(--morph-close-ease);
+}
+
+.t-morph[data-open="true"] {
+  width: var(--morph-w-open, 183px);
+  height: var(--morph-h-open, 172px);
+  border-radius: var(--morph-r-open);
+  transition:
+    width var(--morph-open-dur) var(--morph-ease),
+    height var(--morph-open-dur) var(--morph-ease),
+    border-radius var(--morph-open-dur) var(--morph-ease);
+}
+
+/* Pinned to a corner so the box can grow up and out of it instead of the
+   trigger being shoved around as the container resizes. */
+.t-morph-plus {
+  position: absolute;
+  inset: auto 0 0 auto;
+  width: var(--morph-w-closed, 40px);
+  height: var(--morph-h-closed, 40px);
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    opacity var(--morph-fade-dur) var(--morph-close-ease),
+    transform var(--morph-open-dur) var(--morph-close-ease),
+    filter var(--morph-fade-dur) var(--morph-close-ease);
+}
+
+.t-morph-plus svg { transition: transform var(--morph-open-dur) var(--morph-close-ease); }
+
+.t-morph[data-open="true"] .t-morph-plus {
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--morph-slide)));
+  filter: blur(var(--morph-blur));
+  pointer-events: none;
+}
+
+.t-morph[data-open="true"] .t-morph-plus svg {
+  transform: scale(var(--morph-scale)) rotate(var(--morph-rotate));
+}
+
+.t-morph-menu {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transform: translateX(var(--morph-slide)) scale(var(--morph-scale));
+  filter: blur(var(--morph-blur));
+  pointer-events: none;
+  transition:
+    opacity var(--morph-fade-dur) var(--morph-close-ease),
+    transform var(--morph-open-dur) var(--morph-close-ease),
+    filter var(--morph-fade-dur) var(--morph-close-ease);
+}
+
+.t-morph[data-open="true"] .t-morph-menu {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  filter: blur(0);
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-morph,
+  .t-morph-plus,
+  .t-morph-menu { transition: none !important; }
+}
+
+/* 21 · Accordion — height animates through `grid-template-rows: 0fr → 1fr`,
+   so content of any size opens cleanly with no JS measurement. Padding must
+   stay on the inner element: on the 0fr track it leaves a residual strip and
+   the panel never fully closes. */
+
+.t-acc-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
+}
+
+.t-acc[data-open="true"] .t-acc-panel {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--acc-expand) var(--acc-ease);
+}
+
+.t-acc-panel-inner {
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(var(--blur-small));
+  transition:
+    opacity var(--acc-collapse) var(--acc-ease),
+    filter var(--acc-collapse) var(--acc-ease);
+}
+
+.t-acc[data-open="true"] .t-acc-panel-inner {
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--acc-expand) var(--acc-ease),
+    filter var(--acc-expand) var(--acc-ease);
+}
+
+/* The chevron flips rather than morphing its `d`, because CSS path
+   interpolation is Chromium-only. A vertical flip passes through the same
+   flat line at the midpoint and animates everywhere. */
+.t-acc-chevron {
+  display: inline-flex;
+  transform: scaleY(1);
+  transform-origin: center;
+  transition: transform var(--acc-chevron) var(--acc-ease);
+}
+
+.t-acc-chevron svg { vector-effect: non-scaling-stroke; }
+.t-acc-chevron path { vector-effect: non-scaling-stroke; }
+.t-acc[data-open="true"] .t-acc-chevron { transform: scaleY(-1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-acc-panel,
+  .t-acc-panel-inner,
+  .t-acc-chevron { transition: none !important; }
+}
+
+/* 22 · Toast — rises from below with a fade, slight scale and cross-blur.
+   One class carries the asymmetry: the resting state holds the faster close
+   clock, the open state the slower arrival. */
+
+.t-toast {
+  opacity: 0;
+  transform: translateY(var(--toast-distance)) scale(var(--toast-scale));
+  filter: blur(var(--toast-blur));
+  will-change: transform, opacity, filter;
+  transition:
+    opacity var(--toast-close) var(--toast-ease),
+    transform var(--toast-close) var(--toast-ease),
+    filter var(--toast-close) var(--toast-ease);
+}
+
+.t-toast.is-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+  transition:
+    opacity var(--toast-open) var(--toast-ease),
+    transform var(--toast-open) var(--toast-ease),
+    filter var(--toast-open) var(--toast-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-toast { transition: none !important; }
+}
+
+/* 23 · Fill and burst — a boolean that deserves a small celebration. The
+   stroke fills, the icon pops with an overshoot, and particles sprinkle
+   outward. Reversing drops the fill without the particles: the celebration
+   only plays on the way in. */
+
+.t-like-heart { color: currentcolor; transition: color var(--like-fill) var(--like-ease); }
+
+.t-like-heart path {
+  fill: transparent;
+  stroke: currentcolor;
+  transition: fill var(--like-fill) var(--like-ease), stroke var(--like-fill) var(--like-ease);
+}
+
+.t-like[data-liked="true"] .t-like-heart { color: var(--like-color); }
+.t-like[data-liked="true"] .t-like-heart path { fill: currentcolor; }
+
+/* The pop lives on an HTML wrapper, never the <svg>: transforming an inline
+   SVG makes Chromium rasterise it at 1x and it goes soft on hi-DPI. */
+.t-like[data-liked="true"] .t-like-icon { animation: t-like-pop var(--like-pop) var(--like-pop-ease); }
+
+@keyframes t-like-pop {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(0.82); }
+  100% { transform: scale(1); }
+}
+
+.t-like-particles {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  color: var(--like-color);
+}
+
+.t-like-particles i {
+  position: absolute;
+  left: calc(var(--like-particle-size) * var(--psize, 1) / -2);
+  top: calc(var(--like-particle-size) * var(--psize, 1) / -2);
+  width: calc(var(--like-particle-size) * var(--psize, 1));
+  height: calc(var(--like-particle-size) * var(--psize, 1));
+  border-radius: 50%;
+  background: currentcolor;
+  opacity: 0;
+}
+
+@keyframes t-like-burst {
+  0%   { opacity: 0; transform: translate(0, 0) scale(0.4); }
+  20%  { opacity: 1; transform: translate(calc(var(--px) * 0.25), calc(var(--py) * 0.25)) scale(1); }
+  100% { opacity: 0; transform: translate(var(--px), var(--py)) scale(var(--p-end-scale, 0.6)); }
+}
+
+.t-like.is-bursting .t-like-particles i {
+  animation: t-like-burst var(--pdur, var(--like-particle-dur)) ease-out var(--pdelay, 0ms) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-like-icon,
+  .t-like-particles i { animation: none !important; }
+}
+
+/* 24 · Learn-more hover — the trailing chevron slides toward the reading
+   direction while its two arms spread apart into an arrow. Hover only, so
+   nothing essential is carried by the motion alone. */
+
+.t-learn-chevron {
+  display: inline-flex;
+  transform: translateX(0);
+  transition: transform var(--learn-out) var(--learn-ease);
+}
+
+.t-learn-arm {
+  transform-box: view-box;
+  transform-origin: 10px 8px;
+  vector-effect: non-scaling-stroke;
+  transition: transform var(--learn-out) var(--learn-ease);
+}
+
+.t-learn:hover .t-learn-chevron { transform: translateX(var(--learn-shift)); transition-duration: var(--learn-in); }
+.t-learn:hover .t-learn-arm { transition-duration: var(--learn-in); }
+.t-learn:hover .t-learn-arm-top { transform: rotate(var(--learn-spread)); }
+.t-learn:hover .t-learn-arm-bot { transform: rotate(calc(var(--learn-spread) * -1)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-learn-chevron,
+  .t-learn-arm { transition: none !important; }
+}
+
+/* 25 · Checkbox check — the box fills, then the tick draws itself. Animating
+   the offset (rather than swapping it) lets a mid-draw uncheck reverse
+   cleanly. `--check-len` is the measured path length. */
+
+.t-check {
+  transition:
+    background var(--check-box) var(--check-ease),
+    border-color var(--check-box) var(--check-ease),
+    box-shadow var(--check-box) var(--check-ease);
+}
+
+.t-check svg path {
+  stroke-dasharray: var(--check-len, 15);
+  stroke-dashoffset: var(--check-len, 15);
+  transition: stroke-dashoffset var(--check-uncheck) var(--check-ease);
+}
+
+.t-check[aria-checked="true"] svg path,
+.t-check[data-checked="true"] svg path {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset var(--check-draw) var(--check-ease) var(--check-delay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-check,
+  .t-check svg path { transition: none !important; }
+}
+
+/* 26 · Spinning counter — each digit is a clipped reel of 0-9 that travels up
+   through whole spins before landing. The streak is a vertical-only SVG blur,
+   because a CSS blur() would smear sideways too. */
+
+.t-reel {
+  display: inline-flex;
+  align-items: center;
+  height: var(--reel-cell);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-reel-col {
+  position: relative;
+  height: var(--reel-cell);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 22%, #000 78%, transparent 100%);
+}
+
+.t-reel-strip {
+  display: flex;
+  flex-direction: column;
+  will-change: transform, filter;
+}
+
+.t-reel-digit {
+  height: var(--reel-cell);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A separator (a decimal point or a thousands comma) is not a reel and must
+   not spin — it sits static in the row. */
+.t-reel-static {
+  display: flex;
+  align-items: center;
+  height: var(--reel-cell);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-reel-strip { transition: none !important; filter: none !important; }
+}
+
+/* 27 · Toggle — the thumb travels with a double-bounce overshoot while the
+   track colour cross-fades on its own clock. `.is-init` is added on first
+   interaction so no switch plays its return bounce at mount. */
+
+.t-toggle { transition: background var(--toggle-track) var(--toggle-ease); }
+.t-toggle-thumb { translate: 0 0; will-change: translate; }
+.t-toggle[data-on="true"] .t-toggle-thumb { translate: var(--toggle-travel) 0; }
+.t-toggle.is-init[data-on="true"] .t-toggle-thumb { animation: t-toggle-on var(--toggle-dur) var(--toggle-ease) both; }
+.t-toggle.is-init[data-on="false"] .t-toggle-thumb { animation: t-toggle-off var(--toggle-dur) var(--toggle-ease) both; }
+
+@keyframes t-toggle-on {
+  0%   { translate: 0 0; }
+  55%  { translate: calc(var(--toggle-travel) + var(--toggle-ov1)) 0; }
+  80%  { translate: calc(var(--toggle-travel) - var(--toggle-ov2)) 0; }
+  100% { translate: var(--toggle-travel) 0; }
+}
+
+@keyframes t-toggle-off {
+  0%   { translate: var(--toggle-travel) 0; }
+  55%  { translate: calc(0px - var(--toggle-ov1)) 0; }
+  80%  { translate: var(--toggle-ov2) 0; }
+  100% { translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-toggle-thumb { animation: none !important; }
+}
+
+/* --------------------------------------------------------------------------
+   4. Layout utilities
    -------------------------------------------------------------------------- */
 
 .stack {
@@ -294,7 +1766,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   4. Identity
+   5. Identity
    -------------------------------------------------------------------------- */
 
 .brand {
@@ -358,7 +1830,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   5. Buttons
+   6. Buttons
    -------------------------------------------------------------------------- */
 
 .button {
@@ -374,31 +1846,49 @@ time,
   font-weight: 600;
   white-space: nowrap;
   text-decoration: none;
+  position: relative;
+  isolation: isolate;
+  /* Hover-in is quick and direct; the press is quicker still. Properties are
+     enumerated so an unrelated colour change never rides the transform lane. */
   transition:
     background-color var(--dur) ease,
+    background-image var(--dur) ease,
     border-color var(--dur) ease,
     color var(--dur) ease,
-    transform var(--dur) var(--ease);
+    box-shadow var(--dur) ease,
+    transform var(--duration-fast) var(--ease-smooth-out);
 }
 
-.button:active:not(:disabled) { transform: scale(0.98); }
+.button:hover:not(:disabled) { transform: translateY(-1px); }
+
+.button:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+  transition-duration: var(--duration-quick);
+}
 
 .button.primary {
-  background: var(--text-1);
+  background: var(--gradient-primary);
   color: var(--canvas);
+  box-shadow: var(--shadow-1), inset 0 -1px 0 rgb(0 0 0 / 12%);
 }
 
-.button.primary:hover:not(:disabled) { background: #fff; }
+.button.primary:hover:not(:disabled) {
+  background: #fff;
+  box-shadow: var(--shadow-2), inset 0 -1px 0 rgb(0 0 0 / 12%);
+}
 
 .button.secondary {
   background: var(--surface-3);
+  background-image: var(--gradient-raised);
   border-color: var(--line-strong);
   color: var(--text-1);
+  box-shadow: var(--inset-lit);
 }
 
 .button.secondary:hover:not(:disabled) {
-  background: var(--surface-4);
+  background-color: var(--surface-4);
   border-color: #3a424d;
+  box-shadow: var(--inset-lit), var(--shadow-1);
 }
 
 .button.ghost {
@@ -418,7 +1908,16 @@ time,
   color: #ffb3ac;
 }
 
-.button.danger:hover:not(:disabled) { background: rgb(229 105 95 / 22%); }
+.button.danger:hover:not(:disabled) {
+  background: rgb(229 105 95 / 22%);
+  box-shadow: var(--glow-short);
+}
+
+/* A trailing chevron that opens into an arrow on hover. The affordance is
+   decorative only: keyboard focus and touch rest in the neutral state, so no
+   meaning is carried by the motion. */
+.button .t-learn-chevron svg,
+.t-learn .t-learn-chevron svg { width: 14px; height: 14px; }
 
 .button.google {
   background: #f4f6f8;
@@ -465,7 +1964,11 @@ time,
   border-radius: var(--r-md);
   background: var(--surface-2);
   color: var(--text-2);
-  transition: background-color var(--dur) ease, color var(--dur) ease, border-color var(--dur) ease;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease,
+    border-color var(--dur) ease,
+    transform var(--duration-fast) var(--ease-smooth-out);
 }
 
 .icon-button:hover {
@@ -474,21 +1977,32 @@ time,
   color: var(--text-1);
 }
 
+.icon-button:active { transform: scale(0.94); transition-duration: var(--duration-quick); }
+
 /* --------------------------------------------------------------------------
-   6. Panels and headings
+   7. Panels and headings
    -------------------------------------------------------------------------- */
 
+/* Every raised surface carries a lit top edge. On a dark interface that reads
+   as elevation far more cheaply than a heavier shadow, and it keeps the
+   hairline geometry identical between resting and hovered states so nothing
+   shifts by a pixel when the border colour changes. */
 .panel {
+  position: relative;
   padding: var(--s-5);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface-1);
-  box-shadow: var(--shadow-1);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-1), var(--inset-lit);
+  transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
 }
+
+.panel:hover { border-color: var(--line-strong); }
 
 .panel.invalid {
   border-color: rgb(229 105 95 / 45%);
-  box-shadow: 0 0 0 3px var(--short-soft);
+  box-shadow: 0 0 0 3px var(--short-soft), var(--inset-lit);
 }
 
 .panel > * + * { margin-top: var(--s-4); }
@@ -534,6 +2048,8 @@ time,
   flex: none;
   border-radius: var(--r-md);
   background: var(--surface-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
   color: var(--text-2);
 }
 
@@ -573,7 +2089,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   7. Status, meters, feedback
+   8. Status, meters, feedback
    -------------------------------------------------------------------------- */
 
 .status-dot {
@@ -589,6 +2105,26 @@ time,
 .status-dot.tone-negative { background: var(--short); box-shadow: 0 0 0 3px var(--short-soft); }
 .status-dot.tone-warning { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
 
+/* A breathing halo, reserved for a genuinely live connection. It is opt-in
+   rather than the default for `tone-active`, because a table of twenty
+   pulsing dots stops meaning anything. */
+.status-dot.is-live {
+  position: relative;
+  animation: status-breathe 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes status-breathe {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px rgb(130 169 240 / 6%); }
+}
+
+.status-dot.tone-positive.is-live { animation-name: status-breathe-positive; }
+
+@keyframes status-breathe-positive {
+  0%, 100% { box-shadow: 0 0 0 2px var(--long-soft); }
+  50% { box-shadow: 0 0 0 5px rgb(69 191 154 / 6%); }
+}
+
 .status-chip {
   display: inline-flex;
   align-items: center;
@@ -600,7 +2136,29 @@ time,
   font-size: var(--t-xs);
   font-weight: 550;
   white-space: nowrap;
+  transition: border-color var(--dur) ease, background-color var(--dur) ease;
 }
+
+/* Notification badge cosmetics. The recipe owns the slide and the pop; this
+   only describes what the dot looks like once it has arrived. */
+.t-badge-dot {
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding-inline: 4px;
+  border: 2px solid var(--surface-1);
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--canvas);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.t-badge.tone-negative .t-badge-dot { background: var(--short); }
+.t-badge.tone-warning .t-badge-dot { background: var(--warn); }
 
 .status-chip.tone-active { border-color: rgb(130 169 240 / 35%); background: var(--accent-soft); color: var(--accent-strong); }
 .status-chip.tone-positive { border-color: rgb(69 191 154 / 32%); background: var(--long-soft); color: var(--long); }
@@ -615,12 +2173,15 @@ time,
   background: var(--surface-4);
 }
 
+/* The fill is an emphasis moment rather than a routine state change: it is the
+   number that decides whether a position closes, so it travels on the slowest
+   clock in the scale. */
 .meter > i {
   display: block;
   height: 100%;
   border-radius: inherit;
   background: var(--text-3);
-  transition: width 500ms var(--ease);
+  transition: width var(--duration-very-slow) var(--ease-smooth-out), background-color var(--dur) ease;
 }
 
 .meter.tone-active > i { background: var(--accent); }
@@ -694,6 +2255,9 @@ time,
   max-width: min(440px, calc(100vw - var(--s-8)));
 }
 
+/* Cosmetics only. Arrival and dismissal are the `t-toast` recipe, whose
+   asymmetry — a slower rise in, a faster drop out — is what makes the toast
+   feel deliberate on the way in and out of the way on the way out. */
 .toast {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -703,15 +2267,15 @@ time,
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
   background: var(--surface-3);
-  box-shadow: var(--shadow-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
   font-size: var(--t-sm);
   line-height: var(--lh-snug);
-  animation: toast-in 260ms var(--ease);
 }
 
-@keyframes toast-in {
-  from { opacity: 0; transform: translateY(10px); }
-}
+.toast.tone-ok { border-color: rgb(69 191 154 / 34%); }
+.toast.tone-error { border-color: rgb(229 105 95 / 38%); }
+.toast.tone-warning { border-color: rgb(217 164 65 / 34%); }
 
 .toast-icon { display: grid; place-items: center; height: 20px; }
 .toast.tone-ok .toast-icon { color: var(--long); }
@@ -727,7 +2291,7 @@ time,
 .toast-close:hover { color: var(--text-1); }
 
 /* --------------------------------------------------------------------------
-   8. Empty states and skeletons
+   9. Empty states and skeletons
    -------------------------------------------------------------------------- */
 
 .empty-state {
@@ -753,7 +2317,17 @@ time,
   color: var(--text-3);
 }
 
+.empty-state-icon {
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
+}
+
 .empty-state h3 { font-size: var(--t-md); }
+
+/* An empty state is stacked copy entering with rhythm, so it uses the text
+   reveal: the eye lands on the heading, then the explanation, then the action.
+   The lines are `t-stagger-line`s, so the total stagger stays under 300ms. */
+.empty-state.t-stagger { display: grid; }
 
 .empty-state p {
   max-width: 46ch;
@@ -764,17 +2338,24 @@ time,
 
 .empty-state > .button { margin-top: var(--s-3); }
 
+/* A placeholder bar sweeps a highlight rather than blinking, so a slow request
+   reads as work in progress instead of a broken layout. The sweep runs on the
+   linear clock, which is the documented usage for shimmer and pulse. */
 .skeleton {
   display: block;
   border-radius: var(--r-sm);
   background: linear-gradient(90deg, var(--surface-2), var(--surface-4), var(--surface-2));
   background-size: 220% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  animation: shimmer 1.4s var(--ease-linear) infinite;
 }
 
 @keyframes shimmer {
   to { background-position: -220% 0; }
 }
+
+/* These placeholders render in flow and unmount when the record lands, so they
+   are not the absolute `t-skel-skeleton` layer. The reveal is carried by the
+   content that replaces them (`t-reveal`), on the same clock and blur. */
 
 .skeleton-tiles {
   display: grid;
@@ -800,7 +2381,7 @@ time,
 .skeleton-row { height: 34px; }
 
 /* --------------------------------------------------------------------------
-   9. Form controls
+   10. Form controls
    -------------------------------------------------------------------------- */
 
 .field {
@@ -870,6 +2451,48 @@ time,
   background: var(--short-soft);
 }
 
+/* Clearable text field.
+
+   The mirror and the fake placeholder are stacked exactly over the real input,
+   so the glyphs the dissolve animates sit where the typed text was. They
+   therefore have to inherit the input's own metrics — same padding, same size,
+   same colour — or the value would visibly jump the moment a clear starts. */
+.field .t-clear {
+  position: relative;
+  display: block;
+}
+
+.field .t-clear > input { padding-right: var(--s-8); }
+
+.field .t-clear-mirror,
+.field .t-clear-placeholder {
+  padding-inline: var(--s-3);
+  font-size: var(--t-md);
+  line-height: var(--control-h);
+}
+
+.field .t-clear-mirror { color: var(--text-1); }
+.field .t-clear-placeholder { color: var(--text-3); }
+
+.t-clear-btn {
+  position: absolute;
+  top: 50%;
+  right: var(--s-2);
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  color: var(--text-3);
+  transform: translateY(-50%);
+  transition: background-color var(--dur) ease, color var(--dur) ease;
+}
+
+.t-clear-btn:hover { background: var(--surface-4); color: var(--text-1); }
+.t-clear-btn svg { width: 13px; height: 13px; }
+
 .select-wrap {
   position: relative;
   display: block;
@@ -914,7 +2537,12 @@ time,
   min-width: 0;
 }
 
+/* Segmented control. The selection is a single pill that travels between the
+   options (`t-tabs`), rather than a background switching off one button and on
+   another — so the control shows which way the choice moved, not just where it
+   landed. The bar keeps this project's geometry; the recipe keeps the timing. */
 .segmented {
+  position: relative;
   display: grid;
   gap: var(--s-1);
   padding: 3px;
@@ -923,7 +2551,21 @@ time,
   background: var(--canvas);
 }
 
+.segmented > .t-tabs-pill {
+  top: 3px;
+  height: calc(100% - 6px);
+  border-radius: var(--r-sm);
+  background: var(--surface-4);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-1), var(--inset-lit);
+}
+
+/* Before the first measurement the pill has no width, so it must not paint. */
+.segmented > .t-tabs-pill[data-ready="false"] { opacity: 0; }
+
 .segmented-option {
+  position: relative;
+  z-index: 1;
   min-height: 32px;
   padding: 0 var(--s-3);
   border-radius: var(--r-sm);
@@ -933,19 +2575,14 @@ time,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: background-color var(--dur) ease, color var(--dur) ease;
+  transition: color var(--tabs-dur) var(--tabs-ease);
 }
 
-.segmented-option:hover:not([aria-checked="true"]):not(:disabled) {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
+.segmented-option:hover:not([aria-checked="true"]):not(:disabled) { color: var(--text-2); }
 
-.segmented-option[aria-checked="true"] {
-  background: var(--surface-4);
-  color: var(--text-1);
-  box-shadow: var(--shadow-1);
-}
+/* The travelling pill is the only selected-state background; a second one on
+   the button would read as two highlights during the slide. */
+.segmented-option[aria-checked="true"] { color: var(--text-1); }
 
 .segmented-field.invalid > .field-label { color: #ffb3ac; }
 
@@ -976,6 +2613,9 @@ time,
   font-size: var(--t-sm);
 }
 
+/* The track. The thumb travel itself is the `t-toggle` recipe: a double-bounce
+   overshoot that settles, so flipping a switch feels like a physical throw
+   rather than a value being assigned. */
 .toggle > i {
   position: relative;
   width: 30px;
@@ -986,8 +2626,7 @@ time,
   transition: background-color var(--dur) ease;
 }
 
-.toggle > i::after {
-  content: "";
+.toggle .t-toggle-thumb {
   position: absolute;
   top: 3px;
   left: 3px;
@@ -995,15 +2634,15 @@ time,
   height: 10px;
   border-radius: var(--r-pill);
   background: var(--text-3);
-  transition: transform var(--dur) var(--ease), background-color var(--dur) ease;
+  transition: background-color var(--dur) ease;
 }
 
 .toggle.on { border-color: rgb(130 169 240 / 40%); color: var(--text-1); }
 .toggle.on > i { background: var(--accent-soft); }
-.toggle.on > i::after { transform: translateX(14px); background: var(--accent); }
+.toggle.on .t-toggle-thumb { background: var(--accent); }
 
 /* --------------------------------------------------------------------------
-   10. Modal
+   11. Modal
    -------------------------------------------------------------------------- */
 
 .modal-layer {
@@ -1015,6 +2654,8 @@ time,
   padding: var(--s-4);
 }
 
+/* The scrim fades on the modal's own clock (`t-modal-scrim`), so the surface
+   and the dimming behind it never come apart. */
 .modal-backdrop {
   position: absolute;
   inset: 0;
@@ -1022,6 +2663,9 @@ time,
   backdrop-filter: blur(3px);
 }
 
+/* Cosmetics only. Open and close are the `t-modal` recipe: it scales up from
+   0.96 over 250ms and leaves in 150ms, because a confirmation that reaches the
+   exchange should arrive deliberately and dismiss immediately. */
 .modal {
   position: relative;
   width: min(440px, 100%);
@@ -1029,13 +2673,9 @@ time,
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   background: var(--surface-2);
-  box-shadow: var(--shadow-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
   text-align: center;
-  animation: modal-in 220ms var(--ease);
-}
-
-@keyframes modal-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
 }
 
 .modal-icon {
@@ -1079,8 +2719,7 @@ time,
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   background: var(--surface-1);
-  box-shadow: var(--shadow-3);
-  animation: modal-in 220ms var(--ease);
+  box-shadow: var(--shadow-3), var(--inset-lit);
 }
 
 .dialog-head {
@@ -1155,6 +2794,9 @@ time,
   color: var(--text-1);
 }
 
+/* Cosmetics only. The panel grows from the trigger via `t-dropdown`, and
+   `data-origin` is set from the measured placement so it grows out of the
+   corner it is actually anchored to rather than always from the top left. */
 .row-menu {
   position: fixed;
   z-index: 150;
@@ -1164,18 +2806,8 @@ time,
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
   background: var(--surface-2);
-  box-shadow: var(--shadow-3);
-  animation: row-menu-in 140ms var(--ease);
-}
-
-@keyframes row-menu-in {
-  from { opacity: 0; transform: translateY(-4px); }
-}
-
-.row-menu.from-above { animation-name: row-menu-in-above; }
-
-@keyframes row-menu-in-above {
-  from { opacity: 0; transform: translateY(4px); }
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
 }
 
 .row-menu [role="menuitem"] {
@@ -1390,16 +3022,14 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   11. Application shell
+   12. Application shell
    -------------------------------------------------------------------------- */
 
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   min-height: 100dvh;
-  background:
-    radial-gradient(circle at 12% -8%, rgb(130 169 240 / 7%), transparent 32%),
-    var(--canvas);
+  background: var(--bloom-accent), var(--bloom-long), var(--canvas);
 }
 
 .sidebar {
@@ -1412,6 +3042,7 @@ time,
   padding: var(--s-5) var(--s-4);
   border-right: 1px solid var(--line);
   background: var(--surface-1);
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 2%), transparent 220px);
 }
 
 .sidebar-head {
@@ -1425,10 +3056,38 @@ time,
 .sidebar-close { display: none; }
 
 .sidebar-nav {
+  position: relative;
   display: grid;
   gap: var(--s-5);
   flex: 1;
   overflow-y: auto;
+}
+
+/* One rail travels to the active section instead of a static marker switching
+   off one row and on another — the same idea as the segmented pill, turned on
+   its side, so the sidebar shows where the selection came from. Position and
+   height are measured in JS; the tween lives here. */
+.nav-rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: 2px;
+  height: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  box-shadow: 0 0 10px 0 rgb(130 169 240 / 45%);
+  pointer-events: none;
+  transition:
+    transform var(--tabs-dur) var(--tabs-ease),
+    height var(--tabs-dur) var(--tabs-ease);
+  will-change: transform, height;
+}
+
+.nav-rail[data-ready="false"] { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-rail { transition: none !important; }
 }
 
 .nav-group-label {
@@ -1455,21 +3114,28 @@ time,
   border-radius: var(--r-md);
   color: var(--text-2);
   text-align: left;
-  transition: background-color var(--dur) ease, color var(--dur) ease;
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease,
+    transform var(--duration-fast) var(--ease-smooth-out);
 }
 
 .nav-item:hover {
   background: var(--surface-3);
   color: var(--text-1);
+  transform: translateX(2px);
 }
 
 .nav-item[aria-current="page"] {
   background: var(--surface-3);
   color: var(--text-1);
-  box-shadow: inset 2px 0 0 var(--accent);
+  transform: none;
 }
 
+/* Positioned so the attention badge can anchor to the icon rather than the row,
+   which is what keeps the row itself from moving when a badge appears. */
 .nav-item-icon {
+  position: relative;
   display: grid;
   place-items: center;
   width: 30px;
@@ -1478,7 +3144,11 @@ time,
   border-radius: var(--r-sm);
   background: var(--surface-2);
   color: inherit;
+  transition: background-color var(--dur) ease, color var(--dur) ease;
 }
+
+.nav-item-icon .t-badge { top: -7px; right: -7px; }
+.nav-item-icon .t-badge-dot { border-color: var(--surface-1); }
 
 .nav-item[aria-current="page"] .nav-item-icon {
   background: var(--accent-soft);
@@ -1558,9 +3228,13 @@ time,
   height: var(--context-h);
   padding-inline: clamp(var(--s-4), 2vw, var(--s-8));
   border-bottom: 1px solid var(--line);
-  background: rgb(8 9 11 / 82%);
-  backdrop-filter: blur(20px);
+  background: rgb(8 9 11 / 72%);
+  backdrop-filter: blur(20px) saturate(140%);
 }
+
+/* The title changes with the section, so it swaps in place (`t-text-swap`)
+   rather than being replaced between frames. */
+.context-title .t-text-swap { display: block; }
 
 .nav-toggle { display: none; }
 
@@ -1571,17 +3245,17 @@ time,
   line-height: 1.25;
 }
 
-.context-title > span {
+.context-title > .t-text-swap {
   font-size: var(--t-md);
   font-weight: 600;
 }
 
+/* No overflow clipping here: the label swaps by translating a few pixels
+   vertically, and a clipped box would shear the motion in half. */
 .context-title > small {
-  overflow: hidden;
   color: var(--text-3);
   font-size: var(--t-xs);
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .context-clock {
@@ -1621,6 +3295,14 @@ time,
 
 .account-trigger > svg { color: var(--text-3); }
 
+/* The caret points at the panel it opens, and turns back as it closes. */
+.account-caret { transition: transform var(--duration-fast) var(--ease-smooth-out); }
+.account-trigger[aria-expanded="true"] .account-caret { transform: rotate(180deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .account-caret { transition: none !important; }
+}
+
 .account-trigger-text {
   display: grid;
   max-width: 150px;
@@ -1644,6 +3326,9 @@ time,
   text-overflow: ellipsis;
 }
 
+/* Cosmetics only. The panel grows out of the account trigger it is anchored to
+   via `t-dropdown` with `data-origin="top-right"`, and stays mounted for the
+   close so dismissal animates instead of the panel simply disappearing. */
 .account-dropdown {
   position: absolute;
   top: calc(100% + var(--s-2));
@@ -1654,7 +3339,8 @@ time,
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
   background: var(--surface-2);
-  box-shadow: var(--shadow-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
 }
 
 .account-dropdown-head {
@@ -1713,29 +3399,83 @@ time,
   padding: var(--s-8) clamp(var(--s-4), 2vw, var(--s-8)) var(--s-16);
 }
 
+/* The first thing the operator sees. The orb states what the app is doing
+   rather than spinning at them, and the copy rises with the text reveal so the
+   boot reads as a sequence instead of a flash. */
 .boot-screen {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: var(--s-4);
+  gap: var(--s-5);
   min-height: 100dvh;
+  background: var(--bloom-accent), var(--bloom-long), var(--canvas);
   color: var(--text-3);
   font-size: var(--t-sm);
+  text-align: center;
 }
 
-.boot-screen .brand { margin-bottom: var(--s-4); }
+.boot-screen .brand { margin-bottom: var(--s-2); }
+
+.boot-copy { display: grid; gap: var(--s-1); }
+.boot-copy strong { color: var(--text-1); font-size: var(--t-md); font-weight: 600; }
+.boot-copy small { color: var(--text-3); font-size: var(--t-xs); }
+
+/* Progress bar under the boot copy: an indeterminate sweep, not a fake
+   percentage, because the session restore has no measurable progress. */
+.boot-progress {
+  width: 180px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+}
+
+.boot-progress > i {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: boot-sweep 1.4s var(--ease-in-out) infinite;
+}
+
+@keyframes boot-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-progress > i { animation: none !important; width: 100%; }
+}
 
 /* --------------------------------------------------------------------------
-   12. Entry surfaces: sign in and Delta connection
+   13. Entry surfaces: sign in and Delta connection
    -------------------------------------------------------------------------- */
 
 .entry-shell {
   min-height: 100dvh;
   background:
-    radial-gradient(circle at 18% 28%, rgb(130 169 240 / 8%), transparent 34%),
+    radial-gradient(circle at 18% 28%, rgb(130 169 240 / 9%), transparent 34%),
     radial-gradient(circle at 88% 8%, rgb(69 191 154 / 5%), transparent 28%),
     var(--canvas);
 }
+
+/* A faint grid behind the entry copy. It reads as a workspace rather than a
+   marketing page, and stays under 3% alpha so it never competes with text. */
+.entry-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 1.6%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 1.6%) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(circle at 30% 40%, #000, transparent 70%);
+}
+
+.entry-shell > * { position: relative; z-index: 1; }
 
 .entry-bar {
   display: flex;
@@ -1843,17 +3583,61 @@ time,
   line-height: var(--lh-snug);
 }
 
-.entry-card {
-  display: grid;
-  gap: var(--s-4);
+.entry-card-shell {
   width: 100%;
   max-width: 460px;
   justify-self: end;
+}
+
+.entry-card {
+  position: relative;
+  display: grid;
+  gap: var(--s-4);
+  width: 100%;
   padding: var(--s-6);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-xl);
   background: var(--surface-1);
-  box-shadow: var(--shadow-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
+}
+
+/* The metal ring wrapper lays out inline by default; the call to action inside
+   it is a full-width block, so the wrapper has to stretch with it. */
+.metal-cta {
+  display: block;
+  width: 100%;
+}
+
+.metal-cta > .button { width: 100%; }
+
+/* Verified state. The check is the only thing on the card at this point, so the
+   confirmation is unambiguous rather than a badge tucked beside a form. */
+.connect-verified {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-2);
+  padding: var(--s-8) var(--s-4);
+  text-align: center;
+}
+
+.connect-verified .t-success-check { color: var(--long); margin-bottom: var(--s-2); }
+.connect-verified strong { font-size: var(--t-lg); }
+.connect-verified small { color: var(--text-3); font-size: var(--t-xs); }
+
+/* A rejected credential turns the card's own hairline, and the shake recipe
+   moves the same element. The border width never changes between states, so the
+   tween cannot shift the content inside by a pixel. */
+.entry-card.is-error {
+  border-color: rgb(229 105 95 / 62%);
+  box-shadow: var(--shadow-3), var(--glow-short);
+}
+
+/* The capability list is stacked copy, so it enters with the text reveal. */
+.entry-capabilities li > span {
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
+  transition: color var(--dur) ease, background-color var(--dur) ease;
 }
 
 .entry-card-head {
@@ -1871,7 +3655,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   13. Strategy builder
+   14. Strategy builder
    -------------------------------------------------------------------------- */
 
 .builder-columns {
@@ -1979,6 +3763,182 @@ time,
   font-size: var(--t-xs);
 }
 
+/* The verdict block: what is outstanding, and the control that acts on it. The
+   two are grouped so a rejected submission can recoil them together. */
+.review-verdict {
+  display: grid;
+  gap: var(--s-3);
+}
+
+/* The beam wrapper lays out inline; the call to action inside it is a block. */
+.review-cta { display: block; width: 100%; }
+.review-cta > .button { width: 100%; }
+
+/* Pre-flight checklist.
+
+   The rail used to state a single verdict — complete, or N problems. The same
+   validation now drives a live checklist, so an operator can see which
+   requirement is outstanding without submitting first. Each row draws its tick
+   as it passes (`t-check`), which is why the state change is worth animating:
+   it marks the moment a requirement was actually satisfied. */
+
+.review-checklist {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.review-check {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-1);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-snug);
+  transition: color var(--dur) ease;
+}
+
+.review-check[data-checked="true"] { color: var(--text-2); }
+
+.review-check-box {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--canvas);
+  color: var(--canvas);
+}
+
+.review-check[data-checked="true"] .review-check-box {
+  border-color: var(--long);
+  background: var(--long);
+}
+
+.review-check-box svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.review-check-label > strong {
+  display: block;
+  color: var(--text-1);
+  font-size: var(--t-xs);
+  font-weight: 550;
+}
+
+.review-check[data-checked="false"] .review-check-label > strong { color: var(--warn); }
+
+/* Library save state. The label swaps in place rather than being replaced
+   between frames, so "Saving" -> "Saved" reads as one status changing. */
+.library-state .t-text-swap { display: inline-block; }
+
+/* Save control. Saving flips a real boolean — the definition either matches the
+   stored row or it does not — so the moment it lands gets a fill, a pop and a
+   short particle burst. Unsaving just drops the fill: the celebration belongs
+   to the way in only. */
+.save-control {
+  position: relative;
+  overflow: visible;
+}
+
+.save-control .t-like-icon {
+  display: grid;
+  place-items: center;
+}
+
+.save-control[data-liked="true"] .t-like-icon { color: var(--accent); }
+
+/* Until the first real save the pop is withheld, so a library that loads
+   already saved does not celebrate something the operator did not just do. */
+.save-control:not(.is-init) .t-like-icon { animation: none !important; }
+
+/* Quick-add menu. The control becomes the surface it opens (`t-morph`) instead
+   of popping a panel beside it, because the button and the menu are the same
+   element. The plain "Add leg" action is the first item, so nothing that worked
+   by clicking through it stopped working. */
+/* The slot reserves the closed footprint in the header so the growing box
+   overlays the panel instead of reflowing it. Anchored top-right, the surface
+   grows down and to the left, out of the trigger it replaces. */
+.leg-add-slot {
+  position: relative;
+  width: 108px;
+  height: var(--control-h);
+}
+
+.leg-add {
+  --morph-w-closed: 108px;
+  --morph-h-closed: var(--control-h);
+  --morph-w-open: 224px;
+  --morph-h-open: 176px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
+}
+
+.leg-add[data-open="true"] {
+  background-color: var(--surface-2);
+  box-shadow: var(--shadow-2), var(--inset-lit);
+}
+
+/* Pinned at its closed size, so it stays put while the box grows out of it. */
+.leg-add .t-morph-plus {
+  inset: 0 0 auto auto;
+  width: var(--morph-w-closed);
+  height: var(--morph-h-closed);
+  gap: var(--s-2);
+  grid-auto-flow: column;
+  place-content: center;
+  color: var(--text-1);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.leg-add .t-morph-menu {
+  display: grid;
+  align-content: start;
+  padding: var(--s-1);
+}
+
+.leg-add-heading {
+  padding: var(--s-2) var(--s-2) var(--s-1);
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+}
+
+.leg-add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2) var(--s-2);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  text-align: left;
+  transition: background-color var(--dur) ease, color var(--dur) ease;
+}
+
+.leg-add-menu-item:hover:not(:disabled) { background: var(--surface-4); color: var(--text-1); }
+.leg-add-menu-item svg { color: var(--text-3); }
+.leg-add-menu-item:hover:not(:disabled) svg { color: var(--accent); }
+
 /* Schedule timeline */
 
 .timeline {
@@ -1999,6 +3959,12 @@ time,
   background: var(--surface-4);
 }
 
+/* Editing the entry or exit time re-proportions the track. Both segments and
+   the marker tween, because the change of shape *is* the information: the
+   remaining edit window shrinking against the holding period. */
+.timeline-wait,
+.timeline-hold { transition: width var(--resize-dur) var(--resize-ease); }
+
 .timeline-wait { background: repeating-linear-gradient(90deg, var(--line-strong) 0 4px, transparent 4px 8px); }
 .timeline-hold { background: var(--accent); opacity: 0.75; }
 
@@ -2011,6 +3977,13 @@ time,
   border-radius: var(--r-pill);
   background: var(--accent-strong);
   transform: translate(-50%, -50%);
+  transition: left var(--resize-dur) var(--resize-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-wait,
+  .timeline-hold,
+  .timeline-marker { transition: none !important; }
 }
 
 .timeline-legend {
@@ -2071,6 +4044,8 @@ time,
   background: var(--line-strong);
 }
 
+/* Each marker settles onto the axis when a strike changes, so re-reading the
+   structure after an edit shows which leg moved. */
 .structure-leg {
   position: absolute;
   top: 14px;
@@ -2082,6 +4057,11 @@ time,
   font-size: var(--t-xs);
   font-weight: 700;
   transform: translateX(-50%);
+  transition: left var(--duration-fast) var(--ease-smooth-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .structure-leg { transition: none !important; }
 }
 
 .structure-leg.sell { background: var(--short-soft); color: #ffa39b; box-shadow: inset 0 0 0 1px rgb(229 105 95 / 40%); }
@@ -2113,6 +4093,10 @@ time,
   display: grid;
   gap: var(--s-4);
 }
+
+/* Holds whichever trigger layout is active, so the height tween has one box to
+   act on rather than two alternating siblings. */
+.risk-body { min-width: 0; }
 
 .risk-grid {
   display: grid;
@@ -2209,15 +4193,24 @@ time,
 
 /* Legs */
 
+/* The corners are rounded on the first and last rows rather than by clipping the
+   list, because the row tools carry tooltips and an `overflow: hidden` parent
+   would cut every one of them off. The accordion still clips its own panel. */
 .leg-list {
   display: grid;
   gap: 1px;
-  overflow: hidden;
   border-radius: var(--r-md);
   background: var(--line);
 }
 
-.leg { background: var(--surface-2); }
+.leg:first-child { border-radius: var(--r-md) var(--r-md) 0 0; }
+.leg:last-child { border-radius: 0 0 var(--r-md) var(--r-md); }
+.leg:only-child { border-radius: var(--r-md); }
+
+.leg {
+  background: var(--surface-2);
+  transition: background-color var(--acc-expand) var(--acc-ease);
+}
 
 .leg[data-open="true"] { background: var(--surface-3); }
 
@@ -2267,13 +4260,15 @@ time,
   text-overflow: ellipsis;
 }
 
+/* The chevron flips vertically rather than rotating 180 degrees: it passes
+   through a flat line at the midpoint, which reads as the same gesture and
+   animates in every browser (CSS `d:` path morphing is Chromium-only). */
 .leg-chevron {
   justify-self: end;
   color: var(--text-3);
-  transition: transform var(--dur) var(--ease);
 }
 
-.leg[data-open="true"] .leg-chevron { transform: rotate(180deg); }
+.leg-chevron svg { display: block; }
 
 .leg-tools {
   display: flex;
@@ -2298,22 +4293,11 @@ time,
 .leg-tools button.danger:hover:not(:disabled) { color: var(--short); }
 .leg-tools svg { width: 14px; height: 14px; }
 
-.disclosure {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 240ms var(--ease);
-}
-
-.leg[data-open="true"] .disclosure { grid-template-rows: 1fr; }
-
-.disclosure-inner {
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity 200ms var(--ease);
-}
-
-.leg[data-open="true"] .disclosure-inner { opacity: 1; }
-
+/* The leg body is the accordion recipe (`t-acc`), keyed off the `data-open`
+   the row already carried. Height animates through `grid-template-rows:
+   0fr -> 1fr`, so a leg with a limit price open animates as cleanly as one
+   without, and the panel's padding stays on the inner element — on the 0fr
+   track it would leave a residual strip and the row would never fully close. */
 .leg-body {
   display: grid;
   gap: var(--s-4);
@@ -2346,7 +4330,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   14. Portfolio
+   15. Portfolio
    -------------------------------------------------------------------------- */
 
 .portfolio,
@@ -2360,21 +4344,43 @@ time,
 .runs > .section-heading,
 .builder > .section-heading { margin-bottom: 0; }
 
+/* The revealed content wrapper takes over the surface's own vertical rhythm, so
+   introducing the cross-fade layer does not collapse the spacing beneath it. */
+.portfolio > .t-reveal,
+.runs > .t-reveal {
+  display: grid;
+  gap: var(--s-4);
+}
+
 .tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: var(--s-3);
 }
 
+/* Headline figures tilt toward the pointer with a soft glare (`t-tilt`). These
+   are the one surface in the app where that is appropriate: they are glanceable
+   and carry no controls, so nothing moves out from under a click. The pointer
+   is tracked on the flat outer wrapper, never the card that rotates. */
+.tile-tilt,
+.tile-tilt > .t-tilt-card { height: 100%; }
+
 .tile {
+  position: relative;
   display: grid;
   align-content: start;
   gap: var(--s-2);
+  height: 100%;
   padding: var(--s-5);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface-1);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
+  transition: border-color var(--dur) ease;
 }
+
+.tile-tilt:hover .tile { border-color: var(--line-strong); }
 
 .tile-icon {
   display: grid;
@@ -2384,6 +4390,8 @@ time,
   margin-bottom: var(--s-2);
   border-radius: var(--r-sm);
   background: var(--surface-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
   color: var(--text-2);
 }
 
@@ -2525,12 +4533,15 @@ time,
 .risk-monitor-foot strong { color: var(--text-1); }
 
 /* --------------------------------------------------------------------------
-   15. Run history
+   16. Run history
    -------------------------------------------------------------------------- */
 
 .runs-panel { padding-bottom: var(--s-2); }
 
+/* Status filters. The active highlight travels between them (`t-tabs`) so the
+   control shows the move, not only the destination. */
 .filter-bar {
+  position: relative;
   display: flex;
   gap: var(--s-1);
   padding: 3px;
@@ -2542,7 +4553,20 @@ time,
   overflow-x: auto;
 }
 
+.filter-bar > .t-tabs-pill {
+  top: 3px;
+  height: calc(100% - 6px);
+  border-radius: var(--r-sm);
+  background: var(--surface-4);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-1), var(--inset-lit);
+}
+
+.filter-bar > .t-tabs-pill[data-ready="false"] { opacity: 0; }
+
 .filter-tab {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -2553,6 +4577,7 @@ time,
   font-size: var(--t-sm);
   font-weight: 550;
   white-space: nowrap;
+  transition: color var(--tabs-dur) var(--tabs-ease);
 }
 
 .filter-tab > span {
@@ -2566,15 +4591,15 @@ time,
 
 .filter-tab:hover { color: var(--text-2); }
 
-.filter-tab[aria-pressed="true"] {
-  background: var(--surface-4);
-  color: var(--text-1);
-}
+/* The travelling pill is the only selected-state background. */
+.filter-tab[aria-pressed="true"] { color: var(--text-1); }
 
 .filter-tab[aria-pressed="true"] > span {
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
+
+.filter-tab > span { transition: background-color var(--dur) ease, color var(--dur) ease; }
 
 .runs-table { min-width: 860px; }
 
@@ -2599,7 +4624,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   16. Market analysis terminal
+   17. Market analysis terminal
    -------------------------------------------------------------------------- */
 
 .market-page { display: grid; gap: var(--s-4); }
@@ -2668,7 +4693,10 @@ time,
   letter-spacing: 0.1em;
 }
 
+/* Interval switcher: a small set of mutually exclusive options with a moving
+   highlight, which is exactly what the sliding-tabs recipe is for. */
 .market-intervals {
+  position: relative;
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -2677,21 +4705,31 @@ time,
   background: var(--canvas);
 }
 
+.market-intervals > .t-tabs-pill {
+  top: 3px;
+  height: calc(100% - 6px);
+  border-radius: var(--r-sm);
+  background: var(--surface-4);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-1), var(--inset-lit);
+}
+
+.market-intervals > .t-tabs-pill[data-ready="false"] { opacity: 0; }
+
 .market-intervals button {
+  position: relative;
+  z-index: 1;
   min-width: 40px;
   height: 30px;
   border-radius: var(--r-sm);
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 650;
+  transition: color var(--tabs-dur) var(--tabs-ease);
 }
 
-.market-intervals button:hover { background: var(--surface-3); color: var(--text-2); }
-
-.market-intervals button.active {
-  background: var(--surface-4);
-  color: var(--text-1);
-}
+.market-intervals button:hover { color: var(--text-2); }
+.market-intervals button.active { color: var(--text-1); }
 
 .market-feed-state {
   display: flex;
@@ -2825,7 +4863,7 @@ time,
   height: 2px;
   margin-top: var(--s-4);
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  animation: chart-load 1.3s ease-in-out infinite;
+  animation: chart-load 1.3s var(--ease-in-out) infinite;
 }
 
 @keyframes chart-load {
@@ -3468,7 +5506,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   17. News intelligence
+   18. News intelligence
    -------------------------------------------------------------------------- */
 
 .news-page { display: grid; gap: var(--s-4); }
@@ -3522,12 +5560,20 @@ time,
 .news-sessions > header svg { color: var(--accent); }
 .news-sessions > header small { color: var(--text-3); font-size: var(--t-xs); }
 
+/* Room above and below for the hover lift: a horizontally scrolling row also
+   scrolls vertically, so without the padding the 4px lift would trip a
+   scrollbar every time the pointer crossed a card. */
 .news-session-chips {
   display: flex;
   gap: var(--s-2);
   overflow-x: auto;
-  padding-bottom: var(--s-1);
+  padding-block: var(--s-2) var(--s-3);
 }
+
+/* A horizontal stack of sibling cards, so hovering one lifts it and nudges its
+   neighbours with a distance falloff (`t-avatar`). The return springs — that is
+   the one interaction where hover-out is the richer half of the motion. */
+.news-session-chips .t-avatar { display: flex; }
 
 .news-session-chips button {
   display: grid;
@@ -3538,6 +5584,8 @@ time,
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface-2);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--inset-lit);
   text-align: left;
   transition: border-color var(--dur) ease, background-color var(--dur) ease;
 }
@@ -3725,6 +5773,17 @@ time,
 }
 
 .news-status-panel > svg { width: 24px; height: 24px; color: var(--accent); }
+
+/* The agent's activity indicator. An orb states which verb the agent is on —
+   searching sources, then composing the analysis — instead of a spinner that
+   only says "busy". It is a semantic state readout, not decoration. */
+.news-orb {
+  display: grid;
+  place-items: start center;
+  align-self: start;
+}
+
+.news-orb canvas { display: block; }
 .news-status-panel small { color: var(--text-3); font-size: var(--t-xs); letter-spacing: 0.06em; text-transform: uppercase; }
 
 .news-status-panel h2 {
@@ -3750,7 +5809,7 @@ time,
   height: 7px;
   border-radius: var(--r-pill);
   background: var(--accent);
-  animation: pulse 1.8s ease-in-out infinite;
+  animation: pulse 1.8s var(--ease-in-out) infinite;
 }
 
 @keyframes pulse {
@@ -3783,38 +5842,41 @@ time,
 .news-history > header h2 { font-size: var(--t-xl); }
 .news-history > header p { color: var(--text-3); font-size: var(--t-xs); }
 
+/* Earlier outcomes are a disclosure list, so they use the accordion recipe
+   rather than a native `details`. A stored analysis is several screens of
+   Markdown; opening it should grow the row, not snap the page height. */
 .news-history-list {
   display: grid;
   border-top: 1px solid var(--line);
 }
 
-.news-history-list > details { border-bottom: 1px solid var(--line); }
+.news-history-item { border-bottom: 1px solid var(--line); }
 
-.news-history-list summary {
+.news-history-head {
   display: grid;
-  grid-template-columns: 36px 1fr auto;
+  grid-template-columns: 36px 1fr auto auto;
   align-items: center;
   gap: var(--s-4);
+  width: 100%;
   padding: var(--s-4) var(--s-1);
-  cursor: pointer;
-  list-style: none;
+  text-align: left;
 }
 
-.news-history-list summary::-webkit-details-marker { display: none; }
-
-.news-history-list summary > span {
+.news-history-head > span {
   color: var(--text-3);
   font-family: var(--font-mono-stack);
   font-size: var(--t-xs);
 }
 
-.news-history-list summary time { color: var(--text-2); font-size: var(--t-sm); }
-.news-history-list summary strong { color: var(--text-3); font-size: var(--t-xs); font-weight: 550; }
-.news-history-list summary:hover time { color: var(--text-1); }
+.news-history-head time { color: var(--text-2); font-size: var(--t-sm); }
+.news-history-head strong { color: var(--text-3); font-size: var(--t-xs); font-weight: 550; }
+.news-history-head:hover time { color: var(--text-1); }
+.news-history-head .t-acc-chevron { color: var(--text-3); }
+.news-history-head .t-acc-chevron svg { display: block; }
 .news-history-list .news-markdown { padding-top: var(--s-5); border-top: 1px solid var(--line); }
 
 /* --------------------------------------------------------------------------
-   18. Responsive
+   19. Responsive
    -------------------------------------------------------------------------- */
 
 @media (max-width: 1280px) {
@@ -3833,7 +5895,7 @@ time,
   .market-stats { grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(0, 1fr)); }
   .market-stats > div:nth-child(n + 4) { display: none; }
   .entry-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s-10); }
-  .entry-card { justify-self: start; max-width: 520px; }
+  .entry-card-shell { justify-self: start; max-width: 520px; }
 }
 
 @media (max-width: 960px) {
@@ -3846,9 +5908,15 @@ time,
     z-index: 100;
     width: min(300px, 86vw);
     transform: translateX(-100%);
-    transition: transform 260ms var(--ease);
+    /* A drawer is a panel sliding into the page: it opens on the panel clock
+       and closes a little faster, so dismissal gets out of the way. */
+    transition: transform var(--panel-close-dur) var(--panel-ease);
     box-shadow: var(--shadow-3);
   }
+
+  .sidebar[data-open="true"] { transition-duration: var(--panel-open-dur); }
+
+  .sidebar-scrim { transition: opacity var(--panel-close-dur) var(--panel-ease); }
 
   .sidebar[data-open="true"] { transform: translateX(0); }
   .sidebar-close { display: grid; }
@@ -3862,6 +5930,14 @@ time,
 
 @media (max-width: 720px) {
   .workspace { padding: var(--s-5) var(--s-4) var(--s-12); }
+  .entry-card-shell { justify-self: stretch; max-width: none; }
+  .news-history-head { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .news-history-head strong { display: none; }
+  /* The quick-add control spans the header on a phone, and the panel it grows
+     into spans the same width rather than being cramped into 224px. */
+  .leg-add-slot { width: 100%; }
+  .leg-add { --morph-w-closed: 100%; --morph-w-open: 100%; }
+  .panel-header-actions { flex: 1; }
   .section-heading { flex-direction: column; align-items: stretch; gap: var(--s-4); }
   .section-heading-actions { flex-wrap: wrap; }
   .grid-2,
@@ -3880,7 +5956,9 @@ time,
   }
 
   .leg-chevron { margin-left: auto; }
-  .leg-tools button:nth-child(-n + 2) { display: none; }
+  /* The reorder controls are dropped first on a phone; each tool is wrapped in
+     a tooltip, so the children are the wrappers rather than the buttons. */
+  .leg-tools > *:nth-child(-n + 2) { display: none; }
   .timeline-legend { grid-template-columns: minmax(0, 1fr); }
   .account-trigger-text { display: none; }
   .toast-region { right: var(--s-4); left: var(--s-4); bottom: var(--s-4); max-width: none; }
@@ -3903,8 +5981,6 @@ time,
   .delta-trade-head > *:nth-child(4),
   .delta-trade-row > *:nth-child(4) { display: none; }
   .news-status-panel { grid-template-columns: minmax(0, 1fr); }
-  .news-history-list summary { grid-template-columns: 28px minmax(0, 1fr); }
-  .news-history-list summary strong { grid-column: 2; }
   .candlestick-chart,
   .chart-loading,
   .chart-error { height: 380px; }
@@ -3919,7 +5995,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   19. Motion preferences
+   20. Motion preferences
    -------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
