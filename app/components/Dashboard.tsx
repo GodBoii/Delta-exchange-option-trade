@@ -10,8 +10,9 @@ import {
 } from "@/lib/format";
 import type { AccountOverview, DeltaRecord, RiskStrategy } from "@/lib/app-types";
 import {
-  ConfirmModal, EmptyState, Meter, Panel, PanelHeader, SectionHeading, StatusChip, TableSkeleton,
-  TileSkeleton, Toggle, type NoticeHandler, type StatusTone
+  AnimatedNumber, ConfirmModal, EmptyState, IconSwap, Meter, Panel, PanelHeader, Revealed,
+  SectionHeading, SpinningCounter, StatusChip, SwapText, TableSkeleton, TileSkeleton, TiltCard,
+  Toggle, type NoticeHandler, type StatusTone
 } from "@/app/components/ui";
 
 const AUTO_REFRESH_MS = 30_000;
@@ -140,10 +141,17 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
         actions={
           <>
             <span className="refresh-state">
-              {refreshedAt ? `Updated ${formatClock(refreshedAt.getTime())}` : "Loading"}
+              <SwapText>{refreshedAt ? `Updated ${formatClock(refreshedAt.getTime())}` : "Loading"}</SwapText>
             </span>
             <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
-              <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
+              {/* Both glyphs share one slot, so the control keeps its width while
+                  the request is in flight and the row cannot reflow. */}
+              <IconSwap
+                showB={loading}
+                a={<RefreshCw />}
+                b={<RefreshCw className="spin" />}
+              />
+              Refresh
             </button>
           </>
         }
@@ -155,7 +163,9 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
           <Panel><TableSkeleton label="portfolio data" /></Panel>
         </>
       ) : (
-        <>
+        /* The placeholder above unmounts, so the reveal is carried by the content
+           that replaces it — same clock, blur and easing as the cross-fade. */
+        <Revealed>
           <div className="tile-grid">
             <Tile
               icon={<Wallet />}
@@ -175,12 +185,14 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
                 : undefined}
             />
             <Tile
+              roll
               icon={<TrendingUp />}
               label="Open positions"
               value={String(positions.length)}
               note={positionMargin > 0 ? `${quantity(positionMargin, 4)} margin committed` : "No margin committed"}
             />
             <Tile
+              roll
               icon={<Clock3 />}
               label="Open orders"
               value={String(orders.length)}
@@ -223,7 +235,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
               onChange={setAutoRefresh}
             />
           </div>
-        </>
+        </Revealed>
       )}
 
       {cancelTarget && (
@@ -257,21 +269,44 @@ function utilisationTone(ratio: number): StatusTone {
   return "active";
 }
 
-function Tile({ icon, label, value, note, meter }: {
+/**
+ * Headline figure.
+ *
+ * The card leans toward the pointer with a soft glare. These are the one surface
+ * in the app where that is appropriate — they are glanceable and carry no
+ * controls, so nothing can move out from under a click — and the lean is kept
+ * shallow so tabular figures stay easy to read.
+ *
+ * How the number arrives depends on what changing means:
+ *
+ *   - counts of live positions and orders roll like a reel, because going from
+ *     two positions to three is a real event on the account;
+ *   - balances and margin re-enter with a quiet blurred slide, because those
+ *     drift on every thirty-second poll and a jackpot roll for a rounding change
+ *     would be noise.
+ */
+function Tile({ icon, label, value, note, meter, roll = false }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   note: string;
   meter?: { value: number; max: number; tone: StatusTone };
+  roll?: boolean;
 }) {
   return (
-    <article className="tile">
-      <span className="tile-icon" aria-hidden="true">{icon}</span>
-      <p className="tile-label">{label}</p>
-      <strong className="tile-value">{value}</strong>
-      {meter && <Meter value={meter.value} max={meter.max} tone={meter.tone} label={label} />}
-      <p className="tile-note">{note}</p>
-    </article>
+    <TiltCard className="tile-tilt">
+      <article className="tile">
+        <span className="tile-icon" aria-hidden="true">{icon}</span>
+        <p className="tile-label">{label}</p>
+        <strong className="tile-value">
+          {roll
+            ? <SpinningCounter value={value} animateOnMount />
+            : <AnimatedNumber value={value} />}
+        </strong>
+        {meter && <Meter value={meter.value} max={meter.max} tone={meter.tone} label={label} />}
+        <p className="tile-note">{note}</p>
+      </article>
+    </TiltCard>
   );
 }
 
@@ -509,8 +544,17 @@ function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
  * closes, so it is shown as a proportion rather than a raw percentage.
  */
 function CombinedRiskPanel({ strategies }: { strategies: RiskStrategy[] }) {
+  // This panel only exists while a combined-premium run is being monitored, so
+  // it slides into the portfolio region when monitoring starts instead of
+  // appearing between frames and shunting the tables down.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
-    <Panel>
+    <Panel className="t-panel-slide" data-open={open}>
       <PanelHeader
         icon={<Shield />}
         title="Combined premium protection"
