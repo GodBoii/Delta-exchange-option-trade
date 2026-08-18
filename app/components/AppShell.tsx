@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode
+} from "react";
 import {
   Activity, BarChart3, ChevronDown, KeyRound, Layers3, LogOut, Menu, Newspaper, PieChart, X
 } from "lucide-react";
-import { Brand, StatusDot } from "@/app/components/ui";
+import {
+  Badge, Brand, IconSwap, StatusDot, SwapText, Tooltip, useDisclosure
+} from "@/app/components/ui";
 
 export type Tab = "builder" | "market" | "news" | "dashboard" | "runs";
 
@@ -34,18 +38,23 @@ const NAV_GROUPS: NavGroup[] = [
   }
 ];
 
+/** Reading order of the sections, so a transition knows which way it travelled. */
+export const TAB_ORDER: readonly Tab[] = NAV_GROUPS.flatMap(group => group.items.map(item => item.id));
+
 export type ConnectionState = {
   label: string;
   detail: string;
   tone: "active" | "warning" | "neutral";
 };
 
-export function AppShell({ tab, availableTabs, connection, account, onNavigate, onDisconnect, onSignOut, banner, children }: {
+export function AppShell({ tab, availableTabs, connection, account, badges, onNavigate, onDisconnect, onSignOut, banner, children }: {
   tab: Tab;
   /** Tabs that require the trading backend are hidden while it is unreachable. */
   availableTabs: Tab[];
   connection: ConnectionState;
   account: { name: string; detail: string };
+  /** Counts worth surfacing on the navigation itself, keyed by tab. */
+  badges?: Partial<Record<Tab, number>>;
   onNavigate: (tab: Tab) => void;
   onDisconnect?: () => void;
   onSignOut: () => void;
@@ -57,6 +66,9 @@ export function AppShell({ tab, availableTabs, connection, account, onNavigate, 
     .map(group => ({ ...group, items: group.items.filter(item => availableTabs.includes(item.id)) }))
     .filter(group => group.items.length > 0);
   const activeItem = groups.flatMap(group => group.items).find(item => item.id === tab);
+  const navRef = useRef<HTMLElement>(null);
+  const railRef = useRef<HTMLSpanElement>(null);
+  const layoutKey = availableTabs.join(",");
 
   useEffect(() => {
     if (!navOpen) return;
@@ -64,6 +76,49 @@ export function AppShell({ tab, availableTabs, connection, account, onNavigate, 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [navOpen]);
+
+  /**
+   * One rail travels to the active section instead of a marker switching off one
+   * row and on to another, so the sidebar shows where the selection came from —
+   * the sliding-tabs idea, turned on its side.
+   *
+   * Position and height are measured from the live DOM rather than derived from
+   * an index, because the rows are grouped and a group can be hidden entirely
+   * while the trading backend is unreachable. The first write suspends the
+   * transition, otherwise the rail would animate down from the top on mount.
+   */
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const rail = railRef.current;
+    if (!nav || !rail) return;
+
+    const place = (animate: boolean) => {
+      const active = nav.querySelector<HTMLElement>('.nav-item[aria-current="page"]');
+      if (!active) {
+        rail.dataset.ready = "false";
+        return;
+      }
+      const apply = () => {
+        rail.style.transform = `translateY(${active.offsetTop}px)`;
+        rail.style.height = `${active.offsetHeight}px`;
+      };
+      if (animate) {
+        apply();
+      } else {
+        const previous = rail.style.transition;
+        rail.style.transition = "none";
+        apply();
+        void rail.offsetHeight;
+        rail.style.transition = previous;
+      }
+      rail.dataset.ready = "true";
+    };
+
+    place(rail.dataset.ready === "true");
+    const onResize = () => place(false);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [layoutKey, tab]);
 
   return (
     <div className="shell">
@@ -77,27 +132,41 @@ export function AppShell({ tab, availableTabs, connection, account, onNavigate, 
           </button>
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" ref={navRef}>
+          <span className="nav-rail" ref={railRef} data-ready="false" aria-hidden="true" />
           {groups.map(group => (
             <div className="nav-group" key={group.label}>
               <p className="nav-group-label">{group.label}</p>
               <ul>
-                {group.items.map(item => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      className="nav-item"
-                      aria-current={item.id === tab ? "page" : undefined}
-                      onClick={() => { onNavigate(item.id); setNavOpen(false); }}
-                    >
-                      <span className="nav-item-icon" aria-hidden="true">{item.icon}</span>
-                      <span className="nav-item-text">
-                        <strong>{item.label}</strong>
-                        <small>{item.hint}</small>
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                {group.items.map(item => {
+                  const count = badges?.[item.id] ?? 0;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className="nav-item"
+                        aria-current={item.id === tab ? "page" : undefined}
+                        onClick={() => { onNavigate(item.id); setNavOpen(false); }}
+                      >
+                        <span className="nav-item-icon" aria-hidden="true">
+                          {item.icon}
+                          {/* Only the badge slides and pops; the row it sits on
+                              never moves, so the navigation cannot jump under
+                              the cursor when a run starts needing attention. */}
+                          <Badge
+                            count={count}
+                            tone="negative"
+                            label={`${count} ${item.label.toLowerCase()} ${count === 1 ? "item needs" : "items need"} attention`}
+                          />
+                        </span>
+                        <span className="nav-item-text">
+                          <strong>{item.label}</strong>
+                          <small>{item.hint}</small>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -116,12 +185,21 @@ export function AppShell({ tab, availableTabs, connection, account, onNavigate, 
 
       <div className="shell-body">
         <header className="context-bar">
-          <button type="button" className="icon-button nav-toggle" onClick={() => setNavOpen(true)} aria-label="Open navigation" aria-expanded={navOpen}>
-            <Menu />
+          <button
+            type="button"
+            className="icon-button nav-toggle"
+            onClick={() => setNavOpen(value => !value)}
+            aria-label={navOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={navOpen}
+          >
+            {/* Both glyphs stay mounted in one grid cell, so the control never
+                changes size as it flips and the bar cannot reflow. */}
+            <IconSwap showB={navOpen} a={<Menu />} b={<X />} />
           </button>
           <div className="context-title">
-            <span>{activeItem ? activeItem.label : "Workspace"}</span>
-            <small>{activeItem ? activeItem.hint : "Delta Exchange India"}</small>
+            {/* The section name changes in place rather than between frames. */}
+            <SwapText>{activeItem ? activeItem.label : "Workspace"}</SwapText>
+            <small><SwapText>{activeItem ? activeItem.hint : "Delta Exchange India"}</SwapText></small>
           </div>
           <Clock />
           <AccountMenu account={account} connection={connection} onDisconnect={onDisconnect} onSignOut={onSignOut} />
@@ -155,10 +233,12 @@ function Clock() {
     .find(part => part.type === "timeZoneName")?.value ?? "Local";
 
   return (
-    <div className="context-clock">
-      <time dateTime={now.toISOString()}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
-      <small>{zone} · scheduling clock</small>
-    </div>
+    <Tooltip label="Entry and exit times are scheduled against this clock" placement="bottom">
+      <div className="context-clock">
+        <time dateTime={now.toISOString()}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+        <small>{zone} · scheduling clock</small>
+      </div>
+    </Tooltip>
   );
 }
 
@@ -171,6 +251,9 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  // The panel is kept in the tree for the length of its close transition, so
+  // dismissal plays instead of the menu simply blinking out.
+  const disclosure = useDisclosure(open, "--dropdown-close-dur");
 
   useEffect(() => {
     if (!open) return;
@@ -195,7 +278,7 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
         className="account-trigger"
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-controls={menuId}
+        aria-controls={open ? menuId : undefined}
         onClick={() => setOpen(value => !value)}
       >
         <span className="avatar" aria-hidden="true">{initials}</span>
@@ -203,11 +286,18 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
           <strong>{account.name}</strong>
           <small>{account.detail}</small>
         </span>
-        <ChevronDown aria-hidden="true" />
+        <ChevronDown className="account-caret" aria-hidden="true" />
       </button>
 
-      {open && (
-        <div className="account-dropdown" id={menuId} role="menu">
+      {disclosure.mounted && (
+        <div
+          className={`account-dropdown t-dropdown ${disclosure.className}`}
+          /* Anchored under the trigger's right edge, so it grows out of that
+             corner rather than from the top left. */
+          data-origin="top-right"
+          id={menuId}
+          role="menu"
+        >
           <div className="account-dropdown-head">
             <strong>{account.name}</strong>
             <small>{account.detail}</small>
