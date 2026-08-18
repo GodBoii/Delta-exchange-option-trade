@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowDown, ArrowUp, CalendarClock, ChevronDown, CircleDollarSign, Copy, Download,
+  ArrowDown, ArrowUp, CalendarClock, ChevronDown, CircleDollarSign, Copy, Download,
   FolderOpen, Layers3, LoaderCircle, Plus, Save, Shield, ShieldCheck, Trash2, Upload, WifiOff
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
@@ -14,9 +14,12 @@ import {
   errorMessage, formatDateTime, formatDuration, formatExpiry, relativeTime, toIso, toLocalInput
 } from "@/lib/format";
 import {
-  ConfirmModal, EmptyState, Field, InlineMessage, NumberField, OptionalNumberField, Panel,
-  PanelHeader, SectionHeading, Segmented, Select, StatusDot, Toggle, type NoticeHandler
+  AnimatedNumber, ClearableInput, ConfirmModal, DrawnTick, EmptyState, Field, InlineMessage,
+  MorphMenu, NumberField, OptionalNumberField, Panel, PanelHeader, SectionHeading, Segmented, Select,
+  Shimmer, StatusDot, SuccessCheck, SwapText, Toggle, Tooltip, useBurst, useShake,
+  type NoticeHandler
 } from "@/app/components/ui";
+import { BorderBeam } from "border-beam";
 
 /* ------------------------------------------------------------------ *
  * Definition helpers
@@ -170,6 +173,70 @@ function validate(strategy: StrategyDefinition): ValidationIssue[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * Pre-flight checklist
+ * ------------------------------------------------------------------ */
+
+type ChecklistRow = { id: string; label: string; passed: boolean; detail: string };
+
+/**
+ * The same blocking issues, grouped into the four requirements a run has to
+ * satisfy.
+ *
+ * The rail used to state one verdict — complete, or "N items need attention" —
+ * which told the operator that something was wrong but not what stage it was at.
+ * Grouping the identical validation output into named requirements means each
+ * row can report its own outstanding problem, and a requirement draws its tick
+ * the moment it is actually satisfied.
+ */
+function checklist(strategy: StrategyDefinition, issues: ValidationIssue[]): ChecklistRow[] {
+  const first = (match: (field: string) => boolean, fallback: string) => {
+    const found = issues.filter(issue => match(issue.field));
+    if (!found.length) return fallback;
+    return found.length === 1 ? found[0].message : `${found[0].message} (+${found.length - 1} more)`;
+  };
+
+  const named = !issues.some(issue => issue.field === "name");
+  const scheduled = !issues.some(issue => issue.field === "entryAt" || issue.field === "exitAt");
+  const legsOk = !issues.some(issue => issue.field === "legs" || issue.field.startsWith("leg."));
+  const riskOk = !issues.some(issue => issue.field === "riskMode" || issue.field === "combinedStopLossPercent");
+
+  return [
+    {
+      id: "named",
+      label: "Named",
+      passed: named,
+      detail: named ? strategy.name.trim() : first(field => field === "name", "")
+    },
+    {
+      id: "schedule",
+      label: "Schedule window",
+      passed: scheduled,
+      detail: scheduled
+        ? `${formatDateTime(strategy.entry.entryAt)} · held ${formatDuration(strategy.entry.entryAt, strategy.entry.exitAt)}`
+        : first(field => field === "entryAt" || field === "exitAt", "")
+    },
+    {
+      id: "legs",
+      label: "Legs configured",
+      passed: legsOk,
+      detail: legsOk
+        ? `${strategy.legs.length} ${strategy.legs.length === 1 ? "leg" : "legs"} fully specified`
+        : first(field => field === "legs" || field.startsWith("leg."), "")
+    },
+    {
+      id: "risk",
+      label: "Risk control",
+      passed: riskOk,
+      detail: riskOk
+        ? strategy.riskMode === "combined_premium"
+          ? `Combined stop at ${strategy.combinedStopLossPercent ?? 0}% of credit`
+          : "Stops held inside each leg"
+        : first(field => field === "riskMode" || field === "combinedStopLossPercent", "")
+    }
+  ];
+}
+
+/* ------------------------------------------------------------------ *
  * Derived structure model, used by the review visualisations
  * ------------------------------------------------------------------ */
 
@@ -250,12 +317,44 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
 
+  const [scheduled, setScheduled] = useState(false);
+
   const issues = useMemo(() => validate(strategy), [strategy]);
   const invalidFields = useMemo(
     () => (showIssues ? new Set(issues.map(issue => issue.field)) : new Set<string>()),
     [issues, showIssues]
   );
   const structure = useMemo(() => structureModel(strategy.legs), [strategy.legs]);
+  const requirements = useMemo(() => checklist(strategy, issues), [issues, strategy]);
+
+  /** A rejected submission shakes the block that reported it. */
+  const { target: reviewPanel, shake } = useShake<HTMLDivElement>();
+
+  /**
+   * Saving flips a real boolean — the definition either matches the stored row
+   * or it does not — so the moment it lands gets a fill, a pop and a short
+   * burst. Editing again only drops the fill: the celebration belongs to the way
+   * in.
+   *
+   * `hasSaved` gates it so the very first library load, which arrives already
+   * saved, does not celebrate something the operator did not do. It is the same
+   * reason the toggle recipe withholds its bounce until first interaction.
+   */
+  const [hasSaved, setHasSaved] = useState(false);
+  const sawSaving = useRef(false);
+  useEffect(() => {
+    if (libraryState === "saving") {
+      sawSaving.current = true;
+      return;
+    }
+    if (libraryState === "saved" && sawSaving.current) {
+      sawSaving.current = false;
+      setHasSaved(true);
+    }
+  }, [libraryState]);
+
+  const savedToLibrary = libraryState === "saved";
+  const { hostRef: saveButton, particles: saveParticles } = useBurst(hasSaved && savedToLibrary);
 
   /* --------------------------- persistence --------------------------- */
 
@@ -431,11 +530,33 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       return { ...current, legs };
     });
 
-  function addLeg() {
+  function addLeg(overrides: Partial<StrategyLeg> = {}) {
     if (strategy.legs.length >= MAX_LEGS) return;
-    const leg = newLeg({ expiry: strategy.legs[0]?.expiry || tomorrow() });
+    const leg = newLeg({ expiry: strategy.legs[0]?.expiry || tomorrow(), ...overrides });
     setStrategy(current => ({ ...current, legs: [...current.legs, leg] }));
     setExpandedLeg(leg.id);
+  }
+
+  /**
+   * Copies the last leg's expiry, strike criteria and lot size and flips only
+   * what the preset names. Adding the matching side of a spread was previously
+   * four separate edits after the leg appeared.
+   */
+  function addMatchingLeg(patch: Partial<StrategyLeg>) {
+    const last = strategy.legs[strategy.legs.length - 1];
+    addLeg(last
+      ? {
+        expiry: last.expiry,
+        lots: last.lots,
+        strikeMode: last.strikeMode,
+        strikeSteps: last.strikeSteps,
+        exactStrike: last.exactStrike,
+        orderType: last.orderType,
+        position: last.position,
+        optionType: last.optionType,
+        ...patch
+      }
+      : patch);
   }
 
   /* --------------------------- commands --------------------------- */
@@ -521,6 +642,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     if (issues.length) {
       setShowIssues(true);
       setError(`Resolve ${issues.length} ${issues.length === 1 ? "problem" : "problems"} before scheduling.`);
+      shake();
       const firstLeg = issues.find(issue => issue.legId)?.legId;
       if (firstLeg) setExpandedLeg(firstLeg);
       requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -541,12 +663,17 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
         method: "POST",
         body: JSON.stringify({ strategy: liveStrategy, status: "scheduled", savedStrategyId: saved.id })
       });
+      // An immutable run now exists on the server. That is worth confirming on
+      // the control that created it, not only in a toast that will time out.
+      setScheduled(true);
+      window.setTimeout(() => setScheduled(false), 2_600);
       onNotice({
         tone: "ok",
         text: `Scheduled for ${formatDateTime(liveStrategy.entry.entryAt)}. No order is placed before that time.`
       });
     } catch (scheduleError) {
       setError(errorMessage(scheduleError));
+      shake();
     } finally {
       setScheduling(false);
     }
@@ -629,10 +756,12 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             />
             <div className="grid-2">
               <Field label="Strategy name" hint="Names may be reused; every schedule is a separate run." invalid={invalidFields.has("name")}>
-                <input
+                <ClearableInput
                   value={strategy.name}
                   maxLength={80}
-                  onChange={event => setStrategy({ ...strategy, name: event.target.value })}
+                  placeholder="Name this strategy"
+                  clearLabel="Clear the strategy name"
+                  onChange={name => setStrategy({ ...strategy, name })}
                 />
               </Field>
               <Select
@@ -709,9 +838,39 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               title="Legs"
               meta={`${strategy.legs.length} of ${MAX_LEGS} · ${structure.shortLots} short, ${structure.longLots} long lots`}
               actions={
-                <button type="button" className="button secondary" onClick={addLeg} disabled={strategy.legs.length >= MAX_LEGS}>
-                  <Plus aria-hidden="true" />Add leg
-                </button>
+                /*
+                  The control becomes the surface it opens rather than popping a
+                  separate panel beside it, because the trigger and the menu are
+                  the same element. "Add leg" is still the first item, so nothing
+                  that worked by clicking straight through it stopped working.
+                */
+                <div className="leg-add-slot">
+                  <MorphMenu
+                    className="leg-add"
+                    label="Add leg"
+                    icon={<Plus aria-hidden="true" />}
+                    disabled={strategy.legs.length >= MAX_LEGS}
+                  >
+                    <p className="leg-add-heading">Add a leg</p>
+                    <button type="button" role="menuitem" className="leg-add-menu-item" onClick={() => addLeg()}>
+                      <Plus aria-hidden="true" />Blank leg
+                    </button>
+                    <button type="button" role="menuitem" className="leg-add-menu-item" onClick={() => addMatchingLeg({ optionType: "call" })}>
+                      <CircleDollarSign aria-hidden="true" />Matching call
+                    </button>
+                    <button type="button" role="menuitem" className="leg-add-menu-item" onClick={() => addMatchingLeg({ optionType: "put" })}>
+                      <CircleDollarSign aria-hidden="true" />Matching put
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="leg-add-menu-item"
+                      onClick={() => addMatchingLeg({ position: strategy.legs[strategy.legs.length - 1]?.position === "buy" ? "sell" : "buy" })}
+                    >
+                      <Copy aria-hidden="true" />Opposite side
+                    </button>
+                  </MorphMenu>
+                </div>
               }
             />
             {strategy.legs.length ? (
@@ -738,7 +897,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 icon={<Layers3 />}
                 title="No legs configured"
                 description="A strategy needs at least one option leg before it can be scheduled."
-                action={<button type="button" className="button secondary" onClick={addLeg}><Plus aria-hidden="true" />Add first leg</button>}
+                action={<button type="button" className="button secondary" onClick={() => addLeg()}><Plus aria-hidden="true" />Add first leg</button>}
               />
             )}
           </Panel>
@@ -766,14 +925,24 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 <ChevronDown aria-hidden="true" />
               </span>
             </Field>
+            {/* One status changing, not two strings replacing each other. */}
             <p className={`library-state tone-${library.tone}`}>
               <StatusDot tone={library.tone} />
-              <span>{library.label}</span>
+              <SwapText>{library.label}</SwapText>
               <small>Browser recovery copy on</small>
             </p>
             <div className="button-row">
-              <button type="button" className="button secondary" onClick={() => void persist(strategy, activeSavedId, true)} disabled={busy}>
-                <Save aria-hidden="true" />Save
+              <button
+                type="button"
+                className={`button secondary save-control t-like${hasSaved ? " is-init" : ""}`}
+                data-liked={savedToLibrary}
+                ref={saveButton}
+                onClick={() => void persist(strategy, activeSavedId, true)}
+                disabled={busy}
+              >
+                <span className="t-like-icon" aria-hidden="true"><Save /></span>
+                {saveParticles}
+                <SwapText>{libraryState === "saving" ? "Saving" : libraryState === "saved" ? "Saved" : "Save"}</SwapText>
               </button>
               <button type="button" className="button primary" onClick={() => setConfirmNew(true)} disabled={busy || scheduling}>
                 <Plus aria-hidden="true" />New
@@ -809,33 +978,58 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               </div>
             </dl>
 
-            {issues.length > 0 ? (
-              <div className="review-issues">
-                <p className="review-issues-title">
-                  <AlertTriangle aria-hidden="true" />
-                  {issues.length} {issues.length === 1 ? "item needs" : "items need"} attention
-                </p>
-                <ul>{issues.slice(0, 5).map(issue => <li key={`${issue.field}-${issue.message}`}>{issue.message}</li>)}</ul>
-                {issues.length > 5 && <p className="review-issues-more">+{issues.length - 5} more</p>}
-              </div>
-            ) : (
-              <InlineMessage tone="ok">Configuration is complete and ready to schedule.</InlineMessage>
-            )}
+            {/* `t-input` marks the element the shake acts on: a rejected
+                submission recoils the block that reported why. */}
+            <div className="review-verdict t-input" ref={reviewPanel}>
+              <ul className="review-checklist">
+                {requirements.map(row => (
+                  <li className="review-check" key={row.id} data-checked={row.passed}>
+                    {/* The box fills, then the tick draws itself. Animating the
+                        dash offset rather than swapping it means a requirement
+                        that lapses reverses cleanly instead of blinking off. */}
+                    <span className="review-check-box t-check" data-checked={row.passed} aria-hidden="true">
+                      <DrawnTick />
+                    </span>
+                    <span className="review-check-label">
+                      <strong>{row.label}</strong>
+                      {row.detail}
+                    </span>
+                    <span className="visually-hidden">{row.passed ? "Requirement met" : "Outstanding"}</span>
+                  </li>
+                ))}
+              </ul>
 
-            {error && <InlineMessage tone="error">{error}</InlineMessage>}
+              {error && <InlineMessage tone="error">{error}</InlineMessage>}
 
-            <button
-              type="button"
-              className={liveEnabled ? "button primary block" : "button secondary block"}
-              disabled={scheduling || !liveEnabled}
-              onClick={() => void scheduleStrategy()}
-            >
-              {scheduling
-                ? <><LoaderCircle className="spin" aria-hidden="true" />Scheduling</>
-                : liveEnabled
-                  ? <><CalendarClock aria-hidden="true" />Schedule strategy</>
-                  : <><WifiOff aria-hidden="true" />Local backend required</>}
-            </button>
+              {/*
+                The beam is an active-state treatment, not decoration: it only
+                runs while the configuration actually validates and the backend
+                is reachable, so it marks the control as armed.
+              */}
+              <BorderBeam
+                className="review-cta"
+                size="sm"
+                colorVariant="ocean"
+                theme="dark"
+                strength={0.5}
+                active={issues.length === 0 && liveEnabled && !scheduling}
+              >
+                <button
+                  type="button"
+                  className={liveEnabled ? "button primary block" : "button secondary block"}
+                  disabled={scheduling || !liveEnabled}
+                  onClick={() => void scheduleStrategy()}
+                >
+                  {scheduling
+                    ? <><LoaderCircle className="spin" aria-hidden="true" /><Shimmer>Scheduling</Shimmer></>
+                    : scheduled
+                      ? <><SuccessCheck shown size={18} />Run scheduled</>
+                      : liveEnabled
+                        ? <><CalendarClock aria-hidden="true" />Schedule strategy</>
+                        : <><WifiOff aria-hidden="true" />Local backend required</>}
+                </button>
+              </BorderBeam>
+            </div>
             <p className="fine-print">
               Scheduling stores an immutable run. Orders are submitted by the backend at the entry
               time, not from this browser.
@@ -974,7 +1168,9 @@ function RiskControl({ strategy, onChange, invalidFields }: {
   const exitMultiple = 1 + stop / 100;
 
   return (
-    <div className="risk-control">
+    /* Switching trigger swaps a four-cell grid for a three-column one, so the
+       panel tweens between the two heights instead of snapping. */
+    <div className="risk-control t-resize">
       <Segmented
         label="Trigger"
         value={strategy.riskMode}
@@ -991,6 +1187,10 @@ function RiskControl({ strategy, onChange, invalidFields }: {
         ]}
       />
 
+      {/* Keyed on the trigger, so switching modes cross-fades the replacement
+          layout in rather than swapping it between frames. The container tweens
+          its height around that where the browser can interpolate `auto`. */}
+      <div className="risk-body t-reveal" key={strategy.riskMode}>
       {combined ? (
         <div className="risk-grid">
           <label className={invalidFields.has("combinedStopLossPercent") ? "risk-input invalid" : "risk-input"}>
@@ -1014,9 +1214,11 @@ function RiskControl({ strategy, onChange, invalidFields }: {
             <strong>1.0&times;</strong>
             <small>Reference</small>
           </div>
+          {/* The figure that decides when both legs close, so it re-enters when
+              the stop percentage is edited rather than changing silently. */}
           <div className="risk-readout emphasis">
             <span>Exit trigger</span>
-            <strong>{exitMultiple.toFixed(1)}&times;</strong>
+            <strong><AnimatedNumber value={`${exitMultiple.toFixed(1)}×`} /></strong>
             <small>Combined premium</small>
           </div>
 
@@ -1059,6 +1261,7 @@ function RiskControl({ strategy, onChange, invalidFields }: {
           </p>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -1094,7 +1297,7 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
     : leg.strikeMode === "atm" ? "ATM" : `${leg.strikeMode.toUpperCase()} ${leg.strikeSteps}`;
 
   return (
-    <li className={hasIssue ? "leg invalid" : "leg"} data-open={open}>
+    <li className={hasIssue ? "leg t-acc invalid" : "leg t-acc"} data-open={open}>
       <div className="leg-summary">
         <button type="button" className="leg-toggle" onClick={onToggle} aria-expanded={open}>
           <span className="leg-index">{String(index + 1).padStart(2, "0")}</span>
@@ -1104,18 +1307,32 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
           <span className="leg-fact">{strikeLabel}</span>
           <span className="leg-fact">{formatExpiry(leg.expiry)}</span>
           <span className="leg-fact">{leg.orderType === "limit_order" ? `Limit ${leg.limitPrice ?? ""}` : "Market"}</span>
-          <ChevronDown className="leg-chevron" aria-hidden="true" />
+          {/* Flipped vertically rather than rotated: it passes through the same
+              flat line at the midpoint and animates in every browser. */}
+          <span className="leg-chevron t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
         </button>
         <div className="leg-tools">
-          <button type="button" onClick={() => onMove(-1)} disabled={index === 0} aria-label={`Move leg ${index + 1} up`}><ArrowUp /></button>
-          <button type="button" onClick={() => onMove(1)} disabled={index === total - 1} aria-label={`Move leg ${index + 1} down`}><ArrowDown /></button>
-          <button type="button" onClick={onDuplicate} disabled={total >= MAX_LEGS} aria-label={`Duplicate leg ${index + 1}`}><Copy /></button>
-          <button type="button" className="danger" onClick={onRemove} disabled={total === 1} aria-label={`Delete leg ${index + 1}`}><Trash2 /></button>
+          <Tooltip label="Move up">
+            <button type="button" onClick={() => onMove(-1)} disabled={index === 0} aria-label={`Move leg ${index + 1} up`}><ArrowUp /></button>
+          </Tooltip>
+          <Tooltip label="Move down">
+            <button type="button" onClick={() => onMove(1)} disabled={index === total - 1} aria-label={`Move leg ${index + 1} down`}><ArrowDown /></button>
+          </Tooltip>
+          <Tooltip label="Duplicate leg">
+            <button type="button" onClick={onDuplicate} disabled={total >= MAX_LEGS} aria-label={`Duplicate leg ${index + 1}`}><Copy /></button>
+          </Tooltip>
+          <Tooltip label="Delete leg">
+            <button type="button" className="danger" onClick={onRemove} disabled={total === 1} aria-label={`Delete leg ${index + 1}`}><Trash2 /></button>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="disclosure" aria-hidden={!open}>
-        <div className="disclosure-inner" inert={open ? undefined : true}>
+      {/* Height animates through `grid-template-rows: 0fr -> 1fr`, so a leg with
+          a limit price field open animates as cleanly as one without and nothing
+          has to be measured. The padding stays on the inner element: on a 0fr
+          track it would leave a residual strip and the row would never close. */}
+      <div className="t-acc-panel" aria-hidden={!open}>
+        <div className="t-acc-panel-inner" inert={open ? undefined : true}>
           <div className="leg-body">
             <div className="leg-grid">
               <NumberField label="Lots" min={1} value={leg.lots} invalid={invalid("lots")} onChange={lots => onUpdate({ lots })} />
