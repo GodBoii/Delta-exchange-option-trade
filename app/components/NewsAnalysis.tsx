@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, History, Sparkles } from "lucide-react";
+import { AlertTriangle, ChevronDown, History, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ThinkingOrb } from "thinking-orbs";
 import type { ApiRequester } from "@/lib/api";
 import { titleCase } from "@/lib/format";
-import { InlineMessage, SectionHeading, StatusDot } from "@/app/components/ui";
+import {
+  HoverGroup, InlineMessage, SectionHeading, Shimmer, StatusDot, SwapText
+} from "@/app/components/ui";
 
 type SavedOutcome = {
   runId?: string | null;
@@ -169,7 +172,10 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
               onClick={() => void runAnalysis()}
               disabled={running || loadingSaved}
             >
-              <Sparkles aria-hidden="true" />{running ? "Running analysis" : "Run analysis"}
+              <Sparkles aria-hidden="true" />
+              {running
+                ? <Shimmer>Running analysis</Shimmer>
+                : <SwapText>Run analysis</SwapText>}
             </button>
           </>
         }
@@ -181,7 +187,10 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
             <span><History aria-hidden="true" />Sessions</span>
             <small>{sessions.length} saved</small>
           </header>
-          <div className="news-session-chips">
+          {/* A horizontal stack of sibling cards, so hovering one lifts it and
+              nudges its neighbours with a distance falloff. The return springs,
+              which is the one place hover-out is the richer half of the motion. */}
+          <HoverGroup className="news-session-chips">
             {sessions.map((session, index) => (
               <button
                 type="button"
@@ -197,7 +206,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
                 <small>{session.runCount} {session.runCount === 1 ? "run" : "runs"}</small>
               </button>
             ))}
-          </div>
+          </HoverGroup>
         </section>
       )}
 
@@ -213,7 +222,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
 
 function Report({ result }: { result: NewsAnalysisResponse }) {
   return (
-    <article className="news-report">
+    <article className="news-report t-reveal">
       <header className="news-report-meta">
         <div><small>Model</small><strong>{result.model}</strong></div>
         <div>
@@ -243,14 +252,7 @@ function EarlierOutcomes({ outcomes }: { outcomes: SavedOutcome[] }) {
       {outcomes.length > 0 && (
         <div className="news-history-list">
           {outcomes.map((outcome, index) => (
-            <details key={outcome.runId || index}>
-              <summary>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <time>{agentDateTime(outcome.createdAt)}</time>
-                <strong>{outcome.model}</strong>
-              </summary>
-              <MarkdownAnalysis>{outcome.analysis}</MarkdownAnalysis>
-            </details>
+            <OutcomeDisclosure key={outcome.runId || index} outcome={outcome} index={index} />
           ))}
         </div>
       )}
@@ -258,10 +260,47 @@ function EarlierOutcomes({ outcomes }: { outcomes: SavedOutcome[] }) {
   );
 }
 
+/**
+ * A stored analysis, collapsed.
+ *
+ * A real accordion rather than a native `details`, because each of these is
+ * several screens of Markdown: opening one should grow the row through
+ * `grid-template-rows: 0fr -> 1fr` instead of snapping the page height, and the
+ * chevron should flip rather than jump.
+ */
+function OutcomeDisclosure({ outcome, index }: { outcome: SavedOutcome; index: number }) {
+  const [open, setOpen] = useState(false);
+  const panelId = `news-outcome-${outcome.runId || index}`;
+
+  return (
+    <div className="news-history-item t-acc" data-open={open}>
+      <button
+        type="button"
+        className="news-history-head"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen(value => !value)}
+      >
+        <span>{String(index + 1).padStart(2, "0")}</span>
+        <time>{agentDateTime(outcome.createdAt)}</time>
+        <strong>{outcome.model}</strong>
+        <span className="t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
+      </button>
+      <div className="t-acc-panel" id={panelId} aria-hidden={!open}>
+        <div className="t-acc-panel-inner" inert={open ? undefined : true}>
+          <MarkdownAnalysis>{outcome.analysis}</MarkdownAnalysis>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoadingState() {
   return (
     <section className="news-status-panel" aria-label="Loading saved agent output">
-      <Sparkles aria-hidden="true" />
+      <span className="news-orb">
+        <ThinkingOrb state="working" size={64} theme="dark" aria-label="Loading the saved analysis" />
+      </span>
       <div className="news-skeleton" aria-hidden="true">
         <i className="skeleton" /><i className="skeleton" /><i className="skeleton" />
       </div>
@@ -269,10 +308,20 @@ function LoadingState() {
   );
 }
 
+/**
+ * The agent's activity state.
+ *
+ * A run takes one to three minutes, so the indicator states which verb the agent
+ * is on — searching sources — rather than a spinner that only says "busy". This
+ * is a semantic readout of what the system is actually doing, which is the only
+ * reason an orb belongs here at all.
+ */
 function RunningState() {
   return (
     <section className="news-status-panel" aria-label="News agent is running">
-      <Sparkles aria-hidden="true" />
+      <span className="news-orb">
+        <ThinkingOrb state="searching" size={64} theme="dark" aria-label="Collecting and corroborating market evidence" />
+      </span>
       <div>
         <small>Agno research session</small>
         <h2>Collecting and corroborating market evidence.</h2>
@@ -280,7 +329,9 @@ function RunningState() {
           The agent is searching current sources, assessing BTC transmission channels, and writing
           its analysis. Runs typically take one to three minutes.
         </p>
-        <span className="news-progress"><i aria-hidden="true" />Analysis in progress</span>
+        <span className="news-progress">
+          <i aria-hidden="true" /><Shimmer>Analysis in progress</Shimmer>
+        </span>
       </div>
     </section>
   );
@@ -288,7 +339,7 @@ function RunningState() {
 
 function IdleState({ onRun }: { onRun: () => void }) {
   return (
-    <section className="news-status-panel">
+    <section className="news-status-panel t-reveal">
       <History aria-hidden="true" />
       <div>
         <small>No saved output</small>
