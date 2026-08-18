@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, RefreshCw, WifiOff } from "lucide-react";
-import { SectionHeading } from "@/app/components/ui";
+import {
+  AnimatedNumber, SectionHeading, Shimmer, SwapText, useSlidingPill
+} from "@/app/components/ui";
 import {
   bookPrice, compact, currencyCompact, humanize, money, price, signedCurrencyCompact, signedMoney,
   signedPercent
@@ -228,6 +230,7 @@ export default function BtcMarketChart() {
   const [feedError, setFeedError] = useState("");
   const intervalRef = useRef(interval);
   const loadRequestRef = useRef(0);
+  const { barRef: intervalBar, pill: intervalPill } = useSlidingPill(interval, '[aria-pressed="true"]');
 
   useEffect(() => { intervalRef.current = interval; }, [interval]);
 
@@ -354,7 +357,11 @@ export default function BtcMarketChart() {
           <div><strong>BTCUSDT</strong><small>Bitcoin / Tether · Spot analysis feed</small></div>
           <span className="market-source">BINANCE</span>
         </div>
-        <div className="market-intervals" aria-label="Chart interval">
+        {/* A small set of mutually exclusive options with a moving highlight,
+            which is exactly what the sliding-pill recipe is for: the control
+            shows the move between timeframes, not just the destination. */}
+        <div className="market-intervals" aria-label="Chart interval" ref={intervalBar}>
+          {intervalPill}
           {intervals.map(item => <button
             key={item.value}
             aria-pressed={interval === item.value}
@@ -366,11 +373,18 @@ export default function BtcMarketChart() {
             }}
           >{item.label}</button>)}
         </div>
-        <div className={`market-feed-state${feedState !== "live" ? " stale" : ""}`}><i />{feedLabel(feedState)}</div>
+        {/* The feed state changes in place, so a drop to reconnecting reads as
+            one status changing rather than two unrelated words. */}
+        <div className={`market-feed-state${feedState !== "live" ? " stale" : ""}`}>
+          <i /><SwapText>{feedLabel(feedState)}</SwapText>
+        </div>
       </header>
 
       {data && <div className="market-stats">
-        <div className="market-last-price"><small>BTCUSDT · SPOT</small><strong>{money(data.ticker.lastPrice)}</strong><span className={positive ? "up" : "down"}>{positive ? "+" : ""}{data.ticker.priceChange.toLocaleString(undefined, { maximumFractionDigits: 1 })} ({positive ? "+" : ""}{data.ticker.priceChangePercent.toFixed(2)}%)</span></div>
+        {/* The last trade arrives over a websocket and can sit unchanged for
+            seconds at a time, so each update re-enters with a blurred slide.
+            Without it a price tick is indistinguishable from a static number. */}
+        <div className="market-last-price"><small>BTCUSDT · SPOT</small><strong><AnimatedNumber value={money(data.ticker.lastPrice)} minReplayMs={700} /></strong><span className={positive ? "up" : "down"}>{positive ? "+" : ""}{data.ticker.priceChange.toLocaleString(undefined, { maximumFractionDigits: 1 })} ({positive ? "+" : ""}{data.ticker.priceChangePercent.toFixed(2)}%)</span></div>
         <MarketStat label="24h high" value={money(data.ticker.highPrice)} />
         <MarketStat label="24h low" value={money(data.ticker.lowPrice)} />
         <MarketStat label="24h volume" value={`${compact(data.ticker.baseVolume)} BTC`} />
@@ -836,7 +850,7 @@ function ContextMetric({ label, value }: { label: string; value: string }) {
 }
 
 function ChartLoading() {
-  return <div className="chart-loading"><BarChart3 /><span>Loading BTCUSDT candles…</span><i /></div>;
+  return <div className="chart-loading"><BarChart3 /><span><Shimmer>Loading BTCUSDT candles</Shimmer></span><i /></div>;
 }
 
 function ChartError({ message, onRetry }: { message: string; onRetry: () => void }) {
