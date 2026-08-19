@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    Trade Cognition â€” design system
    --------------------------------------------------------------------------
    One pass, one source of truth. Every value below comes from the token layer;
@@ -20,26 +20,26 @@
   color-scheme: dark;
 
   /* Surfaces. Each step is a deliberate elevation used for nesting depth. */
-  --canvas: #08090b;
-  --surface-1: #0d0f12;
-  --surface-2: #12151a;
-  --surface-3: #171b21;
-  --surface-4: #1e232a;
+  --canvas: #000000;
+  --surface-1: #0a0a0a;
+  --surface-2: #111111;
+  --surface-3: #181818;
+  --surface-4: #1f1f1f;
 
   /* Hairlines. `strong` is reserved for interactive boundaries. */
-  --line: #1f242b;
-  --line-strong: #2c333d;
+  --line: #1e1e1e;
+  --line-strong: #2d2d2d;
 
   /* Text ramp: primary reading, secondary support, tertiary metadata. */
-  --text-1: #e9edf1;
-  --text-2: #a3adb9;
-  --text-3: #6f7a87;
+  --text-1: #eaeaea;
+  --text-2: #a0a0a0;
+  --text-3: #666666;
 
-  /* Semantics. Blue means interactive, green means long, red means short.
+  /* Semantics. Amber means interactive, green means long, red means short.
      No other hue carries meaning anywhere in the interface. */
-  --accent: #82a9f0;
-  --accent-strong: #a5c3fb;
-  --accent-soft: rgb(130 169 240 / 14%);
+  --accent: #d4a244;
+  --accent-strong: #eabd60;
+  --accent-soft: rgb(212 162 68 / 14%);
   --long: #45bf9a;
   --long-soft: rgb(69 191 154 / 14%);
   --short: #e5695f;
@@ -140,14 +140,14 @@
   --edge-lit: rgb(255 255 255 / 7%);
   --edge-lit-strong: rgb(255 255 255 / 11%);
   --inset-lit: inset 0 1px 0 var(--edge-lit);
-  --glow-accent: 0 0 0 1px rgb(130 169 240 / 24%), 0 10px 34px -12px rgb(130 169 240 / 34%);
+  --glow-accent: 0 0 0 1px rgb(212 162 68 / 24%), 0 10px 34px -12px rgb(212 162 68 / 34%);
   --glow-short: 0 0 0 1px rgb(229 105 95 / 26%), 0 10px 34px -12px rgb(229 105 95 / 30%);
   --gradient-primary: linear-gradient(180deg, #fff, var(--text-1));
   --gradient-accent: linear-gradient(135deg, var(--accent-strong), var(--accent));
   --gradient-raised: linear-gradient(180deg, rgb(255 255 255 / 3.5%), rgb(255 255 255 / 0%) 42%);
 
   /* Ambient blooms, reused by every full-height surface. */
-  --bloom-accent: radial-gradient(circle at 12% -8%, rgb(130 169 240 / 9%), transparent 34%);
+  --bloom-accent: radial-gradient(circle at 12% -8%, rgb(212 162 68 / 9%), transparent 34%);
   --bloom-long: radial-gradient(circle at 92% 2%, rgb(69 191 154 / 5%), transparent 26%);
 }
 
@@ -1887,7 +1887,7 @@ time,
 
 .button.secondary:hover:not(:disabled) {
   background-color: var(--surface-4);
-  border-color: #3a424d;
+  border-color: #363636;
   box-shadow: var(--inset-lit), var(--shadow-1);
 }
 
@@ -1934,7 +1934,7 @@ time,
   height: 20px;
   border-radius: var(--r-pill);
   background: #fff;
-  box-shadow: inset 0 0 0 1px #d8dee5;
+  box-shadow: inset 0 0 0 1px #d0d0d0;
   color: #4285f4;
   font-weight: 700;
 }
@@ -2115,7 +2115,7 @@ time,
 
 @keyframes status-breathe {
   0%, 100% { box-shadow: 0 0 0 2px var(--accent-soft); }
-  50% { box-shadow: 0 0 0 5px rgb(130 169 240 / 6%); }
+  50% { box-shadow: 0 0 0 5px rgb(212 162 68 / 6%); }
 }
 
 .status-dot.tone-positive.is-live { animation-name: status-breathe-positive; }
@@ -2160,7 +2160,7 @@ time,
 .t-badge.tone-negative .t-badge-dot { background: var(--short); }
 .t-badge.tone-warning .t-badge-dot { background: var(--warn); }
 
-.status-chip.tone-active { border-color: rgb(130 169 240 / 35%); background: var(--accent-soft); color: var(--accent-strong); }
+.status-chip.tone-active { border-color: rgb(212 162 68 / 35%); background: var(--accent-soft); color: var(--accent-strong); }
 .status-chip.tone-positive { border-color: rgb(69 191 154 / 32%); background: var(--long-soft); color: var(--long); }
 .status-chip.tone-negative { border-color: rgb(229 105 95 / 34%); background: var(--short-soft); color: #ffb3ac; }
 .status-chip.tone-warning { border-color: rgb(217 164 65 / 32%); background: var(--warn-soft); color: var(--warn); }
@@ -2223,7 +2223,7 @@ time,
 .inline-message.tone-ok { border-color: rgb(69 191 154 / 30%); background: var(--long-soft); color: #a9e4cf; }
 .inline-message.tone-error { border-color: rgb(229 105 95 / 32%); background: var(--short-soft); color: #ffb3ac; }
 .inline-message.tone-warning { border-color: rgb(217 164 65 / 30%); background: var(--warn-soft); color: #e6c893; }
-.inline-message.tone-info { border-color: rgb(130 169 240 / 30%); background: var(--accent-soft); color: var(--accent-strong); }
+.inline-message.tone-info { border-color: rgb(212 162 68 / 30%); background: var(--accent-soft); color: var(--accent-strong); }
 
 .callout {
   display: flex;
@@ -2637,7 +2637,7 @@ time,
   transition: background-color var(--dur) ease;
 }
 
-.toggle.on { border-color: rgb(130 169 240 / 40%); color: var(--text-1); }
+.toggle.on { border-color: rgb(212 162 68 / 40%); color: var(--text-1); }
 .toggle.on > i { background: var(--accent-soft); }
 .toggle.on .t-toggle-thumb { background: var(--accent); }
 
@@ -3076,7 +3076,7 @@ time,
   height: 0;
   border-radius: var(--r-pill);
   background: var(--accent);
-  box-shadow: 0 0 10px 0 rgb(130 169 240 / 45%);
+  box-shadow: 0 0 10px 0 rgb(212 162 68 / 45%);
   pointer-events: none;
   transition:
     transform var(--tabs-dur) var(--tabs-ease),
@@ -3455,7 +3455,7 @@ time,
 .entry-shell {
   min-height: 100dvh;
   background:
-    radial-gradient(circle at 18% 28%, rgb(130 169 240 / 9%), transparent 34%),
+    radial-gradient(circle at 18% 28%, rgb(212 162 68 / 9%), transparent 34%),
     radial-gradient(circle at 88% 8%, rgb(69 191 154 / 5%), transparent 28%),
     var(--canvas);
 }
@@ -5593,7 +5593,7 @@ time,
 .news-session-chips button:hover:not(:disabled) { border-color: var(--line-strong); }
 
 .news-session-chips button.active {
-  border-color: rgb(130 169 240 / 45%);
+  border-color: rgb(212 162 68 / 45%);
   background: var(--accent-soft);
 }
 
@@ -5710,7 +5710,7 @@ time,
 
 .news-markdown a {
   color: var(--accent);
-  text-decoration-color: rgb(130 169 240 / 40%);
+  text-decoration-color: rgb(212 162 68 / 40%);
   text-underline-offset: 3px;
 }
 
