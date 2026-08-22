@@ -330,7 +330,7 @@ def _run_analysis(body: NewsAnalysisRequest, trace_id: str = "untracked") -> dic
         )
         raise ServiceError(
             502,
-            "The news agent could not complete the analysis. Check the News Analyzer logs for details.",
+            "The news analysis could not be completed. Please try again.",
             "news_agent_failed",
         ) from exc
     finally:
@@ -449,11 +449,11 @@ async def list_news_sessions(userId: UserQuery) -> dict[str, Any]:
 @app.post("/v1/analyze")
 async def analyze_news(body: NewsAnalysisRequest, request: Request) -> dict[str, Any]:
     if not settings.openrouter_api_key:
-        raise ServiceError(503, "The news agent API key is not configured", "news_agent_not_configured")
+        raise ServiceError(503, "News analysis is temporarily unavailable", "news_agent_not_configured")
     if not settings.supabase_db_url:
         raise ServiceError(
             503,
-            "SUPABASE_DB_URL is not configured for News Analyzer",
+            "News analysis is temporarily unavailable",
             "news_database_not_configured",
         )
     return await asyncio.to_thread(_run_analysis, body, request.state.trace_id)
