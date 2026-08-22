@@ -3666,6 +3666,35 @@ time,
   font-size: var(--t-xs);
 }
 
+.auth-text-button {
+  justify-self: end;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.auth-text-button:hover { color: var(--text-1); }
+
+.auth-text-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--r-sm);
+}
+
+.auth-text-button--back {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.auth-text-button--back svg { width: 15px; height: 15px; }
+
 /* --------------------------------------------------------------------------
    14. Strategy builder
    -------------------------------------------------------------------------- */
