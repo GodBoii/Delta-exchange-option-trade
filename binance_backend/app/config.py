@@ -17,7 +17,12 @@ class Settings(BaseSettings):
     market_cache_seconds: float = Field(default=2.0, ge=0.5, le=60)
     market_broadcast_seconds: float = Field(default=0.25, ge=0.1, le=2)
     cvd_window_seconds: int = Field(default=900, ge=60, le=86_400)
-    frontend_origins: str = "http://localhost:3000,https://delta-exchange-option-trade.vercel.app"
+    frontend_origins: str = (
+        "http://localhost:3000,"
+        "https://delta-exchange-option-trade.vercel.app,"
+        "https://tradecognition.online,"
+        "https://www.tradecognition.online"
+    )
     frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
     log_level: str = "INFO"
 
