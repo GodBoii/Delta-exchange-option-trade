@@ -69,13 +69,23 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   const activeItem = groups.flatMap(group => group.items).find(item => item.id === tab);
   const navRef = useRef<HTMLElement>(null);
   const railRef = useRef<HTMLSpanElement>(null);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
+  const navCloseRef = useRef<HTMLButtonElement>(null);
   const layoutKey = availableTabs.join(",");
 
   useEffect(() => {
-    if (!navOpen) return;
+    if (!navOpen || !window.matchMedia("(max-width: 960px)").matches) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => navCloseRef.current?.focus());
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setNavOpen(false); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+      navToggleRef.current?.focus();
+    };
   }, [navOpen]);
 
   /**
@@ -125,10 +135,16 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
     <div className="shell">
       <a className="skip-link" href="#workspace">Skip to main content</a>
 
-      <aside className="sidebar" data-open={navOpen} aria-label="Dashboard sections">
+      <aside
+        className="sidebar"
+        data-open={navOpen}
+        aria-label="Dashboard sections"
+        aria-modal={navOpen ? true : undefined}
+        role={navOpen ? "dialog" : undefined}
+      >
         <div className="sidebar-head">
           <Brand />
-          <button type="button" className="icon-button sidebar-close" onClick={() => setNavOpen(false)} aria-label="Close navigation">
+          <button ref={navCloseRef} type="button" className="icon-button sidebar-close" onClick={() => setNavOpen(false)} aria-label="Close navigation">
             <X />
           </button>
         </div>
@@ -184,9 +200,10 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
 
       {navOpen && <button type="button" className="sidebar-scrim" onClick={() => setNavOpen(false)} aria-label="Close navigation" />}
 
-      <div className="shell-body">
+      <div className="shell-body" inert={navOpen ? true : undefined}>
         <header className="context-bar">
           <button
+            ref={navToggleRef}
             type="button"
             className="icon-button nav-toggle"
             onClick={() => setNavOpen(value => !value)}
