@@ -76,6 +76,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   useEffect(() => {
     if (!navOpen || !window.matchMedia("(max-width: 960px)").matches) return;
     const previousOverflow = document.body.style.overflow;
+    const navToggle = navToggleRef.current;
     document.body.style.overflow = "hidden";
     const focusFrame = window.requestAnimationFrame(() => navCloseRef.current?.focus());
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setNavOpen(false); };
@@ -84,7 +85,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
       window.cancelAnimationFrame(focusFrame);
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
-      navToggleRef.current?.focus();
+      navToggle?.focus();
     };
   }, [navOpen]);
 
