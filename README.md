@@ -300,3 +300,5 @@ docker compose up -d
 - Use a dedicated Delta trading key with only required permissions and the backend IP allowlisted.
 - Keep the server clock synchronized; Delta rejects stale request signatures.
 - Configure TLS, container restart policies, health monitoring, centralized logs, and alerts before unattended live trading.
+
+Prajwal Ghadge
