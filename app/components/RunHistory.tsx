@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, AlertTriangle, Ban, CircleStop, Copy, Info, RefreshCw, Trash2
+  Activity, AlertTriangle, Ban, CircleStop, Info, RefreshCw, Trash2
 } from "lucide-react";
 import { requestJson } from "@/lib/api";
 import {
@@ -47,7 +47,7 @@ const ACTION_COPY: Record<ActionKind, {
   delete: {
     title: "Delete this run from history?",
     confirm: "Delete run",
-    describe: name => `${name} and its execution record — orders, fills, slippage and settlement — will be permanently removed from Supabase. Delta positions are not affected. This cannot be undone.`
+    describe: name => `${name} and its order, fill, slippage, and settlement history will be permanently deleted. Delta positions are not affected. This cannot be undone.`
   }
 };
 
@@ -125,15 +125,6 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   const needsAttention = counts.attention ?? 0;
   const { barRef: filterBar, pill: filterPill } = useSlidingPill(filter, '[aria-pressed="true"]');
 
-  async function copyRunId(run: StrategyRun) {
-    try {
-      await navigator.clipboard.writeText(run.id);
-      onNotice({ tone: "ok", text: "Run identifier copied." });
-    } catch {
-      onNotice({ tone: "warning", text: `Clipboard unavailable. Run identifier: ${run.id}` });
-    }
-  }
-
   async function runAction() {
     if (!action || busy) return;
     const { run, kind } = action;
@@ -144,7 +135,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
         onNotice({ tone: "ok", text: `${run.name} cancelled before entry.` });
       } else if (kind === "delete") {
         await requestJson(`/api/strategies/${run.id}/record`, { method: "DELETE" });
-        onNotice({ tone: "ok", text: `${run.name} removed from run history.` });
+        onNotice({ tone: "ok", text: `${run.name} removed from strategy history.` });
         setDetail(current => (current?.id === run.id ? null : current));
       } else {
         await requestJson(`/api/strategies/${run.id}/exit`, { method: "POST", body: JSON.stringify({ confirm: true }) });
@@ -164,9 +155,9 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   return (
     <div className="runs">
       <SectionHeading
-        eyebrow="Strategy operations"
-        title="Run history"
-        description="Every schedule creates a separate immutable run. Use the row menu to read the full record, cancel before entry, exit while live, or delete a settled run."
+        eyebrow="Trading activity"
+        title="Strategy history"
+        description="Review scheduled and completed strategies. You can cancel before entry, exit an active strategy, or delete a finished record."
         actions={
           <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
             <IconSwap showB={loading} a={<RefreshCw />} b={<RefreshCw className="spin" />} />
@@ -206,7 +197,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
         </div>
 
         {loading && !runs.length ? (
-          <TableSkeleton label="run history" rows={6} />
+          <TableSkeleton label="strategy history" rows={6} />
         ) : visible.length ? (
           <div className="table-scroll t-reveal">
             <table className="data-table runs-table">
@@ -229,7 +220,6 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
                     run={run}
                     onInspect={() => setDetail(run)}
                     onAction={kind => setAction({ run, kind })}
-                    onCopyId={() => void copyRunId(run)}
                   />
                 ))}
               </tbody>
@@ -270,11 +260,10 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   );
 }
 
-function RunRow({ run, onInspect, onAction, onCopyId }: {
+function RunRow({ run, onInspect, onAction }: {
   run: StrategyRun;
   onInspect: () => void;
   onAction: (kind: ActionKind) => void;
-  onCopyId: () => void;
 }) {
   const canCancel = ["draft", "scheduled"].includes(run.status);
   const canExit = run.status === "active" || (run.status === "attention" && Boolean(run.entryExecutedAt));
@@ -282,7 +271,7 @@ function RunRow({ run, onInspect, onAction, onCopyId }: {
   const items: RowMenuItem[] = [
     {
       id: "information",
-      label: "Information",
+      label: "View details",
       hint: "Timing, criteria, fills and P&L",
       icon: <Info />,
       onSelect: onInspect
@@ -303,13 +292,6 @@ function RunRow({ run, onInspect, onAction, onCopyId }: {
       onSelect: () => onAction("cancel")
     }] : []),
     {
-      id: "copy",
-      label: "Copy run ID",
-      hint: run.id.slice(0, 8),
-      icon: <Copy />,
-      onSelect: onCopyId
-    },
-    {
       id: "delete",
       label: "Delete run",
       hint: canDeleteRun(run) ? "Erase this run and its records" : "Only once the run has settled",
@@ -325,10 +307,7 @@ function RunRow({ run, onInspect, onAction, onCopyId }: {
       <th scope="row">
         <button type="button" className="run-name" onClick={onInspect}>
           <StatusDot tone={statusTone(run.status)} />
-          <span>
-            <strong>{run.name}</strong>
-            <small>{run.id.slice(0, 8)}</small>
-          </span>
+          <span><strong>{run.name}</strong></span>
         </button>
       </th>
       <td><StatusChip tone={statusTone(run.status)}>{titleCase(run.status)}</StatusChip></td>
@@ -362,7 +341,7 @@ function readable(value: unknown): string {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return /^\d{4}-\d{2}-\d{2}T/.test(value) ? formatTimestamp(value) : titleCase(value);
-  return JSON.stringify(value);
+  return EM_DASH;
 }
 
 function notional(order: RunOrder) {
@@ -411,7 +390,6 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
   const canExit = status === "active" || (status === "attention" && Boolean(record?.entryExecutedAt ?? run.entryExecutedAt));
 
   const timing: DetailItem[] = [
-    { label: "Run identifier", value: run.id, mono: true },
     { label: "Created", value: formatTimestamp(record?.createdAt ?? run.createdAt) },
     { label: "Entry scheduled", value: formatTimestamp(record?.entryAt ?? run.entryAt) },
     { label: "Entry executed", value: record?.entryExecutedAt ? formatTimestamp(record.entryExecutedAt) : "Not executed" },
@@ -424,8 +402,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
         ? formatDuration(record.entryExecutedAt, record.exitExecutedAt)
         : record?.entryExecutedAt ? "Still open" : EM_DASH
     },
-    { label: "Record updated", value: formatTimestamp(record?.updatedAt) },
-    { label: "Saved definition", value: record?.savedStrategyId ?? "Not linked", mono: Boolean(record?.savedStrategyId) }
+    { label: "Record updated", value: formatTimestamp(record?.updatedAt) }
   ];
 
   const criteria: DetailItem[] = [
@@ -451,7 +428,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
   return (
     <Dialog
       title={record?.name ?? run.name}
-      subtitle={<>Run {run.id.slice(0, 8)} · {orders.length} recorded {orders.length === 1 ? "order" : "orders"}</>}
+      subtitle={<>{orders.length} recorded {orders.length === 1 ? "order" : "orders"}</>}
       aside={<StatusChip tone={statusTone(status)}>{titleCase(status)}</StatusChip>}
       onClose={onClose}
       footer={
@@ -481,8 +458,8 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
       ) : (
         <>
           {record?.lastError && (
-            <DetailSection title="Recorded error">
-              <p className="detail-error">{record.lastError}</p>
+            <DetailSection title="What went wrong">
+              <p className="detail-error">{errorMessage(new Error(record.lastError))}</p>
             </DetailSection>
           )}
 
@@ -565,9 +542,9 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                     </tr>
                   </thead>
                   <tbody>
-                    {legs.map(leg => (
+                    {legs.map((leg, index) => (
                       <tr key={leg.id}>
-                        <th scope="row" className="mono">{leg.id}</th>
+                        <th scope="row">Leg {index + 1}</th>
                         <td>{titleCase(leg.position)} {titleCase(leg.optionType)}</td>
                         <td>
                           {leg.strikeMode === "exact"
@@ -621,7 +598,6 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                           <th scope="row" className="mono">
                             <span className="cell-stack">
                               <span>{order.productSymbol ?? EM_DASH}</span>
-                              <small>{order.legId}</small>
                             </span>
                           </th>
                           <td>{titleCase(order.side ?? "")}</td>
@@ -650,7 +626,6 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                           <td>
                             <span className="cell-stack">
                               <span>{formatDateTime(order.createdAt)}</span>
-                              <small className="mono">{order.deltaOrderId || order.clientOrderId}</small>
                             </span>
                           </td>
                         </tr>
@@ -663,7 +638,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
           )}
 
           {Boolean(record?.executions.length) && (
-            <DetailSection title="Execution attempts">
+            <DetailSection title="Order activity">
               <ul className="detail-timeline">
                 {record?.executions.map(item => (
                   <li key={item.id}>
@@ -674,7 +649,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                         Started {formatTimestamp(item.startedAt)}
                         {item.completedAt ? ` · completed ${formatTimestamp(item.completedAt)}` : " · not completed"}
                       </small>
-                      {item.error && <p className="detail-error">{item.error}</p>}
+                      {item.error && <p className="detail-error">{errorMessage(new Error(item.error))}</p>}
                     </div>
                   </li>
                 ))}
@@ -695,18 +670,6 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
             </DetailSection>
           )}
 
-          <DetailSection title="Raw metadata">
-            <details className="detail-raw">
-              <summary>Definition, risk state and settlement JSON</summary>
-              <pre>{JSON.stringify({ definition, riskState, settlement }, null, 2)}</pre>
-            </details>
-            {orders.map(order => (
-              <details className="detail-raw" key={`raw-${order.id}`}>
-                <summary>{titleCase(order.kind ?? "entry")} order response · {order.productSymbol}</summary>
-                <pre>{JSON.stringify(order.response, null, 2)}</pre>
-              </details>
-            ))}
-          </DetailSection>
         </>
       )}
     </Dialog>
