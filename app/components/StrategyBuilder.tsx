@@ -288,12 +288,12 @@ function structureModel(legs: StrategyLeg[]): StructureModel {
 type LibraryState = "loading" | "local" | "unsaved" | "saving" | "saved" | "error";
 
 const LIBRARY_COPY: Record<LibraryState, { label: string; tone: "active" | "warning" | "negative" | "neutral" }> = {
-  loading: { label: "Loading library", tone: "neutral" },
-  local: { label: "Local draft only", tone: "warning" },
+  loading: { label: "Loading saved strategies", tone: "neutral" },
+  local: { label: "Unsaved draft", tone: "warning" },
   unsaved: { label: "Unsaved changes", tone: "warning" },
   saving: { label: "Saving", tone: "warning" },
   saved: { label: "Saved", tone: "active" },
-  error: { label: "Library error", tone: "negative" }
+  error: { label: "Saved strategies unavailable", tone: "negative" }
 };
 
 export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
@@ -479,7 +479,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       } catch (loadError) {
         if (cancelled) return;
         setLibraryState("error");
-        onNotice({ tone: "error", text: `Saved strategies are unavailable. Run migration 003, then retry: ${errorMessage(loadError)}` });
+        onNotice({ tone: "error", text: errorMessage(loadError, "Saved strategies are temporarily unavailable. Please try again.") });
       } finally {
         if (!cancelled) setLibraryReady(true);
       }
@@ -625,7 +625,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       setConfirmDelete(false);
       setShowIssues(false);
       setError("");
-      onNotice({ tone: "ok", text: "Saved strategy deleted. Its run history was not changed." });
+      onNotice({ tone: "ok", text: "Saved strategy deleted. Its strategy history was not changed." });
     } catch (deleteError) {
       const message = `Could not delete the saved strategy: ${errorMessage(deleteError)}`;
       setLibraryState("error");
@@ -636,7 +636,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
 
   async function scheduleStrategy() {
     if (!liveEnabled) {
-      setError("Start the Docker backend before scheduling a live strategy.");
+      setError("Live trading is currently unavailable. Please try again shortly.");
       return;
     }
     if (issues.length) {
@@ -687,7 +687,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     anchor.download = `${strategy.name.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "delta-strategy"}.json`;
     anchor.click();
     URL.revokeObjectURL(href);
-    onNotice({ tone: "ok", text: "Strategy exported. Import this file from your local trading workspace." });
+    onNotice({ tone: "ok", text: "Strategy backup downloaded." });
   }
 
   async function importDraft(file?: File) {
@@ -706,7 +706,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       setExpandedLeg(imported.legs[0]?.id ?? null);
       setShowIssues(false);
       setError("");
-      onNotice({ tone: "ok", text: "Imported as a new local draft. Choose Save to add it to your library." });
+      onNotice({ tone: "ok", text: "Imported as a new draft. Choose Save to add it to your saved strategies." });
     } catch (importError) {
       onNotice({ tone: "error", text: errorMessage(importError) });
     } finally {
@@ -723,9 +723,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   return (
     <div className="builder">
       <SectionHeading
-        eyebrow="Strategy configuration"
+        eyebrow="Options strategy"
         title="Strategy builder"
-        description="Create reusable option structures, then hand a snapshot to the scheduler."
+        description="Build a reusable options strategy, then choose when it should enter and exit."
         actions={
           <>
             <button type="button" className="button ghost" onClick={() => importInput.current?.click()}>
@@ -739,7 +739,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               className="visually-hidden"
               type="file"
               accept="application/json,.json"
-              aria-label="Import a strategy JSON file"
+              aria-label="Import a strategy backup file"
               onChange={event => void importDraft(event.target.files?.[0])}
             />
           </>
@@ -751,8 +751,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           <Panel>
             <PanelHeader
               icon={<CircleDollarSign />}
-              title="Definition"
-              meta="Name and contract family"
+              title="Strategy details"
+              meta="Name, market, and strategy type"
             />
             <div className="grid-2">
               <Field label="Strategy name" hint="Names may be reused; every schedule is a separate run." invalid={invalidFields.has("name")}>
@@ -778,7 +778,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 options={[{ value: "BTCUSD", label: "BTCUSD" }, { value: "ETHUSD", label: "ETHUSD" }]}
               />
               <Segmented
-                label="Underlying price from"
+                label="Price source"
                 value={strategy.instrument.underlyingFrom}
                 onChange={value => setStrategy({
                   ...strategy,
@@ -795,7 +795,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 })}
                 options={[
                   { value: "intraday", label: "Intraday" },
-                  { value: "btst", label: "BTST" },
+                  { value: "btst", label: "BTST, overnight" },
                   { value: "positional", label: "Positional" }
                 ]}
               />
@@ -907,7 +907,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           <Panel>
             <PanelHeader
               icon={<FolderOpen />}
-              title="Library"
+              title="Saved strategies"
               meta={`${savedStrategies.length} saved ${savedStrategies.length === 1 ? "strategy" : "strategies"}`}
             />
             <Field label="Current strategy">
@@ -917,7 +917,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   disabled={busy}
                   onChange={event => void switchStrategy(event.target.value)}
                 >
-                  {!activeSavedId && <option value="">Unsaved local draft</option>}
+                  {!activeSavedId && <option value="">New unsaved strategy</option>}
                   {savedStrategies.map(item => (
                     <option key={item.id} value={item.id}>{item.name} · {formatDateTime(item.updatedAt)}</option>
                   ))}
@@ -929,7 +929,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             <p className={`library-state tone-${library.tone}`}>
               <StatusDot tone={library.tone} />
               <SwapText>{library.label}</SwapText>
-              <small>Browser recovery copy on</small>
+              <small>Draft recovery on</small>
             </p>
             <div className="button-row">
               <button
@@ -1023,16 +1023,15 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   {scheduling
                     ? <><LoaderCircle className="spin" aria-hidden="true" /><Shimmer>Scheduling</Shimmer></>
                     : scheduled
-                      ? <><SuccessCheck shown size={18} />Run scheduled</>
+                      ? <><SuccessCheck shown size={18} />Strategy scheduled</>
                       : liveEnabled
                         ? <><CalendarClock aria-hidden="true" />Schedule strategy</>
-                        : <><WifiOff aria-hidden="true" />Local backend required</>}
+                        : <><WifiOff aria-hidden="true" />Live trading unavailable</>}
                 </button>
               </BorderBeam>
             </div>
             <p className="fine-print">
-              Scheduling stores an immutable run. Orders are submitted by the backend at the entry
-              time, not from this browser.
+              Each schedule creates a separate record. Orders are submitted at the selected entry time.
             </p>
           </Panel>
         </aside>
@@ -1042,7 +1041,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
         <ConfirmModal
           tone="neutral"
           title="Create a new strategy?"
-          description="The current strategy is kept. A new short-straddle definition with fresh entry and exit times is added to your library."
+          description="The current strategy is kept. A new short-straddle strategy with fresh entry and exit times is added to your saved strategies."
           cancel="Keep editing"
           confirm="Create strategy"
           onClose={() => setConfirmNew(false)}
@@ -1357,7 +1356,7 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
                 />
               </Field>
               <Select
-                label="Strike criteria"
+                label="Strike selection"
                 value={leg.strikeMode}
                 onChange={value => onUpdate({ strikeMode: value as StrategyLeg["strikeMode"] })}
                 options={STRIKE_MODES}
@@ -1396,8 +1395,8 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
                     onChange={stopLoss => onUpdate({ stopLoss })}
                   />
                   <OptionalNumberField label="Trailing stop" value={leg.trailStop} onChange={trailStop => onUpdate({ trailStop })} />
-                  <NumberField label="Re-entry on target" min={0} max={10} value={leg.reentryOnTarget} onChange={reentryOnTarget => onUpdate({ reentryOnTarget })} />
-                  <NumberField label="Re-entry on stop" min={0} max={10} value={leg.reentryOnStop} onChange={reentryOnStop => onUpdate({ reentryOnStop })} />
+                  <NumberField label="Re-entries after target" min={0} max={10} value={leg.reentryOnTarget} onChange={reentryOnTarget => onUpdate({ reentryOnTarget })} />
+                  <NumberField label="Re-entries after stop" min={0} max={10} value={leg.reentryOnStop} onChange={reentryOnStop => onUpdate({ reentryOnStop })} />
                 </>
               ) : (
                 <p className="leg-note">
