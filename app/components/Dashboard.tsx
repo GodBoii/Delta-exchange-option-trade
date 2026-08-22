@@ -171,7 +171,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
               icon={<Wallet />}
               label={primary ? `${primary.asset} wallet balance` : "Wallet balance"}
               value={primary ? quantity(primary.balance, 4) : EM_DASH}
-              note={primary ? `${quantity(primary.available, 4)} available to trade` : "No funded asset returned"}
+              note={primary ? `${quantity(primary.available, 4)} available to trade` : "No funded asset found"}
             />
             <Tile
               icon={<Shield />}
@@ -528,7 +528,7 @@ function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
           </table>
         </div>
       ) : (
-        <EmptyState compact icon={<Wallet />} title="No funded assets" description="Delta returned no wallet with a balance." />
+        <EmptyState compact icon={<Wallet />} title="No funded assets" description="Your Delta account has no wallet balance to display." />
       )}
     </Panel>
   );
