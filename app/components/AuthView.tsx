@@ -163,12 +163,11 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
         {/* Stacked copy entering with rhythm: the eye lands on the eyebrow, then
             the headline, then the explanation, then the capability list. */}
         <section className={`entry-copy t-stagger${shown ? " is-shown" : ""}`}>
-          <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />Options strategy operations</p>
-          <h1 className="t-stagger-line t-stagger-line--2">Build once, schedule precisely, review every run.</h1>
+          <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />Delta options trading</p>
+          <h1 className="t-stagger-line t-stagger-line--2">Build, schedule, and track your options strategies.</h1>
           <p className="entry-lede t-stagger-line t-stagger-line--3">
-            A private workspace for Delta Exchange India option strategies. Configure multi-leg
-            structures, hand them to a server-side scheduler, and keep an auditable record of
-            what was submitted.
+            Plan multi-leg strategies for Delta Exchange India, choose entry and exit times, and
+            keep a clear record of every scheduled strategy.
           </p>
 
           <ul className="entry-capabilities t-stagger-line t-stagger-line--4">
@@ -183,14 +182,14 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
               <span aria-hidden="true"><CalendarClock /></span>
               <div>
                 <strong>Scheduled entry and exit</strong>
-                <p>Orders leave only at the configured time, from the backend, never the browser.</p>
+                <p>Orders are submitted only at the entry time you choose.</p>
               </div>
             </li>
             <li>
               <span aria-hidden="true"><ShieldCheck /></span>
               <div>
-                <strong>Credentials stay server-side</strong>
-                <p>The Delta API secret is held in Supabase Vault and never returns to the client.</p>
+                <strong>Protected credentials</strong>
+                <p>Your Delta API secret is encrypted and is never displayed after you connect.</p>
               </div>
             </li>
           </ul>
@@ -210,13 +209,13 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
               <span className="panel-icon" aria-hidden="true"><LockKeyhole /></span>
               <div>
                 <h2 id="auth-card-title">
-                  {mode === "sign-in" ? "Sign in" : mode === "sign-up" ? "Create your workspace" : "Reset your password"}
+                  {mode === "sign-in" ? "Sign in" : mode === "sign-up" ? "Create your account" : "Reset your password"}
                 </h2>
                 <p>
                   {mode === "sign-in"
-                    ? "Use the email and password for your workspace account."
+                    ? "Use the email and password for your Trade Cognition account."
                     : mode === "sign-up"
-                      ? "Accounts are managed by Supabase Auth."
+                      ? "Create an account to save and manage your strategies."
                       : "Enter your account email and we will send a secure reset link."}
                 </p>
               </div>
@@ -317,8 +316,8 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
             <p className="fine-print">
               <AlertTriangle aria-hidden="true" />
               {mode === "forgot-password"
-                ? "The reset link can be used only once and expires according to your Supabase Auth settings."
-                : "Signing in creates the workspace account only. Delta Exchange is connected separately, once, after authentication."}
+                ? "The reset link can be used once and expires after a limited time."
+                : "Signing in does not connect your Delta account. You will connect it separately after authentication."}
             </p>
           </section>
         </div>
