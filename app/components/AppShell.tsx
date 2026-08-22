@@ -10,7 +10,7 @@ import {
   Badge, Brand, IconSwap, StatusDot, SwapText, Tooltip, useDisclosure
 } from "@/app/components/ui";
 
-export type Tab = "builder" | "market" | "news" | "dashboard" | "runs";
+export type Tab = "connect" | "builder" | "market" | "news" | "dashboard" | "runs";
 
 type NavItem = { id: Tab; label: string; hint: string; icon: ReactNode };
 type NavGroup = { label: string; items: NavItem[] };
@@ -24,6 +24,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operations",
     items: [
+      { id: "connect", label: "Delta connection", hint: "Enable live execution", icon: <KeyRound /> },
       { id: "builder", label: "Strategy builder", hint: "Configure and schedule", icon: <Layers3 /> },
       { id: "runs", label: "Run history", hint: "Scheduled and live runs", icon: <Activity /> },
       { id: "dashboard", label: "Portfolio", hint: "Balances and positions", icon: <PieChart /> }
@@ -49,7 +50,7 @@ export type ConnectionState = {
 
 export function AppShell({ tab, availableTabs, connection, account, badges, onNavigate, onDisconnect, onSignOut, banner, children }: {
   tab: Tab;
-  /** Tabs that require the trading backend are hidden while it is unreachable. */
+  /** Tabs appear only when their backend and account prerequisites are met. */
   availableTabs: Tab[];
   connection: ConnectionState;
   account: { name: string; detail: string };

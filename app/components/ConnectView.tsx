@@ -18,10 +18,11 @@ import {
  * (no order is placed). Trading access is verified server-side before the
  * connection is stored.
  */
-export default function ConnectView({ user, onConnected, onSignOut }: {
+export default function ConnectView({ user, onConnected, onSignOut, embedded = false }: {
   user: AppUser;
   onConnected: (account: Account) => void;
   onSignOut: () => void;
+  embedded?: boolean;
 }) {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -63,14 +64,16 @@ export default function ConnectView({ user, onConnected, onSignOut }: {
   }
 
   return (
-    <div className="entry-shell">
-      <header className="entry-bar">
-        <Brand />
-        <div className="entry-bar-actions">
-          <span className="entry-user">{user.displayName || user.email}</span>
-          <button type="button" className="button ghost" onClick={onSignOut}>Sign out</button>
-        </div>
-      </header>
+    <div className={`entry-shell${embedded ? " entry-shell--embedded" : ""}`}>
+      {!embedded && (
+        <header className="entry-bar">
+          <Brand />
+          <div className="entry-bar-actions">
+            <span className="entry-user">{user.displayName || user.email}</span>
+            <button type="button" className="button ghost" onClick={onSignOut}>Sign out</button>
+          </div>
+        </header>
+      )}
 
       <div className="entry-grid">
         <section className={`entry-copy t-stagger${shown ? " is-shown" : ""}`}>

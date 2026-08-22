@@ -12,7 +12,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 export type ApiRequester = <T>(url: string, init?: RequestInit) => Promise<T>;
 
 const DEFAULT_PORTS = "8000,8585,8085,8011,8001";
-const PROBE_TIMEOUT_MS = 1_200;
+const PROBE_TIMEOUT_MS = 8_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 
 let resolvedOrigin: string | null = null;
@@ -40,6 +40,7 @@ function candidateOrigins() {
 async function discoverApiOrigin() {
   const candidates = candidateOrigins();
   if (!candidates.length) throw new Error("The trading backend is not configured for this website.");
+  const explicit = (process.env.NEXT_PUBLIC_API_URL ?? "").trim().replace(/\/$/, "");
 
   const probes = candidates.map(async origin => {
     const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), cache: "no-store" });
@@ -52,6 +53,7 @@ async function discoverApiOrigin() {
   try {
     return await Promise.any(probes);
   } catch {
+    if (explicit) throw new Error(`The configured trading backend at ${explicit} could not be reached.`);
     throw new Error("No local trading backend was found on the configured ports.");
   }
 }

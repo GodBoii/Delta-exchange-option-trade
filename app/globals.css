@@ -3477,6 +3477,18 @@ time,
 
 .entry-shell > * { position: relative; z-index: 1; }
 
+.entry-shell--embedded {
+  min-height: 0;
+  background: transparent;
+}
+
+.entry-shell--embedded::before { display: none; }
+
+.entry-shell--embedded .entry-grid {
+  min-height: 0;
+  padding: var(--s-4) 0 var(--s-8);
+}
+
 .entry-bar {
   display: flex;
   align-items: center;

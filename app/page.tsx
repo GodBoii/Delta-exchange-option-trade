@@ -35,7 +35,8 @@ const NewsAnalysis = dynamic(() => import("@/app/components/NewsAnalysis"), {
 type BackendStatus = "checking" | "online" | "offline";
 
 const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news"];
-const DESIGN_TABS: Tab[] = ["builder"];
+const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news"];
+const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
 /** Cheap enough to run alongside the run list without straining rate limits. */
 const ATTENTION_POLL_MS = 60_000;
@@ -96,6 +97,16 @@ export default function Home() {
   useEffect(() => { void loadSession(); }, [loadSession]);
 
   const connected = Boolean(account);
+  const availableTabs = connected
+    ? CONNECTED_TABS
+    : backendStatus === "online"
+      ? UNCONNECTED_TABS
+      : OFFLINE_TABS;
+
+  useEffect(() => {
+    if (availableTabs.includes(tab)) return;
+    setTab(backendStatus === "online" && !connected ? "connect" : "builder");
+  }, [availableTabs, backendStatus, connected, tab]);
 
   /**
    * Runs that did not complete cleanly are surfaced on the navigation itself, so
@@ -134,7 +145,7 @@ export default function Home() {
       await requestJson("/api/session", { method: "DELETE" });
       setAccount(null);
       setConfirmDisconnect(false);
-      setTab("builder");
+      setTab("connect");
       setNotice({ tone: "ok", text: "Delta Exchange disconnected. Your workspace account remains signed in." });
     } catch (error) {
       setNotice({ tone: "error", text: errorMessage(error) });
@@ -157,28 +168,16 @@ export default function Home() {
 
   if (!user) return <AuthView onAuthenticated={loadSession} />;
 
-  if (!account && backendStatus === "online") {
-    return (
-      <ConnectView
-        user={user}
-        onSignOut={signOut}
-        onConnected={next => {
-          setAccount(next);
-          setNotice({ tone: "ok", text: "Delta Exchange connected securely." });
-        }}
-      />
-    );
-  }
-
   const connection: ConnectionState = connected
     ? { label: "Delta connected", detail: "Live production venue", tone: "active" }
-    : { label: "Design mode", detail: "Trading backend offline", tone: "warning" };
-
+    : backendStatus === "online"
+      ? { label: "Delta not connected", detail: "Research is available", tone: "neutral" }
+      : { label: "Trading API unavailable", detail: "Public market remains available", tone: "warning" };
   return (
     <>
       <AppShell
         tab={tab}
-        availableTabs={connected ? CONNECTED_TABS : DESIGN_TABS}
+        availableTabs={availableTabs}
         connection={connection}
         account={{
           name: account?.accountName || user.displayName || "Workspace",
@@ -188,14 +187,22 @@ export default function Home() {
         onNavigate={setTab}
         onDisconnect={connected ? () => setConfirmDisconnect(true) : undefined}
         onSignOut={signOut}
-        banner={connected ? undefined : <OfflineBanner onRetry={loadSession} />}
+        banner={backendStatus === "offline" ? <OfflineBanner onRetry={loadSession} /> : undefined}
       >
         <WorkspaceBody
           tab={tab}
           connected={connected}
+          backendOnline={backendStatus === "online"}
+          user={user}
           userId={user.id}
           onNotice={setNotice}
           onAttention={setAttention}
+          onConnected={next => {
+            setAccount(next);
+            setTab("dashboard");
+            setNotice({ tone: "ok", text: "Delta Exchange connected securely." });
+          }}
+          onSignOut={signOut}
         />
       </AppShell>
 
@@ -230,23 +237,30 @@ export default function Home() {
  * arranged rather than swapped at random. `PageEnter` is keyed on the tab, so
  * React remounts the body and the animation restarts on every move.
  */
-function WorkspaceBody({ tab, connected, userId, onNotice, onAttention }: {
+function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, onAttention, onConnected, onSignOut }: {
   tab: Tab;
   connected: boolean;
+  backendOnline: boolean;
+  user: AppUser;
   userId: string;
   onNotice: (notice: Notice) => void;
   onAttention: (count: number) => void;
+  onConnected: (account: Account) => void;
+  onSignOut: () => void;
 }) {
   const direction = useTravelDirection(tab, TAB_ORDER);
 
   return (
     // The key is what remounts the body, which is what restarts the entrance.
     <PageEnter key={tab} direction={direction}>
+      {tab === "connect" && backendOnline && !connected && (
+        <ConnectView user={user} onConnected={onConnected} onSignOut={onSignOut} embedded />
+      )}
       {tab === "builder" && <StrategyBuilder userId={userId} onNotice={onNotice} liveEnabled={connected} />}
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
-      {tab === "market" && connected && <BtcMarketChart />}
-      {tab === "news" && connected && <NewsAnalysis request={requestJson} />}
+      {tab === "market" && <BtcMarketChart />}
+      {tab === "news" && backendOnline && <NewsAnalysis request={requestJson} />}
     </PageEnter>
   );
 }
@@ -296,7 +310,8 @@ function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
       <span>
         <strong>Trading backend unreachable — design mode.</strong>
         {" "}Configuration, the saved library, and JSON export stay available. Contract resolution,
-        scheduling, execution, portfolio, and research need the local Docker backend.
+        scheduling, execution, portfolio, run history, and news need the trading API. Public market
+        analysis remains available.
       </span>
       <button type="button" className="button secondary t-learn" onClick={() => void onRetry()}>
         <RefreshCw aria-hidden="true" />Retry<LearnMoreChevron />
