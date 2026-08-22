@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, ChevronDown, Info, MoreHorizontal, X } from "lucide-react";
@@ -29,7 +30,14 @@ export type NoticeHandler = (notice: Notice) => void;
 export function Brand({ subtitle = "Delta workspace" }: { subtitle?: string }) {
   return (
     <span className="brand">
-      <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
+      <Image
+        className="brand-mark"
+        src="/polycognition-mark.png"
+        width={32}
+        height={32}
+        alt=""
+        aria-hidden="true"
+      />
       <span className="brand-text">
         <strong>Trade Cognition</strong>
         <small>{subtitle}</small>
