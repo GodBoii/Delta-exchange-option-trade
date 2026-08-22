@@ -8,7 +8,7 @@ services:
       - .env.local
       - ./backend/.env
     environment:
-      FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
+      FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app,https://tradecognition.online,https://www.tradecognition.online
       FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
@@ -61,7 +61,7 @@ services:
       MARKET_BROADCAST_SECONDS: ${MARKET_BROADCAST_SECONDS:-0.25}
       WEBSOCKETS_MAX_LINE_LENGTH: ${WEBSOCKETS_MAX_LINE_LENGTH:-32768}
       CVD_WINDOW_SECONDS: ${CVD_WINDOW_SECONDS:-900}
-      FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app
+      FRONTEND_ORIGINS: http://localhost:3000,https://delta-exchange-option-trade.vercel.app,https://tradecognition.online,https://www.tradecognition.online
       FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
     ports:
       - "${BINANCE_PORT:-8001}:8001"
