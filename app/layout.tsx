@@ -28,6 +28,11 @@ export const metadata: Metadata = {
   },
   description: "Configure, schedule, and review Delta Exchange India option strategies, with live market and news analysis.",
   applicationName: "Trade Cognition",
+  icons: {
+    icon: [{ url: "/icon.png", type: "image/png", sizes: "256x256" }],
+    shortcut: "/icon.png",
+    apple: [{ url: "/icon.png", type: "image/png", sizes: "256x256" }]
+  },
   robots: { index: false, follow: false }
 };
 
