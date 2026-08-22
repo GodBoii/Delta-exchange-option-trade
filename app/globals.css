@@ -1777,24 +1777,11 @@ time,
 }
 
 .brand-mark {
-  position: relative;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   flex: none;
-  transform: rotate(30deg);
+  object-fit: contain;
 }
-
-.brand-mark i {
-  position: absolute;
-  display: block;
-  width: 16px;
-  height: 9px;
-  transform: skewX(-22deg);
-}
-
-.brand-mark i:nth-child(1) { inset: 0 auto auto 1px; background: var(--text-1); }
-.brand-mark i:nth-child(2) { inset: 9px 0 auto auto; background: var(--accent); }
-.brand-mark i:nth-child(3) { inset: auto auto 0 1px; background: var(--line-strong); }
 
 .brand-text {
   display: grid;
