@@ -172,6 +172,17 @@ export function toIso(value: string) {
   return value ? new Date(value).toISOString() : "";
 }
 
-export function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong. Please try again.";
+const TECHNICAL_ERROR_PATTERN = /\b(?:supabase|postgres(?:ql)?|database|migration|docker|backend|localhost|configured ports?|environment variables?|news analyzer|server logs?|trace[_ -]?id|stack trace|vault|json response)\b/i;
+const NETWORK_ERROR_PATTERN = /(?:failed to fetch|networkerror|network request failed|connection refused|could not be reached|is unreachable|timed? out|service unavailable)/i;
+
+/**
+ * Converts boundary errors into customer-facing copy. Internal detail belongs in
+ * server logs, not in notifications or form errors.
+ */
+export function errorMessage(error: unknown, fallback = "Something went wrong. Please try again.") {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message) return fallback;
+  if (NETWORK_ERROR_PATTERN.test(message)) return "The service is temporarily unavailable. Please try again.";
+  if (TECHNICAL_ERROR_PATTERN.test(message)) return fallback;
+  return message;
 }
