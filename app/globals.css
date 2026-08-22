@@ -6110,6 +6110,48 @@ time,
   .delta-trade-head > *:nth-child(4),
   .delta-trade-row > *:nth-child(4) { display: none; }
   .news-status-panel { grid-template-columns: minmax(0, 1fr); }
+  .market-detail-card,
+  .delta-data-panel { padding: var(--s-4); }
+
+  .delta-quote-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-2) var(--s-4);
+  }
+
+  .delta-quote-row > b {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    text-align: center;
+  }
+
+  .market-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--s-1);
+    padding-block: var(--s-3);
+  }
+
+  .news-sessions > header,
+  .news-history > header { align-items: flex-start; flex-wrap: wrap; }
+  .news-session-chips { margin-inline: calc(var(--s-2) * -1); padding-inline: var(--s-2); }
+  .news-session-chips button { min-width: min(240px, 76vw); }
+  .news-report-meta { grid-template-columns: minmax(0, 1fr); }
+  .news-markdown {
+    max-width: 100%;
+    padding: var(--s-5) var(--s-4);
+    font-size: var(--t-md);
+    overflow-wrap: anywhere;
+  }
+
+  .news-markdown pre,
+  .news-markdown table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .news-report-footer { align-items: flex-start; padding-inline: var(--s-4); }
   .modal-layer {
     place-items: center;
     padding:
@@ -6152,6 +6194,33 @@ time,
   .entry-bar-actions .button { padding-inline: var(--s-3); }
   .entry-bar .brand-text small { display: none; }
   .entry-copy h1 { font-size: clamp(32px, 10vw, 40px); }
+  .market-public-header {
+    gap: var(--s-2);
+    padding-inline: var(--s-3);
+  }
+
+  .market-public-header .brand-text small { display: none; }
+  .market-public-header .button { padding-inline: var(--s-3); }
+  .market-toolbar { padding: var(--s-3); }
+  .market-symbol { flex-wrap: wrap; }
+  .market-source { margin-left: auto; }
+  .candlestick-chart,
+  .chart-loading,
+  .chart-error { height: clamp(300px, 92vw, 380px); }
+  .chart-stale-banner { align-items: flex-start; width: calc(100% - var(--s-6)); }
+  .analysis-grid,
+  .delta-tape,
+  .delta-contract-grid,
+  .delta-history-grid { grid-template-columns: minmax(0, 1fr); }
+  .depth-summary { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .balance-labels { gap: var(--s-3); }
+  .delta-range-strip { padding-inline: var(--s-4); }
+  .delta-trade-head,
+  .delta-trade-row { gap: var(--s-1); padding-inline: var(--s-1); font-size: 11px; }
+  .delta-market-empty { align-items: flex-start; padding: var(--s-6) var(--s-4); }
+  .news-status-panel { min-height: 220px; padding: var(--s-5) var(--s-4); }
+  .news-status-panel h2 { font-size: var(--t-xl); }
+  .news-status-panel .button { width: 100%; }
   .risk-grid { grid-template-columns: minmax(0, 1fr); }
   .entry-card { padding: var(--s-5); }
   .panel-header { flex-direction: column; align-items: stretch; }
