@@ -4,12 +4,12 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 
 ## Architecture
 
-- **Frontend:** Next.js on Vercel.
+- **Frontend:** Next.js on Vercel at `https://www.tradecognition.online`.
 - **Authentication:** Supabase email/password and optional Google OAuth.
 - **Persistence:** Supabase Postgres with Row Level Security.
 - **Delta credentials:** Supabase Vault, accessed only with the server-side service role.
-- **Trading API and scheduler:** Python FastAPI in the `Delta-exchange` container on a static-IP server.
-- **BTC spot analysis:** A separate read-only FastAPI service in the `Binace` container, backed by the public Binance Spot REST and WebSocket APIs. It never places orders.
+- **Trading API and scheduler:** Python FastAPI in the `Delta-exchange` container, published through Cloudflare Tunnel at `https://api.tradecognition.online`.
+- **BTC spot analysis:** A separate read-only FastAPI service in the `Binace` container, published through the same tunnel at `https://market-api.tradecognition.online`. It never places orders.
 - **News analysis:** Agno and OpenRouter run only in the private `news-analyzer` container. Agno stores sessions directly in Supabase PostgreSQL through `PostgresDb`; the trading API is only an authenticated gateway.
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
@@ -30,6 +30,7 @@ backend/Dockerfile           Production Python image
 binance_backend/app/         Binance Spot stream, synchronized book, and analysis API
 binance_backend/tests/       Market-data, analysis, and stream-state tests
 docker-compose.yml           Three-service backend deployment
+docker-compose.tunnel.yml    Cloudflare Tunnel production overlay
 supabase/migrations/         Database, RLS, and Vault functions
 ```
 
@@ -158,51 +159,56 @@ docker compose down
 
 ### Vercel frontend
 
-For frontend-only design mode, configure these Vercel environment variables and redeploy:
+Configure these Vercel production environment variables and redeploy:
 
 ```text
 NEXT_PUBLIC_SUPABASE_URL=https://xphxxkmeqqgjobkmclso.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
-NEXT_PUBLIC_SITE_URL=https://delta-exchange-option-trade.vercel.app
+NEXT_PUBLIC_SITE_URL=https://www.tradecognition.online
+NEXT_PUBLIC_API_URL=https://api.tradecognition.online
+NEXT_PUBLIC_BINANCE_API_URL=https://market-api.tradecognition.online
 ```
 
-Do not add `SUPABASE_SERVICE_ROLE_KEY` or Delta API secrets to Vercel. You can omit `NEXT_PUBLIC_API_URL` while the backend remains local. The deployed HTTPS site will automatically enter design mode instead of trying to use the HTTP localhost backend.
-
-If you later expose the Docker API through a public HTTPS domain, add:
-
-```text
-NEXT_PUBLIC_API_URL=https://your-python-api-domain.example
-NEXT_PUBLIC_BINANCE_API_URL=https://your-market-api-domain.example
-```
+Do not add `SUPABASE_SERVICE_ROLE_KEY`, Delta API secrets, or the Cloudflare tunnel token to Vercel. Redeploy the production deployment after changing any `NEXT_PUBLIC_` value because Next.js embeds these values during the build.
 
 ### Supabase Auth URLs
 
 Use this Site URL:
 
 ```text
-https://delta-exchange-option-trade.vercel.app
+https://www.tradecognition.online
 ```
 
 Add this Redirect URL:
 
 ```text
-https://delta-exchange-option-trade.vercel.app/auth/callback
+https://www.tradecognition.online/auth/callback
 ```
 
 ### Docker backend
 
-Deploy all three Docker services to an always-on VPS or container host. The Delta service still needs a stable outbound public IP. On the server, create an ignored `.env.local` containing the server variables, then run:
+Deploy all three application services to an always-on Docker host. The Delta service still needs a stable outbound public IP because the tunnel changes inbound routing only. On the server, create the ignored `.env.local` containing the server variables.
+
+Copy `.cloudflared.env.example` to `.cloudflared.env` and set `TUNNEL_TOKEN` to the token for the remotely managed `tradecognition-backend` tunnel. Start the application and tunnel together:
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d --build
 ```
 
-Expose the API through HTTPS using a reverse proxy such as Caddy or Nginx. The Vercel frontend must use an `https://` API URL; browsers will block an HTTP backend from an HTTPS page.
+Configure these published application routes in the Cloudflare tunnel dashboard. The service names resolve through the shared Compose network:
+
+| Public hostname | Service URL |
+| --- | --- |
+| `api.tradecognition.online` | `http://delta-exchange:8000` |
+| `market-api.tradecognition.online` | `http://binace:8001` |
+
+Cloudflare terminates public HTTPS and forwards HTTP inside the private Compose network. The market route also carries `wss://market-api.tradecognition.online/ws/market/btcusd`; Cloudflare Tunnel supports WebSocket upgrades without another connector or port mapping.
 
 Required backend variables are documented in `backend/.env.example`. `FRONTEND_ORIGINS` already includes:
 
 ```text
-https://delta-exchange-option-trade.vercel.app
+https://tradecognition.online
+https://www.tradecognition.online
 ```
 
 Run exactly one `Delta-exchange` container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design. `Binace` is isolated from Supabase and Delta credentials and only accesses public market endpoints. `news-analyzer` owns Agno, OpenRouter, and `SUPABASE_DB_URL`; it does not import or call Delta or Binance.
