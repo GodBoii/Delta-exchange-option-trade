@@ -146,7 +146,7 @@ export default function Home() {
       setAccount(null);
       setConfirmDisconnect(false);
       setTab("connect");
-      setNotice({ tone: "ok", text: "Delta Exchange disconnected. Your workspace account remains signed in." });
+      setNotice({ tone: "ok", text: "Delta Exchange disconnected. Your Trade Cognition account remains signed in." });
     } catch (error) {
       setNotice({ tone: "error", text: errorMessage(error) });
     }
@@ -169,10 +169,10 @@ export default function Home() {
   if (!user) return <AuthView onAuthenticated={loadSession} />;
 
   const connection: ConnectionState = connected
-    ? { label: "Delta connected", detail: "Live production venue", tone: "active" }
+    ? { label: "Delta connected", detail: "Live trading enabled", tone: "active" }
     : backendStatus === "online"
       ? { label: "Delta not connected", detail: "Research is available", tone: "neutral" }
-      : { label: "Trading API unavailable", detail: "Public market remains available", tone: "warning" };
+      : { label: "Trading services unavailable", detail: "Public market data is available", tone: "warning" };
   return (
     <>
       <AppShell
@@ -180,7 +180,7 @@ export default function Home() {
         availableTabs={availableTabs}
         connection={connection}
         account={{
-          name: account?.accountName || user.displayName || "Workspace",
+          name: account?.accountName || user.displayName || "Account",
           detail: account?.email || user.email || "Signed in"
         }}
         badges={{ runs: attention }}
@@ -217,7 +217,7 @@ export default function Home() {
       {confirmDisconnect && (
         <ConfirmModal
           title="Disconnect Delta Exchange?"
-          description="The stored Delta API secret is permanently removed from Vault. Your workspace account and saved strategies remain."
+          description="Your saved Delta credentials will be permanently deleted. Your Trade Cognition account and saved strategies will remain."
           confirm="Disconnect Delta"
           cancel="Stay connected"
           onClose={() => setConfirmDisconnect(false)}
@@ -283,7 +283,7 @@ function LoadingScreen() {
         <strong className="t-stagger-line t-stagger-line--3">
           <Shimmer>Restoring your secure session</Shimmer>
         </strong>
-        <small className="t-stagger-line t-stagger-line--4">Checking the workspace account and the trading backend</small>
+        <small className="t-stagger-line t-stagger-line--4">Signing you in and loading your account</small>
       </div>
       <div className="boot-progress t-stagger-line t-stagger-line--5" aria-hidden="true"><i /></div>
     </div>
@@ -308,10 +308,9 @@ function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
     <div className="callout tone-warning t-panel-slide" data-open={open} role="status">
       <WifiOff aria-hidden="true" />
       <span>
-        <strong>Trading backend unreachable — design mode.</strong>
-        {" "}Configuration, the saved library, and JSON export stay available. Contract resolution,
-        scheduling, execution, portfolio, run history, and news need the trading API. Public market
-        analysis remains available.
+        <strong>Live trading is temporarily unavailable.</strong>
+        {" "}You can still edit strategies and view public market data. Scheduling, portfolio data,
+        strategy history, and news analysis will return when trading services reconnect.
       </span>
       <button type="button" className="button secondary t-learn" onClick={() => void onRetry()}>
         <RefreshCw aria-hidden="true" />Retry<LearnMoreChevron />
