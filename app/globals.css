@@ -1914,6 +1914,8 @@ time,
 
 .button.google:hover:not(:disabled) { background: #fff; }
 
+.phone-label-compact { display: none; }
+
 .google-mark {
   display: grid;
   place-items: center;
@@ -6050,7 +6052,7 @@ time,
   .field textarea { font-size: 16px; }
 
   .segmented-option,
-  .filter-tab { min-height: 38px; }
+  .filter-tab { min-height: 44px; }
 
   .toggle { min-height: var(--control-h); }
   .auth-text-button { min-height: 44px; }
@@ -6254,6 +6256,8 @@ time,
   .entry-bar .brand-mark { width: 28px; height: 28px; }
   .entry-bar .brand-text strong { font-size: var(--t-sm); }
   .entry-bar-actions .button { padding-inline: var(--s-2); font-size: var(--t-xs); }
+  .phone-label-wide { display: none; }
+  .phone-label-compact { display: inline; }
 }
 
 @media (hover: none) and (pointer: coarse) {

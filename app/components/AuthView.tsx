@@ -153,8 +153,11 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
       <header className="entry-bar">
         <Brand />
         <div className="entry-bar-actions">
-          <Link className="button ghost t-learn" href="/market">
-            <BarChart3 aria-hidden="true" />Public market analysis<LearnMoreChevron />
+          <Link className="button ghost t-learn" href="/market" aria-label="Public market analysis">
+            <BarChart3 aria-hidden="true" />
+            <span className="phone-label-wide" aria-hidden="true">Public market analysis</span>
+            <span className="phone-label-compact" aria-hidden="true">Market</span>
+            <LearnMoreChevron />
           </Link>
         </div>
       </header>

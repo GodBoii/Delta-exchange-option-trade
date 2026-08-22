@@ -16,7 +16,11 @@ export default function MarketPage() {
     <div className="market-public-page">
       <header className="market-public-header">
         <Link href="/" aria-label="Trade Cognition home"><Brand subtitle="Public market data" /></Link>
-        <Link className="button ghost" href="/">Open dashboard<ArrowRight aria-hidden="true" /></Link>
+        <Link className="button ghost" href="/" aria-label="Open dashboard">
+          <span className="phone-label-wide" aria-hidden="true">Open dashboard</span>
+          <span className="phone-label-compact" aria-hidden="true">Dashboard</span>
+          <ArrowRight aria-hidden="true" />
+        </Link>
       </header>
       <main className="workspace">
         <BtcMarketChart />
