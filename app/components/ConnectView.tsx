@@ -78,19 +78,18 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
       <div className="entry-grid">
         <section className={`entry-copy t-stagger${shown ? " is-shown" : ""}`}>
           <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />One-time setup</p>
-          <h1 className="t-stagger-line t-stagger-line--2">Connect Delta Exchange to enable execution.</h1>
+          <h1 className="t-stagger-line t-stagger-line--2">Connect your Delta Exchange account.</h1>
           <p className="entry-lede t-stagger-line t-stagger-line--3">
-            Your workspace account is ready. This connection lets the backend resolve live option
-            contracts and submit the strategies you schedule.
+            Use your Delta API credentials to schedule strategies and manage positions from this dashboard.
           </p>
 
           <dl className="entry-facts t-stagger-line t-stagger-line--4">
             <div>
-              <dt><ShieldCheck aria-hidden="true" />Stored in Supabase Vault</dt>
-              <dd>The API secret is encrypted at rest and is never returned to the browser.</dd>
+              <dt><ShieldCheck aria-hidden="true" />Encrypted credential storage</dt>
+              <dd>Your API secret is encrypted and is never displayed after you connect.</dd>
             </div>
             <div>
-              <dt><LockKeyhole aria-hidden="true" />Verified before saving</dt>
+              <dt><LockKeyhole aria-hidden="true" />Verified before connecting</dt>
               <dd>Trading permission is checked against Delta before the connection is accepted.</dd>
             </div>
             <div>
@@ -106,7 +105,7 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
               <div className="connect-verified" role="status">
                 <SuccessCheck shown label="Trading access verified" size={56} />
                 <strong>Trading access verified</strong>
-                <small>Opening your workspace</small>
+                <small>Opening your dashboard</small>
               </div>
             ) : (
               <>
@@ -114,13 +113,13 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
                   <span className="panel-icon" aria-hidden="true"><KeyRound /></span>
                   <div>
                     <h2>Delta Exchange India</h2>
-                    <p>Live production account.</p>
+                    <p>Live Delta account.</p>
                   </div>
                 </header>
 
                 <InlineMessage tone="warning">
-                  This is a live venue. Connecting does not place an order; execution starts only from a
-                  strategy you schedule.
+                  This connects to your live Delta account. No order is placed until a strategy reaches
+                  its scheduled entry time.
                 </InlineMessage>
 
                 <form className="stack" onSubmit={connect}>
@@ -167,7 +166,7 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
 
                 <p className="fine-print">
                   <AlertTriangle aria-hidden="true" />
-                  The static public IP of the backend server must be allowlisted on the Delta API key.
+                  Your Trade Cognition server IP must be included in the Delta API key allowlist.
                 </p>
               </>
             )}
