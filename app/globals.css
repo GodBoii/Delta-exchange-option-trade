@@ -5957,7 +5957,93 @@ time,
 }
 
 @media (max-width: 720px) {
-  .workspace { padding: var(--s-5) var(--s-4) var(--s-12); }
+  :root {
+    --control-h: 44px;
+    --control-h-sm: 44px;
+    --context-h: 60px;
+  }
+
+  html,
+  body { overflow-x: clip; }
+
+  button,
+  a,
+  input,
+  select,
+  textarea { touch-action: manipulation; }
+
+  .workspace {
+    padding:
+      var(--s-5)
+      max(var(--s-4), env(safe-area-inset-right))
+      calc(var(--s-12) + env(safe-area-inset-bottom))
+      max(var(--s-4), env(safe-area-inset-left));
+  }
+
+  .context-bar {
+    gap: var(--s-2);
+    padding-right: max(var(--s-3), env(safe-area-inset-right));
+    padding-left: max(var(--s-3), env(safe-area-inset-left));
+  }
+
+  .context-title > small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .account-trigger {
+    min-width: var(--control-h);
+    min-height: var(--control-h);
+    justify-content: center;
+    padding-inline: var(--s-1);
+  }
+
+  .account-caret { display: none; }
+
+  .account-dropdown {
+    position: fixed;
+    top: calc(var(--context-h) + var(--s-2));
+    right: max(var(--s-3), env(safe-area-inset-right));
+    width: min(280px, calc(100vw - var(--s-6)));
+  }
+
+  .account-dropdown [role="menuitem"] { min-height: 44px; }
+
+  .sidebar {
+    width: min(320px, calc(100vw - 44px));
+    padding:
+      max(var(--s-5), env(safe-area-inset-top))
+      var(--s-4)
+      max(var(--s-5), env(safe-area-inset-bottom));
+  }
+
+  .nav-item { min-height: 48px; }
+
+  .entry-bar {
+    min-height: 64px;
+    height: auto;
+    padding:
+      max(var(--s-2), env(safe-area-inset-top))
+      max(var(--s-4), env(safe-area-inset-right))
+      var(--s-2)
+      max(var(--s-4), env(safe-area-inset-left));
+  }
+
+  .entry-grid {
+    min-height: calc(100dvh - 64px);
+    gap: var(--s-8);
+    padding:
+      var(--s-8)
+      max(var(--s-4), env(safe-area-inset-right))
+      calc(var(--s-12) + env(safe-area-inset-bottom))
+      max(var(--s-4), env(safe-area-inset-left));
+  }
+
+  .entry-shell--embedded .entry-grid { padding-top: 0; }
+  .entry-copy h1 { margin-block: var(--s-3) var(--s-4); }
+  .entry-lede { font-size: var(--t-md); }
+  .entry-capabilities,
+  .entry-facts { gap: var(--s-4); margin-top: var(--s-6); }
   .entry-card-shell { justify-self: stretch; max-width: none; }
   .news-history-head { grid-template-columns: 28px minmax(0, 1fr) auto; }
   .news-history-head strong { display: none; }
@@ -6015,11 +6101,30 @@ time,
 }
 
 @media (max-width: 520px) {
+  .entry-bar-actions { gap: var(--s-2); }
+  .entry-bar-actions .button { padding-inline: var(--s-3); }
+  .entry-bar .brand-text small { display: none; }
+  .entry-copy h1 { font-size: clamp(32px, 10vw, 40px); }
   .risk-grid { grid-template-columns: minmax(0, 1fr); }
-  .entry-bar { height: 64px; }
   .entry-card { padding: var(--s-5); }
   .modal { padding: var(--s-5); }
   .modal-actions { flex-direction: column-reverse; }
+}
+
+@media (max-width: 360px) {
+  .entry-bar { padding-inline: var(--s-3); }
+  .entry-bar .brand { gap: var(--s-2); }
+  .entry-bar .brand-mark { width: 28px; height: 28px; }
+  .entry-bar .brand-text strong { font-size: var(--t-sm); }
+  .entry-bar-actions .button { padding-inline: var(--s-2); font-size: var(--t-xs); }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .button:hover:not(:disabled),
+  .nav-item:hover { transform: none; }
+
+  .panel:hover,
+  .tile-tilt:hover .tile { border-color: var(--line); }
 }
 
 /* --------------------------------------------------------------------------
