@@ -5956,6 +5956,12 @@ time,
   .candlestick-chart,
   .chart-loading,
   .chart-error { height: 440px; }
+
+  /* Mobile: sidebar-close needs a reliable 44px touch target */
+  .sidebar-close {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 @media (max-width: 720px) {
@@ -6189,6 +6195,75 @@ time,
   .candlestick-chart,
   .chart-loading,
   .chart-error { height: 380px; }
+
+  /* Mobile: all icon buttons need 44px minimum touch target */
+  .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Tile values can exceed container width on narrow phones */
+  .tile-value {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* Market last price: scale down so it doesn't overflow the single stat column */
+  .market-last-price strong {
+    font-size: var(--t-xl);
+  }
+
+  /* Boot screen: respect safe-area insets on notched phones */
+  .boot-screen {
+    padding:
+      max(var(--s-5), env(safe-area-inset-top))
+      max(var(--s-4), env(safe-area-inset-right))
+      max(var(--s-5), env(safe-area-inset-bottom))
+      max(var(--s-4), env(safe-area-inset-left));
+  }
+
+  /* Risk readout values can overflow on narrow layouts */
+  .risk-readout strong {
+    font-size: var(--t-xl);
+    overflow-wrap: anywhere;
+  }
+
+  /* Risk input values: same treatment */
+  .risk-input-value input {
+    width: 72px;
+    font-size: var(--t-xl);
+  }
+
+  /* Detail tile values: prevent overflow */
+  .detail-tile > strong {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* Structure axis: slightly shorter on phones */
+  .structure-axis { height: 54px; }
+  .structure-leg { top: 12px; width: 20px; height: 20px; font-size: 11px; }
+
+  /* OI hero: prevent large numbers from overflowing */
+  .oi-hero strong {
+    font-size: var(--t-xl);
+    overflow-wrap: anywhere;
+  }
+
+  /* Depth summary: tighten on phones */
+  .depth-summary strong { font-size: var(--t-sm); }
+
+  /* News history: full-width session chips on narrow screens */
+  .news-session-chips button { min-width: min(200px, 70vw); }
+
+  /* Run name in table: allow wrapping */
+  .run-name strong { white-space: normal; }
+
+  /* Review facts: values can be long on mobile */
+  .review-facts dd {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }
 
 @media (max-width: 520px) {
@@ -6248,6 +6323,59 @@ time,
   .dialog-foot-actions .button { width: 100%; }
   .detail-list,
   .detail-tiles { grid-template-columns: minmax(0, 1fr); }
+
+  /* Tighten context bar further on narrow phones */
+  .context-bar { gap: var(--s-1); }
+
+  /* Filter tabs: tighter padding so more fit without scrolling */
+  .filter-tab { padding: 0 var(--s-2); font-size: var(--t-xs); }
+
+  /* Market last price: drop further on very narrow phones */
+  .market-last-price strong { font-size: var(--t-lg); }
+
+  /* Market stat values: tighter on narrow phones */
+  .market-stat strong { font-size: var(--t-xs); }
+  .market-stat small { font-size: 11px; letter-spacing: 0.02em; }
+
+  /* Callout: stack icon above text on very narrow phones */
+  .callout {
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  /* Risk input: even more compact */
+  .risk-input-value input {
+    width: 64px;
+    font-size: var(--t-lg);
+  }
+
+  .risk-readout strong { font-size: var(--t-lg); }
+
+  /* Sidebar status: tighter on narrow phones */
+  .sidebar-status { padding: var(--s-2); }
+  .sidebar-status strong { font-size: 11px; }
+
+  /* Section heading: smaller on narrow phones */
+  .section-heading h1 { font-size: var(--t-xl); }
+
+  /* News status panel: tighter layout */
+  .news-status-panel h2 { font-size: var(--t-lg); }
+
+  /* Review checklist: compact on narrow phones */
+  .review-check { gap: var(--s-2); }
+
+  /* Timeline legend: more compact */
+  .timeline-legend strong { font-size: var(--t-xs); }
+
+  /* Delta section header: tighter */
+  .delta-section-header { padding: var(--s-4) var(--s-4) var(--s-3); }
+  .delta-section-header h2 { font-size: var(--t-lg); }
+
+  /* Entry card head: slightly smaller */
+  .entry-card-head h2 { font-size: var(--t-lg); }
+
+  /* Dialog: tighter spacing */
+  .dialog-head { gap: var(--s-2); }
 }
 
 @media (max-width: 360px) {
@@ -6258,6 +6386,65 @@ time,
   .entry-bar-actions .button { padding-inline: var(--s-2); font-size: var(--t-xs); }
   .phone-label-wide { display: none; }
   .phone-label-compact { display: inline; }
+
+  /* Leg facts: relax minimum widths so rows don't overflow */
+  .side-tag { min-width: 44px; padding-inline: var(--s-1); font-size: 11px; }
+  .leg-fact { font-size: 11px; }
+  .leg-index { width: 24px; height: 24px; font-size: 11px; }
+
+  /* Delta range strip: compact for tiny phones */
+  .delta-range-strip {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-2);
+    padding: var(--s-3);
+  }
+
+  .delta-range-strip strong { font-size: var(--t-xs); }
+
+  /* Market stat: even tighter */
+  .market-stat { padding: var(--s-2) var(--s-3); }
+
+  /* Sidebar: tighter on tiny phones */
+  .sidebar { width: min(280px, calc(100vw - 44px)); }
+
+  /* Context title: smaller text */
+  .context-title > .t-text-swap { font-size: var(--t-sm); }
+
+  /* Avatar: slightly smaller */
+  .avatar { width: 26px; height: 26px; font-size: 11px; }
+
+  /* Nav items: slightly more compact */
+  .nav-item { padding: var(--s-1) var(--s-2); }
+  .nav-item-icon { width: 26px; height: 26px; }
+  .nav-item-text strong { font-size: var(--t-xs); }
+
+  /* Toast: full width on tiny phones */
+  .toast-region { right: var(--s-2); left: var(--s-2); bottom: var(--s-2); }
+
+  /* Boot screen: tighter */
+  .boot-screen .brand-mark { width: 28px; height: 28px; }
+  .boot-copy strong { font-size: var(--t-sm); }
+  .boot-progress { width: 140px; }
+
+  /* Entry grid: reduce minimum height so it doesn't force scrolling */
+  .entry-grid { min-height: auto; }
+
+  /* Tile value: smaller on tiny phones */
+  .tile-value { font-size: var(--t-xl); }
+  .tile-label { font-size: 11px; }
+
+  /* Panel: less padding */
+  .panel { padding: var(--s-3); }
+  .panel-header { padding-bottom: var(--s-3); }
+
+  /* Workspace: tighter padding */
+  .workspace {
+    padding:
+      var(--s-4)
+      max(var(--s-3), env(safe-area-inset-right))
+      calc(var(--s-10) + env(safe-area-inset-bottom))
+      max(var(--s-3), env(safe-area-inset-left));
+  }
 }
 
 @media (hover: none) and (pointer: coarse) {
