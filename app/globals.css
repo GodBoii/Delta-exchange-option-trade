@@ -6045,15 +6045,25 @@ time,
   .entry-capabilities,
   .entry-facts { gap: var(--s-4); margin-top: var(--s-6); }
   .entry-card-shell { justify-self: stretch; max-width: none; }
+  .field input,
+  .field select,
+  .field textarea { font-size: 16px; }
+
+  .segmented-option,
+  .filter-tab { min-height: 38px; }
+
+  .toggle { min-height: var(--control-h); }
+  .auth-text-button { min-height: 44px; }
+
   .news-history-head { grid-template-columns: 28px minmax(0, 1fr) auto; }
   .news-history-head strong { display: none; }
   /* The quick-add control spans the header on a phone, and the panel it grows
      into spans the same width rather than being cramped into 224px. */
   .leg-add-slot { width: 100%; }
   .leg-add { --morph-w-closed: 100%; --morph-w-open: 100%; }
-  .panel-header-actions { flex: 1; }
+  .panel-header-actions { flex: 0 1 auto; flex-wrap: wrap; }
   .section-heading { flex-direction: column; align-items: stretch; gap: var(--s-4); }
-  .section-heading-actions { flex-wrap: wrap; }
+  .section-heading-actions { flex-wrap: wrap; width: 100%; }
   .grid-2,
   .grid-3 { grid-template-columns: minmax(0, 1fr); }
   .risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -6073,6 +6083,11 @@ time,
   /* The reorder controls are dropped first on a phone; each tool is wrapped in
      a tooltip, so the children are the wrappers rather than the buttons. */
   .leg-tools > *:nth-child(-n + 2) { display: none; }
+  .leg-tools button { width: 44px; height: 44px; }
+  .leg-body { padding: var(--s-4); }
+  .leg-grid { grid-template-columns: minmax(0, 1fr); }
+  .review-facts > div { flex-wrap: wrap; }
+  .review-facts dd { overflow-wrap: anywhere; }
   .timeline-legend { grid-template-columns: minmax(0, 1fr); }
   .account-trigger-text { display: none; }
   .toast-region { right: var(--s-4); left: var(--s-4); bottom: var(--s-4); max-width: none; }
@@ -6095,6 +6110,38 @@ time,
   .delta-trade-head > *:nth-child(4),
   .delta-trade-row > *:nth-child(4) { display: none; }
   .news-status-panel { grid-template-columns: minmax(0, 1fr); }
+  .modal-layer {
+    place-items: center;
+    padding:
+      max(var(--s-3), env(safe-area-inset-top))
+      max(var(--s-3), env(safe-area-inset-right))
+      max(var(--s-3), env(safe-area-inset-bottom))
+      max(var(--s-3), env(safe-area-inset-left));
+  }
+
+  .dialog {
+    width: 100%;
+    max-height: calc(100dvh - var(--s-6));
+  }
+
+  .dialog-head,
+  .dialog-body { padding: var(--s-4); }
+
+  .dialog-head-side { gap: var(--s-2); }
+  .dialog-foot { padding: var(--s-3) var(--s-4); }
+  .table-scroll {
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .filter-bar {
+    width: 100%;
+    scrollbar-width: none;
+  }
+
+  .filter-bar::-webkit-scrollbar { display: none; }
+  .row-menu-trigger { width: 44px; height: 44px; }
+  .row-menu [role="menuitem"] { min-height: 44px; }
   .candlestick-chart,
   .chart-loading,
   .chart-error { height: 380px; }
@@ -6107,8 +6154,29 @@ time,
   .entry-copy h1 { font-size: clamp(32px, 10vw, 40px); }
   .risk-grid { grid-template-columns: minmax(0, 1fr); }
   .entry-card { padding: var(--s-5); }
+  .panel-header { flex-direction: column; align-items: stretch; }
+  .panel-header-actions { width: 100%; }
+  .panel-header-actions > .button,
+  .section-heading-actions > .button { flex: 1 1 auto; }
+
+  .callout { align-items: flex-start; flex-wrap: wrap; }
+  .callout > .button { width: 100%; }
+  .button-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .button-row > .button,
+  .button-row > .icon-only { width: 100%; }
+  .library-state { align-items: flex-start; flex-wrap: wrap; }
+  .library-state small { width: 100%; margin-left: 0; }
+
   .modal { padding: var(--s-5); }
   .modal-actions { flex-direction: column-reverse; }
+  .dialog-head-text { min-width: 0; }
+  .dialog-head-text h2,
+  .dialog-head-text p { overflow-wrap: anywhere; }
+  .dialog-foot { align-items: stretch; flex-direction: column; }
+  .dialog-foot-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .dialog-foot-actions .button { width: 100%; }
+  .detail-list,
+  .detail-tiles { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 360px) {
