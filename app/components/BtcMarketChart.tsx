@@ -6,7 +6,7 @@ import {
   AnimatedNumber, SectionHeading, Shimmer, SwapText, useSlidingPill
 } from "@/app/components/ui";
 import {
-  bookPrice, compact, currencyCompact, humanize, money, price, signedCurrencyCompact, signedMoney,
+  bookPrice, compact, currencyCompact, errorMessage, humanize, money, price, signedCurrencyCompact, signedMoney,
   signedPercent
 } from "@/lib/format";
 
@@ -257,7 +257,7 @@ export default function BtcMarketChart() {
       setError("");
     } catch (nextError) {
       if (requestId !== loadRequestRef.current) return;
-      setError(nextError instanceof Error ? nextError.message : "BTCUSDT market data is unavailable");
+      setError(errorMessage(nextError, "BTCUSDT market data is temporarily unavailable."));
     } finally {
       if (!quiet && requestId === loadRequestRef.current) setLoading(false);
     }
@@ -281,7 +281,7 @@ export default function BtcMarketChart() {
       try {
         socket = new WebSocket(`${marketDataWebSocketOrigin()}/ws/market/btcusd`);
       } catch (nextError) {
-        setFeedError(nextError instanceof Error ? nextError.message : "Could not open the live market stream");
+        setFeedError(errorMessage(nextError, "Could not connect to live market updates."));
         setFeedState("offline");
         return;
       }
@@ -291,7 +291,7 @@ export default function BtcMarketChart() {
           const update = JSON.parse(event.data) as MarketUpdate;
           if (update.type !== "market_update") return;
           setFeedState(update.realtime.connected ? "live" : "reconnecting");
-          setFeedError(update.realtime.lastError || "");
+          setFeedError(update.realtime.lastError ? errorMessage(new Error(update.realtime.lastError), "Live market updates are reconnecting.") : "");
           setUpdatedAt(new Date(update.receivedAt));
           setData(current => {
             if (!current) return current;
@@ -342,7 +342,7 @@ export default function BtcMarketChart() {
     <SectionHeading
       eyebrow="Live market data"
       title="Market analysis"
-      description="Binance Spot order flow, liquidity, and volatility, with public Delta derivative context for the execution venue."
+      description="Binance Spot order flow and volatility alongside Delta BTCUSD perpetual-market data."
       actions={
         <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
           <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
@@ -354,7 +354,7 @@ export default function BtcMarketChart() {
       <header className="market-toolbar">
         <div className="market-symbol">
           <span className="market-coin">₿</span>
-          <div><strong>BTCUSDT</strong><small>Bitcoin / Tether · Spot analysis feed</small></div>
+          <div><strong>BTCUSDT</strong><small>Bitcoin / Tether · Spot market</small></div>
           <span className="market-source">BINANCE</span>
         </div>
         {/* A small set of mutually exclusive options with a moving highlight,
@@ -556,13 +556,13 @@ function AnalysisGrid({ analysis }: { analysis: MarketAnalysis }) {
   const imbalance = analysis.orderBook.imbalance * 100;
   const cvdPositive = analysis.cvd.baseVolume >= 0;
   return <section className="analysis-grid" aria-label="Real-time spot analysis">
-    <AnalysisMetric label={`ATR ${analysis.atr.period}`} value={money(analysis.atr.value)} note={`${analysis.atr.percent.toFixed(3)}% of price`} />
+    <AnalysisMetric label={`Average true range · ${analysis.atr.period}`} value={money(analysis.atr.value)} note={`${analysis.atr.percent.toFixed(3)}% of price`} />
     <AnalysisMetric label="Historical volatility" value={`${analysis.historicalVolatility.annualizedPercent.toFixed(1)}%`} note={`${analysis.historicalVolatility.sampleSize} one-minute returns`} />
-    <AnalysisMetric label="Rolling VWAP" value={money(analysis.vwap)} note="Last 240 one-minute candles" />
-    <AnalysisMetric label={`CVD · ${analysis.cvd.window}`} value={`${cvdPositive ? "+" : ""}${analysis.cvd.baseVolume.toFixed(3)} BTC`} note={cvdPositive ? "Net aggressive buying" : "Net aggressive selling"} tone={cvdPositive ? "up" : "down"} />
+    <AnalysisMetric label="Rolling volume-weighted price" value={money(analysis.vwap)} note="Last 240 one-minute candles" />
+    <AnalysisMetric label={`Cumulative volume delta · ${analysis.cvd.window}`} value={`${cvdPositive ? "+" : ""}${analysis.cvd.baseVolume.toFixed(3)} BTC`} note={cvdPositive ? "Net market buying" : "Net market selling"} tone={cvdPositive ? "up" : "down"} />
     <AnalysisMetric label="Book imbalance" value={`${imbalance >= 0 ? "+" : ""}${imbalance.toFixed(1)}%`} note={`${analysis.orderBook.spreadBps.toFixed(2)} bps spread`} tone={imbalance >= 0 ? "up" : "down"} />
     <AnalysisMetric label="Market structure" value={analysis.marketStructure.state} note={`${analysis.marketStructure.strength.toFixed(0)}% trend separation`} tone={analysis.marketStructure.state === "bullish" ? "up" : analysis.marketStructure.state === "bearish" ? "down" : undefined} />
-    <AnalysisMetric label="Sideways probability" value={`${analysis.sidewaysProbability.toFixed(0)}%`} note="Efficiency, range, and VWAP deviation" />
+    <AnalysisMetric label="Range-bound estimate" value={`${analysis.sidewaysProbability.toFixed(0)}%`} note="Based on efficiency, range, and price deviation" />
   </section>;
 }
 
@@ -592,7 +592,7 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
 
   return <section className="market-detail-grid" aria-label="Liquidity, order book, trades, and open interest">
     <article className="market-detail-card liquidity-panel">
-      <DetailHeader eyebrow="BINANCE SPOT" title="Liquidity depth & order book" meta="Top 15 synchronized levels · 100 ms updates" />
+      <DetailHeader eyebrow="BINANCE SPOT" title="Liquidity and order book" meta="Top 15 levels · 100 ms updates" />
       <div className="depth-summary">
         <div><small>Best bid</small><strong className="up">{bookPrice(bestBid)}</strong></div>
         <div className="spread-stat"><small>Spread</small><strong>${spread.toFixed(2)}</strong></div>
@@ -608,7 +608,7 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
     </article>
 
     <article className="market-detail-card delta-panel">
-      <DetailHeader eyebrow="DELTA EXCHANGE" title="BTCUSD derivative context" meta="Execution-market reference · 5s refresh" />
+      <DetailHeader eyebrow="DELTA EXCHANGE" title="BTCUSD perpetual market" meta="Updates every 5 seconds" />
       {delta.available ? <>
         <div className="oi-hero">
           <small>Open interest</small>
@@ -625,12 +625,12 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
           <ContextMetric label="Delta ask" value={money(delta.bestAsk || 0)} />
         </div>
         <div className="basis-row"><span>Spot / mark basis</span><strong className={(delta.markPrice || 0) >= spotPrice ? "up" : "down"}>{signedMoney((delta.markPrice || 0) - spotPrice)}</strong></div>
-      </> : <div className="detail-empty"><WifiOff /><p>{delta.lastError || "Waiting for Delta public OI data"}</p></div>}
+      </> : <div className="detail-empty"><WifiOff /><p>{delta.lastError ? errorMessage(new Error(delta.lastError), "Delta market data is temporarily unavailable.") : "Waiting for Delta open-interest data"}</p></div>}
       <p className="source-note">OI, mark, funding, and Delta quotes belong to the Delta BTCUSD perpetual. They are not Binance Spot values.</p>
     </article>
 
     <article className="market-detail-card trades-panel">
-      <DetailHeader eyebrow="BINANCE SPOT" title="Recent trade flow" meta="Buyer/seller aggressor classification" />
+      <DetailHeader eyebrow="BINANCE SPOT" title="Recent trade flow" meta="Market-buy and market-sell volume" />
       <div className="trade-flow-summary">
         <div><small>Aggressive buys</small><strong className="up">{buyVolume.toFixed(3)} BTC</strong></div>
         <div className="flow-bar"><span className="buy-flow" style={{ width: `${buyShare}%` }} /><span className="sell-flow" style={{ width: `${100 - buyShare}%` }} /></div>
@@ -649,7 +649,7 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
 
 function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; binanceSpotPrice: number }) {
   if (!delta.available) return <section className="delta-market-section delta-market-empty" aria-label="Delta BTCUSD market data">
-    <WifiOff /><div><h2>Delta BTCUSD market data</h2><p>{delta.lastError || "Waiting for the Delta public market feed."}</p></div>
+    <WifiOff /><div><h2>Delta BTCUSD market data</h2><p>{delta.lastError ? errorMessage(new Error(delta.lastError), "Delta market data is temporarily unavailable.") : "Waiting for Delta market data."}</p></div>
   </section>;
 
   const ltpChange = delta.lastPriceChange24hPercent || 0;
@@ -664,7 +664,7 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
 
   return <section className="delta-market-section" aria-label="Complete Delta Exchange BTCUSD public market data">
     <header className="delta-section-header">
-      <div><small>DELTA EXCHANGE · EXECUTION MARKET</small><h2>BTCUSD perpetual intelligence</h2><p>Public derivative data from the same venue used for strategy execution.</p></div>
+      <div><small>DELTA EXCHANGE</small><h2>BTCUSD perpetual market</h2><p>Live market data for the contract used by scheduled strategies.</p></div>
       <div className="delta-live-state"><i /><span>{delta.tradingStatus || "Live"}</span><time>{delta.receivedAt ? `Updated ${new Date(delta.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting"}</time></div>
     </header>
 
@@ -697,13 +697,13 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
 
     <div className="delta-detail-grid">
       <article className="delta-data-panel delta-book-panel">
-        <DetailHeader eyebrow="DELTA L2" title="Execution order book" meta="Top 15 public levels · 5s snapshot" />
+        <DetailHeader eyebrow="DELTA EXCHANGE" title="Delta order book" meta="Top 15 levels · 5s snapshot" />
         <div className="delta-quote-row"><span><small>Best bid</small><strong className="up">{bookPrice(delta.bestBid || 0)}</strong><em>{compact(delta.bidSizeContracts || 0)} contracts</em></span><b>{((delta.bestAsk || 0) - (delta.bestBid || 0)).toFixed(2)} spread</b><span><small>Best ask</small><strong className="down">{bookPrice(delta.bestAsk || 0)}</strong><em>{compact(delta.askSizeContracts || 0)} contracts</em></span></div>
         <DeltaOrderBook bids={bids} asks={asks} />
       </article>
 
       <article className="delta-data-panel">
-        <DetailHeader eyebrow="DELTA TAPE" title="Recent BTCUSD trades" meta="Public taker-side executions" />
+        <DetailHeader eyebrow="DELTA EXCHANGE" title="Recent BTCUSD trades" meta="Market-buy and market-sell trades" />
         <div className="delta-trade-head"><span>Price</span><span>Side</span><span>Size</span><span>Notional</span><span>Time</span></div>
         <div className="delta-trade-list">
           {trades.slice(0, 14).map(trade => <div className="delta-trade-row" key={trade.id}>
@@ -714,7 +714,7 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
       </article>
 
       <article className="delta-data-panel delta-contract-panel">
-        <DetailHeader eyebrow="CONTRACT" title="BTCUSD specifications" meta={`Product ID ${delta.product?.productId || 27}`} />
+        <DetailHeader eyebrow="CONTRACT" title="BTCUSD specifications" meta="Perpetual futures" />
         <div className="delta-contract-grid">
           <ContractFact label="Instrument" value={humanize(delta.product?.contractType || delta.instrumentType || "perpetual_futures")} />
           <ContractFact label="Contract value" value={`${delta.product?.contractValueBtc || delta.contractValueBtc || .001} BTC`} />
@@ -834,7 +834,7 @@ function OiSparkline({ points, markPrice }: { points: OpenInterestPoint[]; markP
   const range = Math.max(1, max - min);
   const coordinates = values.map((value, index) => `${index / (values.length - 1) * 300},${72 - (value - min) / range * 58}`).join(" ");
   return <div className="oi-chart-wrap">
-    <svg className="oi-chart" viewBox="0 0 300 84" preserveAspectRatio="none" role="img" aria-label="Delta open interest history since service start">
+    <svg className="oi-chart" viewBox="0 0 300 84" preserveAspectRatio="none" role="img" aria-label="Recent Delta open interest history">
       <polyline points={coordinates} />
     </svg>
     <span>Session OI range {currencyCompact(min)} – {currencyCompact(max)}</span>
@@ -856,7 +856,7 @@ function ChartLoading() {
 function ChartError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return <div className="chart-error">
     <WifiOff aria-hidden="true" />
-    <h3>Market feed unavailable</h3>
+    <h3>Market data unavailable</h3>
     <p>{message}</p>
     <button type="button" className="button secondary" onClick={onRetry}><RefreshCw aria-hidden="true" />Try again</button>
   </div>;
