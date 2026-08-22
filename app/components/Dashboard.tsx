@@ -323,8 +323,8 @@ function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onCl
         meta={`${positions.length} live ${positions.length === 1 ? "contract" : "contracts"} on Delta`}
       />
       {positions.length ? (
-        <div className="table-scroll">
-          <table className="data-table">
+        <div className="table-scroll mobile-card-list">
+          <table className="data-table mobile-card-table portfolio-card-table">
             <caption className="visually-hidden">Live Delta positions with entry, margin, and liquidation detail</caption>
             <thead>
               <tr>
@@ -357,22 +357,22 @@ function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onCl
                 return (
                   <tr key={`${symbol}-${index}`}>
                     <th scope="row">{symbol}</th>
-                    <td><span className={`side-tag ${long ? "buy" : "sell"}`}>{long ? "Long" : "Short"}</span></td>
-                    <td className="numeric">{quantity(Math.abs(size), 0)}</td>
-                    <td className="numeric">{entry === null ? EM_DASH : money(entry)}</td>
-                    <td className="numeric">{margin === null ? EM_DASH : quantity(margin, 4)}</td>
-                    <td className="numeric">{liquidation === null ? EM_DASH : money(liquidation)}</td>
-                    <td className="numeric">
+                    <td data-label="Side"><span className={`side-tag ${long ? "buy" : "sell"}`}>{long ? "Long" : "Short"}</span></td>
+                    <td className="numeric" data-label="Size">{quantity(Math.abs(size), 0)}</td>
+                    <td className="numeric" data-label="Entry">{entry === null ? EM_DASH : money(entry)}</td>
+                    <td className="numeric" data-label="Margin">{margin === null ? EM_DASH : quantity(margin, 4)}</td>
+                    <td className="numeric" data-label="Liquidation">{liquidation === null ? EM_DASH : money(liquidation)}</td>
+                    <td className="numeric" data-label="Buffer from entry">
                       {buffer === null
                         ? EM_DASH
                         : <span className={buffer < 5 ? "value negative" : buffer < 15 ? "value warning" : "value"}>{percent(buffer, 1)}</span>}
                     </td>
-                    <td className="numeric">
+                    <td className="numeric" data-label="Realised P&L">
                       {realised === null
                         ? EM_DASH
                         : <span className={realised >= 0 ? "value positive" : "value negative"}>{quantity(realised, 4)}</span>}
                     </td>
-                    <td className="row-action">
+                    <td className="row-action" data-label="Position actions">
                       <button type="button" className="button ghost small" onClick={() => onClose(row)}>Close</button>
                     </td>
                   </tr>
@@ -406,8 +406,8 @@ function OrdersPanel({ orders, onCancel }: { orders: DeltaRecord[]; onCancel: (r
         meta={`${orders.length} ${orders.length === 1 ? "order" : "orders"} awaiting fill or cancellation`}
       />
       {orders.length ? (
-        <div className="table-scroll">
-          <table className="data-table">
+        <div className="table-scroll mobile-card-list">
+          <table className="data-table mobile-card-table portfolio-card-table">
             <caption className="visually-hidden">Outstanding Delta orders</caption>
             <thead>
               <tr>
@@ -435,15 +435,15 @@ function OrdersPanel({ orders, onCancel }: { orders: DeltaRecord[]; onCancel: (r
                 return (
                   <tr key={readText(row, "id", "order_id") ?? index}>
                     <th scope="row">{symbol}</th>
-                    <td><span className={`side-tag ${side === "buy" ? "buy" : "sell"}`}>{side === "buy" ? "Buy" : "Sell"}</span></td>
-                    <td>{titleCase(readText(row, "order_type") ?? "—")}</td>
-                    <td className="numeric">{quantity(filled, 0)} / {quantity(size, 0)}</td>
-                    <td className="numeric">
+                    <td data-label="Side"><span className={`side-tag ${side === "buy" ? "buy" : "sell"}`}>{side === "buy" ? "Buy" : "Sell"}</span></td>
+                    <td data-label="Type">{titleCase(readText(row, "order_type") ?? "—")}</td>
+                    <td className="numeric" data-label="Filled">{quantity(filled, 0)} / {quantity(size, 0)}</td>
+                    <td className="numeric" data-label="Price">
                       {limitPrice !== null ? money(limitPrice) : average !== null ? money(average) : "Market"}
                     </td>
-                    <td><StatusChip tone={orderTone(state)}>{titleCase(state)}</StatusChip></td>
-                    <td>{created ? relativeTime(created) : EM_DASH}</td>
-                    <td className="row-action">
+                    <td data-label="State"><StatusChip tone={orderTone(state)}>{titleCase(state)}</StatusChip></td>
+                    <td data-label="Placed">{created ? relativeTime(created) : EM_DASH}</td>
+                    <td className="row-action" data-label="Order actions">
                       <button type="button" className="button ghost small" onClick={() => onCancel(row)}>Cancel</button>
                     </td>
                   </tr>
@@ -488,8 +488,8 @@ function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
         meta="Reported per asset; balances are not summed across denominations"
       />
       {wallets.length ? (
-        <div className="table-scroll">
-          <table className="data-table">
+        <div className="table-scroll mobile-card-list">
+          <table className="data-table mobile-card-table portfolio-card-table">
             <caption className="visually-hidden">Delta wallet balance by asset</caption>
             <thead>
               <tr>
@@ -505,11 +505,11 @@ function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
               {wallets.map(wallet => (
                 <tr key={wallet.asset}>
                   <th scope="row">{wallet.asset}</th>
-                  <td className="numeric">{quantity(wallet.balance, 6)}</td>
-                  <td className="numeric">{quantity(wallet.available, 6)}</td>
-                  <td className="numeric">{quantity(wallet.positionMargin, 6)}</td>
-                  <td className="numeric">{quantity(wallet.orderMargin, 6)}</td>
-                  <td className="table-meter">
+                  <td className="numeric" data-label="Balance">{quantity(wallet.balance, 6)}</td>
+                  <td className="numeric" data-label="Available">{quantity(wallet.available, 6)}</td>
+                  <td className="numeric" data-label="Position margin">{quantity(wallet.positionMargin, 6)}</td>
+                  <td className="numeric" data-label="Order margin">{quantity(wallet.orderMargin, 6)}</td>
+                  <td className="table-meter" data-label="Utilisation">
                     {wallet.balance > 0 ? (
                       <>
                         <Meter

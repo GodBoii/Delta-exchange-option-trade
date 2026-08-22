@@ -6184,6 +6184,108 @@ time,
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Portfolio and strategy-history rows become compact records on phones.
+     The table semantics remain in the DOM for assistive technology, while the
+     visible labels come from each cell's desktop column name. */
+  .mobile-card-list {
+    overflow: visible;
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+
+  .mobile-card-table,
+  .runs-table.mobile-card-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mobile-card-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .mobile-card-table tbody {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .mobile-card-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: var(--s-3);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    box-shadow: var(--inset-lit);
+  }
+
+  .mobile-card-table tbody tr > * {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    gap: var(--s-1);
+    min-width: 0;
+    padding: var(--s-2);
+    border: 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .mobile-card-table tbody tr:hover > * { background: transparent; }
+
+  .mobile-card-table tbody th[scope="row"] {
+    grid-column: 1 / -1;
+    padding-bottom: var(--s-3);
+    margin-bottom: var(--s-1);
+    border-bottom: 1px solid var(--line);
+    color: var(--text-1);
+    font-size: var(--t-md);
+  }
+
+  .mobile-card-table tbody td::before {
+    content: attr(data-label);
+    color: var(--text-3);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.05em;
+    line-height: var(--lh-snug);
+    text-transform: uppercase;
+  }
+
+  .mobile-card-table .numeric { text-align: left; }
+  .mobile-card-table .status-chip,
+  .mobile-card-table .side-tag { justify-self: start; }
+  .mobile-card-table .cell-stack { white-space: normal; }
+
+  .mobile-card-table .row-action {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    padding-top: var(--s-3);
+    margin-top: var(--s-1);
+    border-top: 1px solid var(--line);
+  }
+
+  .mobile-card-table .row-action .button { min-width: 96px; }
+  .mobile-card-table .run-name { width: 100%; min-height: 44px; }
+
+  .portfolio .tile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-2);
+  }
+
+  .portfolio .tile { padding: var(--s-4); }
+  .portfolio .tile-icon { width: 30px; height: 30px; margin-bottom: var(--s-1); }
+  .portfolio .tile-value { font-size: var(--t-xl); overflow-wrap: anywhere; }
+  .portfolio .tile-note { font-size: 11px; }
+  .portfolio-footer .toggle { width: 100%; }
+
   .filter-bar {
     width: 100%;
     scrollbar-width: none;
