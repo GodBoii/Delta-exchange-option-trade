@@ -199,8 +199,8 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
         {loading && !runs.length ? (
           <TableSkeleton label="strategy history" rows={6} />
         ) : visible.length ? (
-          <div className="table-scroll t-reveal">
-            <table className="data-table runs-table">
+          <div className="table-scroll mobile-card-list t-reveal">
+            <table className="data-table runs-table mobile-card-table runs-card-table">
               <caption className="visually-hidden">Strategy runs with schedule and status</caption>
               <thead>
                 <tr>
@@ -310,22 +310,22 @@ function RunRow({ run, onInspect, onAction }: {
           <span><strong>{run.name}</strong></span>
         </button>
       </th>
-      <td><StatusChip tone={statusTone(run.status)}>{titleCase(run.status)}</StatusChip></td>
-      <td>
+      <td data-label="Status"><StatusChip tone={statusTone(run.status)}>{titleCase(run.status)}</StatusChip></td>
+      <td data-label="Entry">
         <span className="cell-stack">
           <span>{formatDateTime(run.entryAt)}</span>
           <small>{relativeTime(run.entryAt)}</small>
         </span>
       </td>
-      <td>
+      <td data-label="Exit">
         <span className="cell-stack">
           <span>{formatDateTime(run.exitAt)}</span>
           <small>{relativeTime(run.exitAt)}</small>
         </span>
       </td>
-      <td>{formatDuration(run.entryAt, run.exitAt)}</td>
-      <td>{relativeTime(run.createdAt)}</td>
-      <td className="row-action">
+      <td data-label="Window">{formatDuration(run.entryAt, run.exitAt)}</td>
+      <td data-label="Created">{relativeTime(run.createdAt)}</td>
+      <td className="row-action" data-label="Strategy actions">
         <RowMenu label={`Actions for ${run.name}`} items={items} />
       </td>
     </tr>
