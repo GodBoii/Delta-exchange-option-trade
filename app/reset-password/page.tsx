@@ -59,7 +59,7 @@ export default function ResetPasswordPage() {
       <main className="entry-grid">
         <section className="entry-copy t-stagger is-shown">
           <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />Account recovery</p>
-          <h1 className="t-stagger-line t-stagger-line--2">Choose a new workspace password.</h1>
+          <h1 className="t-stagger-line t-stagger-line--2">Choose a new account password.</h1>
           <p className="entry-lede t-stagger-line t-stagger-line--3">
             The recovery link signs you in for this password change. Use a new password that you do
             not reuse for email, Delta Exchange, or another service.
@@ -121,7 +121,7 @@ export default function ResetPasswordPage() {
             {status === "success" && (
               <div className="stack">
                 <InlineMessage tone="ok">Your password has been updated.</InlineMessage>
-                <Link className="button primary block" href="/"><Check aria-hidden="true" />Continue to workspace</Link>
+                <Link className="button primary block" href="/"><Check aria-hidden="true" />Continue to dashboard</Link>
               </div>
             )}
           </section>
