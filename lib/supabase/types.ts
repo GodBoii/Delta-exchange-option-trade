@@ -7,7 +7,7 @@ type Table<Row, Insert = Partial<Row>, Update = Partial<Insert>> = {
   Relationships: [];
 };
 
-export type ProfileRow = { id: string; display_name: string | null; avatar_url: string | null; created_at: string; updated_at: string };
+export type ProfileRow = { id: string; display_name: string | null; avatar_url: string | null; phone_number: string | null; created_at: string; updated_at: string };
 export type ConnectionRow = { id: string; user_id: string; provider: string; api_key: string; vault_secret_id: string; environment: "production"; delta_user_id: string | null; account_name: string | null; email_masked: string | null; status: string; verified_at: string; created_at: string; updated_at: string };
 export type SavedStrategyRow = { id: string; user_id: string; name: string; definition_json: Json; source_run_id: string | null; created_at: string; updated_at: string };
 export type StrategyRow = { id: string; user_id: string; saved_strategy_id: string | null; name: string; status: string; definition_json: Json; entry_at: string | null; exit_at: string | null; entry_execution_at: string | null; exit_execution_at: string | null; last_error: string | null; created_at: string; updated_at: string };
@@ -17,7 +17,7 @@ export type ExecutionOrderRow = { id: string; execution_id: string; leg_id: stri
 export type Database = {
   public: {
     Tables: {
-      profiles: Table<ProfileRow, { id: string; display_name?: string | null; avatar_url?: string | null }, { display_name?: string | null; avatar_url?: string | null; updated_at?: string }>;
+      profiles: Table<ProfileRow, { id: string; display_name?: string | null; avatar_url?: string | null; phone_number?: string | null }, { display_name?: string | null; avatar_url?: string | null; phone_number?: string | null; updated_at?: string }>;
       exchange_connections: Table<ConnectionRow, Partial<ConnectionRow> & { user_id: string; api_key: string; vault_secret_id: string }, Partial<ConnectionRow>>;
       saved_strategies: Table<SavedStrategyRow, { user_id: string; name: string; definition_json: Json; source_run_id?: string | null }, Partial<SavedStrategyRow>>;
       strategies: Table<StrategyRow, { user_id: string; saved_strategy_id?: string | null; name: string; status: string; definition_json: Json; entry_at?: string | null; exit_at?: string | null }, Partial<StrategyRow>>;
