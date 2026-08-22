@@ -16,7 +16,12 @@ class Settings(BaseSettings):
     max_entry_lateness_seconds: int = 60
     exit_verify_timeout_seconds: float = 10.0
     exit_verify_poll_seconds: float = 0.5
-    frontend_origins: str = "http://localhost:3000,https://delta-exchange-option-trade.vercel.app"
+    frontend_origins: str = (
+        "http://localhost:3000,"
+        "https://delta-exchange-option-trade.vercel.app,"
+        "https://tradecognition.online,"
+        "https://www.tradecognition.online"
+    )
     frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
     log_level: str = "INFO"
 
