@@ -22,19 +22,19 @@ type NavGroup = { label: string; items: NavItem[] };
  */
 const NAV_GROUPS: NavGroup[] = [
   {
-    label: "Operations",
+    label: "Trading",
     items: [
       { id: "connect", label: "Delta connection", hint: "Enable live execution", icon: <KeyRound /> },
       { id: "builder", label: "Strategy builder", hint: "Configure and schedule", icon: <Layers3 /> },
-      { id: "runs", label: "Run history", hint: "Scheduled and live runs", icon: <Activity /> },
+      { id: "runs", label: "Strategy history", hint: "Scheduled and active strategies", icon: <Activity /> },
       { id: "dashboard", label: "Portfolio", hint: "Balances and positions", icon: <PieChart /> }
     ]
   },
   {
-    label: "Research",
+    label: "Insights",
     items: [
       { id: "market", label: "Market analysis", hint: "Order flow and volatility", icon: <BarChart3 /> },
-      { id: "news", label: "News intelligence", hint: "Agent research outcomes", icon: <Newspaper /> }
+      { id: "news", label: "Bitcoin news", hint: "News and market impact", icon: <Newspaper /> }
     ]
   }
 ];
@@ -125,7 +125,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
     <div className="shell">
       <a className="skip-link" href="#workspace">Skip to main content</a>
 
-      <aside className="sidebar" data-open={navOpen} aria-label="Workspace sections">
+      <aside className="sidebar" data-open={navOpen} aria-label="Dashboard sections">
         <div className="sidebar-head">
           <Brand />
           <button type="button" className="icon-button sidebar-close" onClick={() => setNavOpen(false)} aria-label="Close navigation">
@@ -199,7 +199,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
           </button>
           <div className="context-title">
             {/* The section name changes in place rather than between frames. */}
-            <SwapText>{activeItem ? activeItem.label : "Workspace"}</SwapText>
+            <SwapText>{activeItem ? activeItem.label : "Dashboard"}</SwapText>
             <small><SwapText>{activeItem ? activeItem.hint : "Delta Exchange India"}</SwapText></small>
           </div>
           <Clock />
@@ -234,10 +234,10 @@ function Clock() {
     .find(part => part.type === "timeZoneName")?.value ?? "Local";
 
   return (
-    <Tooltip label="Entry and exit times are scheduled against this clock" placement="bottom">
+    <Tooltip label="Entry and exit times use this clock" placement="bottom">
       <div className="context-clock">
         <time dateTime={now.toISOString()}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
-        <small>{zone} · scheduling clock</small>
+        <small>{zone} · your local time</small>
       </div>
     </Tooltip>
   );
