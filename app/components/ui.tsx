@@ -27,7 +27,7 @@ export type NoticeHandler = (notice: Notice) => void;
  * Identity
  * ------------------------------------------------------------------ */
 
-export function Brand({ subtitle = "Delta workspace" }: { subtitle?: string }) {
+export function Brand({ subtitle = "Trading dashboard" }: { subtitle?: string }) {
   return (
     <span className="brand">
       <Image
