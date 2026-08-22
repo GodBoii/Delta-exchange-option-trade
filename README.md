@@ -66,6 +66,19 @@ supabase/migrations/003_saved_strategy_library.sql
 
 and choose **Run** once. The migration creates the private `saved_strategies` table, RLS ownership policies, the optional link from execution runs to their saved definition, indexes, and grants. It also backfills every existing strategy run into the saved library without changing or deleting run history. Reusable strategy names are intentionally not unique.
 
+### Apply the account phone-number migration
+
+Open **Supabase Dashboard → SQL Editor**, paste the entire contents of:
+
+```text
+supabase/migrations/005_profile_phone_number.sql
+```
+
+and choose **Run** once. The migration adds the E.164 `phone_number` field to
+`profiles`, updates the new-user trigger, and backfills valid phone numbers that
+already exist in Supabase Auth metadata. Existing users and Google accounts keep
+a null phone number.
+
 ## Local Python backend with Docker
 
 The Compose service reads server credentials from the ignored root `.env.local` file.
