@@ -140,8 +140,8 @@ def run_news_pipeline(
             f"{prompt}\n\n"
             "Live news-search evidence has already been collected below. Analyze it now; do not return an "
             "intermediate promise to search. Use the supplied URLs as source candidates. If evidence is "
-            "insufficient, state that explicitly. Respond naturally in Markdown rather than JSON or a "
-            "predefined schema.\n\n"
+            "insufficient, state that explicitly. Respond naturally in Markdown and return the completed "
+            "customer-facing report using the required headings from your instructions.\n\n"
             f"<live_news_search_evidence>\n{live_news_context}\n</live_news_search_evidence>"
         )
         logger.debug("News pipeline research context chars=%d", len(live_news_context))
