@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ThinkingOrb } from "thinking-orbs";
 import type { ApiRequester } from "@/lib/api";
-import { titleCase } from "@/lib/format";
+import { errorMessage } from "@/lib/format";
 import {
   HoverGroup, InlineMessage, SectionHeading, Shimmer, StatusDot, SwapText
 } from "@/app/components/ui";
@@ -53,12 +53,6 @@ function agentDateTime(value?: string | number | null) {
     : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(parsed);
 }
 
-function runDuration(milliseconds?: number) {
-  if (!milliseconds) return "Stored run";
-  const seconds = Math.round(milliseconds / 1000);
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
 function MarkdownAnalysis({ children }: { children: string }) {
   return (
     <div className="news-markdown">
@@ -103,7 +97,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
         if (active) setResult(saved);
       })
       .catch(loadError => {
-        if (active) setError(loadError instanceof Error ? loadError.message : "Saved news sessions could not be loaded.");
+        if (active) setError(errorMessage(loadError, "Saved news reports could not be loaded."));
       })
       .finally(() => { if (active) setLoadingSaved(false); });
     return () => { active = false; };
@@ -117,7 +111,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
     try {
       setResult(await request<NewsAnalysisResponse>(`/api/news/sessions/${sessionId}`));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "The saved news session could not be loaded.");
+      setError(errorMessage(loadError, "The saved news report could not be loaded."));
     } finally {
       setLoadingSaved(false);
     }
@@ -146,7 +140,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
         preview: response.analysis.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, 220)
       }, ...current.filter(session => session.sessionId !== response.sessionId)]);
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : "The news analysis could not be completed.");
+      setError(errorMessage(runError, "The news analysis could not be completed. Please try again."));
     } finally {
       setRunning(false);
     }
@@ -155,14 +149,14 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
   return (
     <div className="news-page">
       <SectionHeading
-        eyebrow="Agent research"
-        title="News intelligence"
-        description="Run the BTC news agent, read its analysis as written, and revisit earlier saved outcomes."
+        eyebrow="Market research"
+        title="Bitcoin news analysis"
+        description="Review current Bitcoin news, its possible market impact, and your earlier reports."
         actions={
           <>
             {result && (
               <div className="news-saved-state">
-                <span><StatusDot tone="active" />Saved in Supabase</span>
+                <span><StatusDot tone="active" />Saved</span>
                 <time>{agentDateTime(result.createdAt)}</time>
               </div>
             )}
@@ -182,10 +176,10 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
       />
 
       {sessions.length > 0 && (
-        <section className="news-sessions" aria-label="Saved news analysis sessions">
+        <section className="news-sessions" aria-label="Saved news reports">
           <header>
-            <span><History aria-hidden="true" />Sessions</span>
-            <small>{sessions.length} saved</small>
+            <span><History aria-hidden="true" />Analysis history</span>
+            <small>{sessions.length} {sessions.length === 1 ? "report" : "reports"}</small>
           </header>
           {/* A horizontal stack of sibling cards, so hovering one lifts it and
               nudges its neighbours with a distance falloff. The return springs,
@@ -201,9 +195,9 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
                 onClick={() => void selectSession(session.sessionId)}
                 title={session.preview}
               >
-                <span>{index === 0 ? "Latest" : `Session ${sessions.length - index}`}</span>
+                <span>{index === 0 ? "Latest" : `Previous ${sessions.length - index}`}</span>
                 <strong>{agentDateTime(session.updatedAt || session.createdAt)}</strong>
-                <small>{session.runCount} {session.runCount === 1 ? "run" : "runs"}</small>
+                <small>{session.runCount} {session.runCount === 1 ? "analysis" : "analyses"}</small>
               </button>
             ))}
           </HoverGroup>
@@ -223,14 +217,6 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
 function Report({ result }: { result: NewsAnalysisResponse }) {
   return (
     <article className="news-report t-reveal">
-      <header className="news-report-meta">
-        <div><small>Model</small><strong>{result.model}</strong></div>
-        <div>
-          <small>Research tools</small>
-          <strong>{result.researchTools.map(titleCase).join(" · ") || "Pre-collected evidence"}</strong>
-        </div>
-        <div><small>Runtime</small><strong>{runDuration(result.elapsedMs)}</strong></div>
-      </header>
       <MarkdownAnalysis>{result.analysis}</MarkdownAnalysis>
       <footer className="news-report-footer">
         <AlertTriangle aria-hidden="true" />
@@ -244,10 +230,10 @@ function EarlierOutcomes({ outcomes }: { outcomes: SavedOutcome[] }) {
   return (
     <section className="news-history">
       <header>
-        <h2>Earlier outcomes</h2>
+        <h2>Earlier analyses</h2>
         <p>{outcomes.length
-          ? `${outcomes.length} stored ${outcomes.length === 1 ? "outcome" : "outcomes"} in this session`
-          : "No earlier outcome is stored in this session."}</p>
+          ? `${outcomes.length} earlier ${outcomes.length === 1 ? "analysis" : "analyses"} in this report history`
+          : "No earlier analysis is available."}</p>
       </header>
       {outcomes.length > 0 && (
         <div className="news-history-list">
@@ -283,7 +269,7 @@ function OutcomeDisclosure({ outcome, index }: { outcome: SavedOutcome; index: n
       >
         <span>{String(index + 1).padStart(2, "0")}</span>
         <time>{agentDateTime(outcome.createdAt)}</time>
-        <strong>{outcome.model}</strong>
+        <strong>Previous analysis</strong>
         <span className="t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
       </button>
       <div className="t-acc-panel" id={panelId} aria-hidden={!open}>
@@ -297,7 +283,7 @@ function OutcomeDisclosure({ outcome, index }: { outcome: SavedOutcome; index: n
 
 function LoadingState() {
   return (
-    <section className="news-status-panel" aria-label="Loading saved agent output">
+    <section className="news-status-panel" aria-label="Loading saved news analysis">
       <span className="news-orb">
         <ThinkingOrb state="working" size={64} theme="dark" aria-label="Loading the saved analysis" />
       </span>
@@ -318,16 +304,16 @@ function LoadingState() {
  */
 function RunningState() {
   return (
-    <section className="news-status-panel" aria-label="News agent is running">
+    <section className="news-status-panel" aria-label="News analysis is running">
       <span className="news-orb">
         <ThinkingOrb state="searching" size={64} theme="dark" aria-label="Collecting and corroborating market evidence" />
       </span>
       <div>
-        <small>Agno research session</small>
-        <h2>Collecting and corroborating market evidence.</h2>
+        <small>News research in progress</small>
+        <h2>Checking current market evidence.</h2>
         <p>
-          The agent is searching current sources, assessing BTC transmission channels, and writing
-          its analysis. Runs typically take one to three minutes.
+          We are reviewing current sources, checking material claims, and assessing possible Bitcoin
+          price and volatility effects. This usually takes one to three minutes.
         </p>
         <span className="news-progress">
           <i aria-hidden="true" /><Shimmer>Analysis in progress</Shimmer>
@@ -342,11 +328,11 @@ function IdleState({ onRun }: { onRun: () => void }) {
     <section className="news-status-panel t-reveal">
       <History aria-hidden="true" />
       <div>
-        <small>No saved output</small>
-        <h2>Run the first news analysis.</h2>
+        <small>No analysis yet</small>
+        <h2>Create your first Bitcoin news report.</h2>
         <p>
-          The agent researches current BTC-relevant events, saves the Agno session in Supabase, and
-          returns its written analysis here.
+          The report reviews current Bitcoin-related events, checks important claims, and saves the
+          completed analysis to your history.
         </p>
         <button type="button" className="button primary" onClick={onRun}>
           <Sparkles aria-hidden="true" />Run analysis
