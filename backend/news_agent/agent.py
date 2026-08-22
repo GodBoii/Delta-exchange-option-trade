@@ -118,8 +118,11 @@ def create_news_agent(
             "Call an event corroborated only when at least two genuinely independent sources support it.",
             "If no event is sufficiently verified, plainly explain the evidence gaps.",
             "Deduplicate syndicated coverage and do not count copied stories as independent confirmation.",
-            "Write the final analysis naturally in clear Markdown. Do not return JSON or a forced schema.",
-            "Use headings, short paragraphs, and lists only where they improve readability.",
+            "Write for an individual investor. Use plain language, short paragraphs, and define specialized terms.",
+            "Use exactly these Markdown headings in this order: ## Summary, ## Market impact, ## Positive factors, ## Risks, ## What to watch next, ## Sources.",
+            "Do not add a separate report title, date heading, executive-summary label, methodology note, or technical appendix.",
+            "Do not mention models, tools, agents, prompts, databases, storage providers, APIs, or internal systems.",
+            "Under Sources, list only the sources cited in the report, using descriptive clickable Markdown links.",
     ])
 
     agent = Agent(
@@ -131,7 +134,7 @@ def create_news_agent(
             "and assesses possible BTC volatility and directional transmission channels."
         ),
         instructions=instructions,
-        expected_output="A natural Markdown research analysis with linked evidence and explicit uncertainty.",
+        expected_output="A customer-facing Markdown market report with fixed headings, linked evidence, and explicit uncertainty.",
         db=db or create_session_db(settings),
         add_history_to_context=True,
         num_history_runs=settings.history_runs,
