@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = BACKEND_DIR / ".env"
 
-MODEL_ID = "deepseek/deepseek-v4-flash-0731"
+MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
+AUTOMATION_SESSION_TABLE = "automation_agent_sessions"
 SESSION_TABLE = "news_agent_sessions"
 DB_SCHEMA = "ai"
 DB_CREATE_SCHEMA = True
@@ -43,6 +44,7 @@ class NewsAgentSettings:
     history_runs: int | None
     default_session_id: str
     default_user_id: str
+    automation_session_table: str = AUTOMATION_SESSION_TABLE
 
     @classmethod
     def load(cls) -> NewsAgentSettings:
@@ -62,9 +64,7 @@ class NewsAgentSettings:
 
     def require_api_key(self) -> str:
         if not self.openrouter_api_key:
-            raise RuntimeError(
-                f"OPENROUTER_API_KEY is missing. Add it to {ENV_FILE} before running the news agent."
-            )
+            raise RuntimeError(f"OPENROUTER_API_KEY is missing. Add it to {ENV_FILE} before running the news agent.")
         return self.openrouter_api_key
 
     def require_database_url(self) -> str:
