@@ -19,6 +19,7 @@ Verified: **2026-08-08**. Exchange capabilities, product listings, limits, and d
 11. [This repository's Delta integration](11-project-integration.md)
 12. [Change watch and migration notes](12-change-watch.md)
 13. [Research questions and verified answers](questions-and-answers.md)
+14. [Automated strategy system](14-automated-strategy-system.md)
 
 ## Source hierarchy
 
