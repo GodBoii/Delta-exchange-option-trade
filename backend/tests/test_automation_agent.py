@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
+from app.automation import build_account_context
 from app.default_strategies import default_strategy_definitions
 from app.engine import TradingEngine
 from app.errors import AppError
@@ -195,3 +196,35 @@ def test_private_chart_upload_returns_signed_url() -> None:
     assert stored[0].signed_url.startswith("https://project.supabase.co/storage/v1/object/sign/")
     assert any(path.endswith("/storage/v1/bucket") for _, path in requests)
     assert any("/storage/v1/object/automation-charts/" in path for _, path in requests)
+
+
+@pytest.mark.asyncio
+async def test_agent_account_context_excludes_balances() -> None:
+    class Client:
+        async def open_orders(self) -> dict:
+            return {"result": [{"product_symbol": "BTCUSD", "side": "buy", "size": 1}]}
+
+        async def positions(self) -> dict:
+            return {"result": [{"product_symbol": "BTCUSD", "size": 1}]}
+
+        async def balances(self) -> dict:
+            raise AssertionError("balances must never be requested for model context")
+
+        async def close(self) -> None:
+            return None
+
+    class Database:
+        async def select(self, _table: str, _query: dict) -> list[dict]:
+            return []
+
+    class Engine:
+        db = Database()
+
+        async def client_for_user(self, _user_id: str) -> Client:
+            return Client()
+
+    context = await build_account_context(Engine(), "user-1")  # type: ignore[arg-type]
+
+    assert "balances" not in context
+    assert context["openOrders"][0]["product_symbol"] == "BTCUSD"
+    assert context["positions"][0]["product_symbol"] == "BTCUSD"
