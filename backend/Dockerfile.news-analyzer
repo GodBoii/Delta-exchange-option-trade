@@ -12,6 +12,8 @@ COPY requirements-news-agent.txt requirements-news-analyzer.txt ./
 RUN pip install --no-cache-dir -r requirements-news-analyzer.txt
 
 COPY news_agent ./news_agent
+COPY automation_agent ./automation_agent
+COPY app ./app
 COPY news_analyzer ./news_analyzer
 RUN chown -R app:app /app
 
