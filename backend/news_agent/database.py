@@ -5,13 +5,13 @@ from sqlalchemy import text
 from .config import NewsAgentSettings
 
 
-def create_session_db(settings: NewsAgentSettings | None = None) -> BaseDb:
+def create_session_db(settings: NewsAgentSettings | None = None, *, session_table: str | None = None) -> BaseDb:
     """Create the Agno session database backed directly by Supabase PostgreSQL."""
     settings = settings or NewsAgentSettings.load()
     return PostgresDb(
         db_url=settings.require_database_url(),
         db_schema=settings.db_schema,
-        session_table=settings.session_table,
+        session_table=session_table or settings.session_table,
         create_schema=settings.db_create_schema,
     )
 
