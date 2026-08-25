@@ -24,6 +24,8 @@ class MarketIntelligenceTools(Toolkit):
         self.delta_url = (delta_url or os.getenv("DELTA_PUBLIC_BASE_URL") or "https://api.india.delta.exchange").rstrip(
             "/"
         )
+        self._btc_cache: dict[str, Any] | None = None
+        self._delta_cache: dict[str, Any] | None = None
         super().__init__(
             name="market_intelligence_tools",
             tools=[self.get_btc_market_packet, self.get_delta_option_context],
@@ -36,12 +38,14 @@ class MarketIntelligenceTools(Toolkit):
         )
 
     def get_btc_market_packet(self) -> str:
-        """Return BTC Spot candles across three timeframes plus live flow, volatility, and order-book analysis."""
-        return json.dumps(self.collect_btc_market_packet(), ensure_ascii=False, default=str)
+        """Return compact BTC Spot trend, flow, volatility, order-book, and timeframe summaries."""
+        packet = self._btc_cache or self.collect_btc_market_packet()
+        return json.dumps(compact_btc_market_packet(packet), ensure_ascii=False, default=str)
 
-    def get_delta_option_context(self) -> str:
-        """Return live Delta BTC option quotes, Greeks, open interest, expiry, strike, and spread context."""
-        return json.dumps(self.collect_delta_option_context(), ensure_ascii=False, default=str)
+    def get_delta_option_context(self, expiry: str | None = None) -> str:
+        """Return Delta expiry summaries and nearby BTC option quotes. Pass an ISO expiry for detailed contracts."""
+        context = self._delta_cache or self.collect_delta_option_context()
+        return json.dumps(compact_delta_option_context(context, expiry=expiry), ensure_ascii=False, default=str)
 
     def collect_btc_market_packet(self) -> dict[str, Any]:
         def load(spec: tuple[str, str, int]) -> tuple[str, dict[str, Any]]:
@@ -58,7 +62,7 @@ class MarketIntelligenceTools(Toolkit):
             loaded = dict(executor.map(load, TIMEFRAMES))
 
         primary = loaded["15 minute"]
-        return {
+        packet = {
             "source": "Binance Spot",
             "symbol": primary.get("symbol"),
             "ticker": primary.get("ticker"),
@@ -76,6 +80,8 @@ class MarketIntelligenceTools(Toolkit):
                 for label, payload in loaded.items()
             },
         }
+        self._btc_cache = packet
+        return packet
 
     def collect_delta_option_context(self) -> dict[str, Any]:
         with httpx.Client(timeout=httpx.Timeout(20, connect=5)) as client:
@@ -112,7 +118,9 @@ class MarketIntelligenceTools(Toolkit):
                 code = _expiry_code(str(option.get("symbol") or ""))
                 option["expiry"] = settlements.get(code or "") or option.get("expiry")
         options.sort(key=lambda item: (str(item.get("expiry")), _number(item.get("strike"))))
-        return {"source": "Delta Exchange", "underlying": "BTC", "count": len(options), "options": options}
+        context = {"source": "Delta Exchange", "underlying": "BTC", "count": len(options), "options": options}
+        self._delta_cache = context
+        return context
 
 
 def summarize_candles(candles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -137,6 +145,150 @@ def summarize_candles(candles: list[dict[str, Any]]) -> dict[str, Any]:
         "low": min(lows),
         "volume": sum(volumes),
     }
+
+
+def compact_btc_market_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    ticker = packet.get("ticker") or {}
+    order_book = packet.get("orderBook") or {}
+    bids = order_book.get("bids") or []
+    asks = order_book.get("asks") or []
+    bid_depth = sum(_number(level[1]) for level in bids[:20] if isinstance(level, list) and len(level) >= 2)
+    ask_depth = sum(_number(level[1]) for level in asks[:20] if isinstance(level, list) and len(level) >= 2)
+    total_depth = bid_depth + ask_depth
+    trades = packet.get("recentTrades") or []
+    buy_volume = sum(
+        _number(trade.get("quoteQuantity"))
+        for trade in trades
+        if isinstance(trade, dict) and trade.get("side") == "buy"
+    )
+    sell_volume = sum(
+        _number(trade.get("quoteQuantity"))
+        for trade in trades
+        if isinstance(trade, dict) and trade.get("side") == "sell"
+    )
+    delta = packet.get("deltaExecutionContext") or {}
+    return {
+        "source": packet.get("source"),
+        "symbol": packet.get("symbol"),
+        "realtime": packet.get("realtime"),
+        "ticker": _pick(
+            ticker,
+            "lastPrice",
+            "priceChange",
+            "priceChangePercent",
+            "highPrice",
+            "lowPrice",
+            "baseVolume",
+            "quoteVolume",
+            "bestBid",
+            "bestAsk",
+        ),
+        "computedAnalysis": packet.get("analysis"),
+        "timeframes": {label: payload.get("summary") for label, payload in (packet.get("timeframes") or {}).items()},
+        "spotOrderBook": {
+            "bestBid": bids[0][0] if bids else None,
+            "bestAsk": asks[0][0] if asks else None,
+            "bidDepthTop20Btc": bid_depth,
+            "askDepthTop20Btc": ask_depth,
+            "imbalance": (bid_depth - ask_depth) / total_depth if total_depth else 0,
+        },
+        "recentTradeFlow": {
+            "sampleSize": len(trades),
+            "buyQuoteVolume": buy_volume,
+            "sellQuoteVolume": sell_volume,
+            "netBuyQuoteVolume": buy_volume - sell_volume,
+        },
+        "deltaExecutionMarket": _pick(
+            delta,
+            "symbol",
+            "lastPrice",
+            "markPrice",
+            "indexPrice",
+            "markBasisPercent",
+            "openInterestBtc",
+            "openInterestUsd",
+            "openInterestChange6hUsd",
+            "fundingRatePercent",
+            "bestBid",
+            "bestAsk",
+            "tradingStatus",
+            "receivedAt",
+        ),
+    }
+
+
+def compact_delta_option_context(context: dict[str, Any], *, expiry: str | None = None) -> dict[str, Any]:
+    options = [option for option in context.get("options") or [] if isinstance(option, dict) and option.get("expiry")]
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for option in options:
+        grouped.setdefault(str(option["expiry"]), []).append(option)
+
+    expiry_summaries = []
+    for settlement, rows in sorted(grouped.items()):
+        spot = next((_number(row.get("spot")) for row in rows if _number(row.get("spot")) > 0), 0)
+        strikes = sorted({_number(row.get("strike")) for row in rows if _number(row.get("strike")) > 0})
+        atm_strike = min(strikes, key=lambda strike: abs(strike - spot)) if strikes and spot else None
+        atm_rows = [row for row in rows if _number(row.get("strike")) == atm_strike]
+        expiry_summaries.append(
+            {
+                "expiry": settlement,
+                "spot": spot,
+                "atmStrike": atm_strike,
+                "atmCall": next((compact_contract(row) for row in atm_rows if row.get("type") == "call_options"), None),
+                "atmPut": next((compact_contract(row) for row in atm_rows if row.get("type") == "put_options"), None),
+                "totalOpenInterest": sum(_number(row.get("openInterest")) for row in rows),
+                "totalVolume": sum(_number(row.get("volume")) for row in rows),
+                "listedContracts": len(rows),
+            }
+        )
+
+    selected_expiry = (
+        _match_expiry(expiry, list(grouped))
+        if expiry
+        else (expiry_summaries[0]["expiry"] if expiry_summaries else None)
+    )
+    selected_rows = grouped.get(str(selected_expiry), [])
+    nearby: list[dict[str, Any]] = []
+    if selected_rows:
+        spot = next((_number(row.get("spot")) for row in selected_rows if _number(row.get("spot")) > 0), 0)
+        nearest_strikes = sorted(
+            sorted({_number(row.get("strike")) for row in selected_rows if _number(row.get("strike")) > 0}),
+            key=lambda strike: abs(strike - spot),
+        )[:5]
+        nearby = [compact_contract(row) for row in selected_rows if _number(row.get("strike")) in nearest_strikes]
+        nearby.sort(key=lambda row: (_number(row.get("strike")), str(row.get("type"))))
+    return {
+        "source": context.get("source"),
+        "underlying": context.get("underlying"),
+        "availableExpiries": expiry_summaries,
+        "detailedExpiry": selected_expiry,
+        "nearbyOptions": nearby,
+        "usage": "Call again with one available expiry when you need its nearby contracts.",
+    }
+
+
+def compact_contract(option: dict[str, Any]) -> dict[str, Any]:
+    return _pick(
+        option,
+        "symbol",
+        "type",
+        "expiry",
+        "strike",
+        "spot",
+        "mark",
+        "bestBid",
+        "bestAsk",
+        "bidSize",
+        "askSize",
+        "impliedVolatility",
+        "openInterest",
+        "volume",
+        "delta",
+        "gamma",
+        "theta",
+        "vega",
+        "contractValue",
+    )
 
 
 def compact_option(row: dict[str, Any]) -> dict[str, Any]:
@@ -169,6 +321,18 @@ def _number(value: Any) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _pick(source: dict[str, Any], *keys: str) -> dict[str, Any]:
+    return {key: source.get(key) for key in keys if source.get(key) not in (None, "")}
+
+
+def _match_expiry(requested: str, available: list[str]) -> str | None:
+    normalized = requested.strip()
+    if normalized in available:
+        return normalized
+    requested_date = normalized[:10]
+    return next((value for value in available if value[:10] == requested_date), None)
 
 
 def _expiry_code(symbol: str) -> str | None:
