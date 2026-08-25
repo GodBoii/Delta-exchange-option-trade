@@ -680,11 +680,9 @@ Delta BTCUSD open-interest chart
 returns and market structure
 VWAP and distance from VWAP
 ATR and realized volatility
-relative volume
 CVD and aggressive trade flow
 bid, ask, spread, and order-book imbalance
-support, resistance, range, and breakout pressure
-sideways and boring-day scores
+market structure and sideways score
 ```
 
 ### News context
@@ -712,6 +710,35 @@ option open interest
 ```
 
 Slippage handling, order recovery, actual margin checks, fill reconciliation, and execution fallbacks remain deterministic execution responsibilities. They are not part of the AI decision.
+
+### Read-only market tools
+
+`get_btc_market_packet` returns compact data rather than raw candle arrays:
+
+```text
+last price, 24-hour change, high, low, bid, ask, and volume
+ATR, historical volatility, VWAP, CVD, market structure, and sideways score
+1-minute, 15-minute, and daily OHLC, return, range, and volume summaries
+top-of-book price, cumulative depth, and imbalance
+recent aggressive buy and sell flow
+Delta BTCUSD mark, index, basis, OI, funding, and execution quotes
+```
+
+`get_delta_option_context` returns:
+
+```text
+every exact listed settlement time
+ATM call and put for each expiry
+expiry-level OI, volume, spot, and listed-contract count
+five strikes nearest spot for the selected expiry
+bid, ask, mark, IV, delta, gamma, theta, vega, OI, volume, and contract value
+```
+
+The complete candles and all Delta option rows stay in the database snapshot. They are not copied into model context.
+
+### Chart storage
+
+Each chart is uploaded to the private Supabase `automation-charts` bucket. The model and Automation UI receive time-limited signed URLs for the same stored PNG objects. Account balances are never added to model context.
 
 ## 9. AI tools
 
