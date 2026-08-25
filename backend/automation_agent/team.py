@@ -22,6 +22,7 @@ from .charts import (
     render_volume_chart,
 )
 from .market import MarketIntelligenceTools
+from .storage import ChartArtifact, SupabaseChartStorage
 from .tools import AutomationStrategyTools, save_market_snapshot
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,17 @@ def run_automation_team(
     market_tools = MarketIntelligenceTools()
     market_packet = market_tools.collect_btc_market_packet()
     option_context = market_tools.collect_delta_option_context()
-    combined_market_packet = {**market_packet, "deltaOptionContext": option_context}
+    chart_artifacts = _chart_artifacts(market_packet)
+    stored_charts = SupabaseChartStorage(settings).upload_run_charts(
+        user_id=user_id,
+        agent_run_id=agent_run_id,
+        charts=chart_artifacts,
+    )
+    combined_market_packet = {
+        **market_packet,
+        "deltaOptionContext": option_context,
+        "chartImages": [chart.stored_metadata() for chart in stored_charts],
+    }
     market_snapshot_id = save_market_snapshot(
         settings,
         user_id=user_id,
@@ -83,16 +94,39 @@ def run_automation_team(
         team = Team(
             id="btc-strategy-automation-team",
             name="BTC Strategy Automation Team",
+            role=(
+                "BTC options analysis agent that identifies sideways, bullish, bearish, and volatility trends, "
+                "then schedules the saved strategy most likely to profit."
+            ),
             model=model,
             members=[news_agent],
             tools=[market_tools, strategy_tools],
             description=(
-                "A BTC options analysis team. The leader combines spot charts, market structure, Delta option pricing, "
-                "account risk, saved strategy rules, and a delegated news report."
+                "Analyze BTCUSD, compare the user's saved option strategies, and schedule a suitable live trade time."
             ),
             instructions=[
-                "Delegate current-event research to the News Intelligence Analyst before reaching a market decision.",
-                "Use the news member's completed analysis as evidence. Do not recreate or skip its research role.",
+                (
+                    "You operate inside a live BTCUSD options system. Analyze whether the market is sideways, bullish, "
+                    "bearish, breaking out, or expanding in volatility."
+                ),
+                (
+                    "The strategies were created by the user. Call show_available_strategy to receive every complete "
+                    "definition, including category, index, price source, holding type, risk, take profit, order type, "
+                    "legs, option types, and positions."
+                ),
+                (
+                    "Use each strategy exactly as saved. Decide which one can profit in the current market and when "
+                    "to enter."
+                ),
+                (
+                    "select_strategy_and_time schedules that saved strategy on the live engine for the chosen time. "
+                    "The engine applies the user's trading budget, calculates lots, and executes later."
+                ),
+                (
+                    "If the market is unclear, use scheduled_next_agent_run for the exact time when you need fresh "
+                    "evidence. Do not force a trade."
+                ),
+                "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
                 (
                     "Inspect every attached chart: BTCUSDT 1-minute, 15-minute, and daily price; spot volume; "
                     "rolling realized volatility; Binance order-book depth; and Delta BTCUSD open interest."
@@ -105,11 +139,6 @@ def run_automation_team(
                 (
                     "Use Delta option quotes, IV, Greeks, OI, spread, depth, and account data only for pricing, "
                     "suitability, and risk."
-                ),
-                "Call show_available_strategy before proposing anything. You may select only an enabled saved version.",
-                (
-                    "Never invent, edit, resize, or weaken a saved strategy. Stops, targets, expiry policy, and "
-                    "capital rules remain owned by the saved definition and scheduler."
                 ),
                 (
                     "Choose exactly one outcome: select one strategy, schedule one future agent run, or record no "
@@ -134,6 +163,10 @@ def run_automation_team(
                 "A completed Markdown decision report backed by a terminal outcome and explicit "
                 "invalidation conditions."
             ),
+            additional_context=(
+                "Current open Delta orders, positions, and active strategies. Account balances are intentionally "
+                f"excluded: {json.dumps(account_context, ensure_ascii=False, default=str)}"
+            ),
             db=team_db,
             add_history_to_context=True,
             num_history_runs=10,
@@ -149,36 +182,25 @@ def run_automation_team(
             telemetry=False,
         )
 
-        images = _chart_images(market_packet)
-        compact_market = {
-            "source": market_packet.get("source"),
-            "ticker": market_packet.get("ticker"),
-            "analysis": market_packet.get("analysis"),
-            "orderBook": market_packet.get("orderBook"),
-            "realtime": market_packet.get("realtime"),
-            "deltaExecutionContext": market_packet.get("deltaExecutionContext"),
-            "timeframes": {
-                name: payload.get("summary") for name, payload in (market_packet.get("timeframes") or {}).items()
-            },
-            "deltaOptionContext": option_context,
-        }
-        prompt = (
-            "Run the complete BTC strategy-selection review now. Start by delegating current-news research to the news "
-            "member. Then inspect the attached charts, the prepared market packet, account state, option context, and "
-            "saved strategies. Use a persistence tool only when its validation rules pass.\n\n"
-            f"Trigger reason: {trigger_reason or 'manual review'}\n"
-            f"Market snapshot id: {market_snapshot_id}\n"
-            "<prepared_market_packet>"
-            f"{json.dumps(compact_market, ensure_ascii=False, default=str)}"
-            "</prepared_market_packet>\n"
-            f"<account_context>{json.dumps(account_context, ensure_ascii=False, default=str)}</account_context>"
-        )
+        images = [
+            Image(
+                url=chart.signed_url,
+                id=chart.id,
+                alt_text=chart.alt_text,
+                detail="high",
+            )
+            for chart in stored_charts
+        ]
         stored_session_id = f"automation:{user_id}:{session_id}"
         response = team.run(
-            prompt,
+            "Analyze the current BTC market and choose the appropriate live action.",
             session_id=stored_session_id,
             user_id=user_id,
             images=images,
+            metadata={
+                "triggerReason": trigger_reason or "scheduled market analysis",
+                "marketSnapshotId": market_snapshot_id,
+            },
         )
         if not isinstance(response, TeamRunOutput):
             raise RuntimeError("Automation team returned an unexpected streaming response")
@@ -200,17 +222,16 @@ def run_automation_team(
         team_db.close()
 
 
-def _chart_images(market_packet: dict[str, Any]) -> list[Image]:
-    images: list[Image] = []
+def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
+    charts: list[ChartArtifact] = []
 
-    def add(chart: bytes, image_id: str, alt_text: str) -> None:
+    def add(chart: bytes, image_id: str, label: str, alt_text: str) -> None:
         if chart:
-            images.append(
-                Image(
+            charts.append(
+                ChartArtifact(
                     content=chart,
-                    mime_type="image/png",
-                    format="png",
                     id=image_id,
+                    label=label,
                     alt_text=alt_text,
                 )
             )
@@ -220,28 +241,37 @@ def _chart_images(market_packet: dict[str, Any]) -> list[Image]:
         add(
             chart,
             f"btc-{str(label).replace(' ', '-')}",
+            f"BTCUSDT {label} price",
             f"BTCUSDT {label} candlestick chart from Binance Spot",
         )
     fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
     candles = fifteen_minute.get("candles") or []
-    add(render_volume_chart("15 minute", candles), "btc-volume", "BTCUSDT 15-minute spot volume chart")
+    add(
+        render_volume_chart("15 minute", candles),
+        "btc-volume",
+        "BTCUSDT 15-minute volume",
+        "BTCUSDT 15-minute spot volume chart",
+    )
     add(
         render_volatility_chart("15 minute", candles, 365 * 24 * 4),
         "btc-volatility",
+        "BTCUSDT realized volatility",
         "BTCUSDT rolling realized volatility chart",
     )
     add(
         render_order_book_chart(market_packet.get("orderBook") or {}),
         "btc-order-book",
+        "Binance Spot order-book depth",
         "BTCUSDT Binance Spot cumulative order-book depth chart",
     )
     delta_context = market_packet.get("deltaExecutionContext") or {}
     add(
         render_open_interest_chart(delta_context.get("openInterestHistory") or []),
         "delta-open-interest",
+        "Delta BTCUSD open interest",
         "Delta BTCUSD open-interest history chart",
     )
-    return images
+    return charts
 
 
 def _response_summary(response: Any) -> dict[str, Any]:
