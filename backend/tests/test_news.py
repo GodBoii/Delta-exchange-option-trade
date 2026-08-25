@@ -1,92 +1,74 @@
-from typing import Any
+from types import SimpleNamespace
 
-import httpx
 import pytest
-from pydantic import ValidationError
 
 from app import news
 from app.errors import AppError
 
-
-class FakeAsyncClient:
-    def __init__(self, response: httpx.Response, captured: dict[str, Any], **_: Any) -> None:
-        self.response = response
-        self.captured = captured
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_: Any) -> None:
-        return None
-
-    async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        self.captured.update({"method": method, "url": url, **kwargs})
-        return self.response
+SESSION_ID = "11111111-1111-4111-8111-111111111111"
+NEWS_MEMBER = {
+    "runId": "news-run-1",
+    "agentId": "news-intelligence-analyst",
+    "agentName": "News Intelligence Analyst",
+    "model": "deepseek/deepseek-v4-flash-vision-exp",
+    "content": "## Summary\nBitcoin news analysis.",
+    "createdAt": "2026-08-25T00:00:00Z",
+    "researchTools": ["search_news", "read_news_article"],
+}
 
 
-def install_fake_client(monkeypatch, response: httpx.Response, captured: dict[str, Any]) -> None:
-    monkeypatch.setattr(
-        news.httpx,
-        "AsyncClient",
-        lambda **kwargs: FakeAsyncClient(response, captured, **kwargs),
-    )
+class FakeDB:
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+        self.queries: list[dict] = []
+
+    async def select(self, table: str, query: dict) -> list[dict]:
+        assert table == "automation_agent_runs"
+        self.queries.append(query)
+        if query.get("id") and query["id"] != f"eq.{SESSION_ID}":
+            return []
+        return self.rows
 
 
-def test_news_request_normalizes_query_and_rejects_unknown_fields() -> None:
-    request = news.NewsAnalysisRequest(query="  Analyze   recent Bitcoin news  ", sessionId="btc-desk")
-    assert request.query == "Analyze recent Bitcoin news"
-    with pytest.raises(ValidationError):
-        news.NewsAnalysisRequest.model_validate(
-            {"query": "Analyze recent Bitcoin news", "sessionId": "btc-desk", "execute": True}
-        )
+def request_with(rows: list[dict]) -> SimpleNamespace:
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=FakeDB(rows))))
 
 
-@pytest.mark.asyncio
-async def test_get_news_session_proxies_authenticated_user(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-    expected = {"success": True, "sessionId": "btc-desk", "history": []}
-    install_fake_client(monkeypatch, httpx.Response(200, json=expected), captured)
-
-    response = await news.get_news_session("btc-desk", {"id": "user-9"})
-
-    assert response == expected
-    assert captured["method"] == "GET"
-    assert captured["url"].endswith("/v1/sessions/btc-desk")
-    assert captured["params"] == {"userId": "user-9"}
+def completed_row(member_responses: list[dict] | None = None) -> dict:
+    return {
+        "id": SESSION_ID,
+        "agno_run_id": "team-run-1",
+        "model_id": "deepseek/deepseek-v4-flash-vision-exp",
+        "member_responses": member_responses if member_responses is not None else [NEWS_MEMBER],
+        "created_at": "2026-08-25T00:00:00Z",
+        "updated_at": "2026-08-25T00:05:00Z",
+    }
 
 
 @pytest.mark.asyncio
-async def test_analyze_news_proxies_user_without_exposing_it_in_frontend(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-    expected = {"success": True, "sessionId": "btc-desk", "history": []}
-    install_fake_client(monkeypatch, httpx.Response(200, json=expected), captured)
+async def test_lists_news_member_runs_from_main_automation_history() -> None:
+    request = request_with([completed_row()])
 
-    response = await news.analyze_news(
-        news.NewsAnalysisRequest(query="Analyze recent Bitcoin news", sessionId="btc-desk"),
-        {"id": "user-7"},
-    )
+    response = await news.list_news_sessions(request, {"id": "user-9"})
 
-    assert response == expected
-    assert captured["method"] == "POST"
-    assert captured["url"].endswith("/v1/analyze")
-    assert captured["json"]["userId"] == "user-7"
-    assert captured["json"]["query"] == "Analyze recent Bitcoin news"
+    assert response["success"] is True
+    assert response["sessions"][0]["sessionId"] == SESSION_ID
+    assert response["sessions"][0]["runId"] == "news-run-1"
+    assert "Bitcoin news analysis" in response["sessions"][0]["preview"]
 
 
 @pytest.mark.asyncio
-async def test_news_analyzer_error_is_preserved(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-    install_fake_client(
-        monkeypatch,
-        httpx.Response(
-            404,
-            json={"success": False, "error": {"code": "news_session_not_found", "message": "No output"}},
-        ),
-        captured,
-    )
+async def test_reads_original_news_member_markdown_from_main_run() -> None:
+    response = await news.get_news_session(SESSION_ID, request_with([completed_row()]), {"id": "user-9"})
 
+    assert response["analysis"] == NEWS_MEMBER["content"]
+    assert response["researchTools"] == NEWS_MEMBER["researchTools"]
+    assert response["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_rejects_main_run_without_news_member() -> None:
     with pytest.raises(AppError) as caught:
-        await news.get_news_session("btc-desk", {"id": "user-9"})
+        await news.get_news_session(SESSION_ID, request_with([completed_row([])]), {"id": "user-9"})
 
-    assert caught.value.status == 404
-    assert caught.value.code == "news_session_not_found"
+    assert caught.value.code == "news_member_not_found"
