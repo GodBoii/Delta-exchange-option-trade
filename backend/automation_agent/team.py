@@ -65,6 +65,7 @@ def run_automation_team(
     market_snapshot_id = save_market_snapshot(
         settings,
         user_id=user_id,
+        agent_run_id=agent_run_id,
         market_packet=combined_market_packet,
         account_context=account_context,
     )
