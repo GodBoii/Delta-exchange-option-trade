@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { Activity, Bot, CalendarClock, Play, RefreshCw, ShieldCheck, Workflow } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -124,9 +125,12 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
           meta={latest ? `${titleCase(latest.status)} · ${formatDateTime(latest.scheduledFor)}` : "No run saved"}
         />
         {latest?.report ? (
-          <article className="automation-report news-markdown">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{latest.report}</ReactMarkdown>
-          </article>
+          <div className="automation-run-output">
+            <RunCharts charts={latest.charts} />
+            <article className="automation-report news-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{latest.report}</ReactMarkdown>
+            </article>
+          </div>
         ) : latest?.error ? (
           <InlineMessage tone="error">{latest.error}</InlineMessage>
         ) : (
@@ -157,6 +161,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
                   </StatusChip>
                 </summary>
                 <div className="automation-run-body">
+                  <RunCharts charts={run.charts} />
                   {run.report ? (
                     <article className="news-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{run.report}</ReactMarkdown></article>
                   ) : run.error ? (
@@ -204,5 +209,25 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
         )}
       </Panel>
     </div>
+  );
+}
+
+function RunCharts({ charts }: { charts: AutomationOverviewData["runs"][number]["charts"] }) {
+  if (!charts.length) return null;
+  return (
+    <section className="automation-chart-section" aria-label="Charts supplied to this agent run">
+      <header>
+        <strong>Agent chart inputs</strong>
+        <small>{charts.length} signed images from this exact run</small>
+      </header>
+      <div className="automation-chart-grid">
+        {charts.map(chart => (
+          <figure key={chart.id}>
+            <Image src={chart.url} alt={chart.altText} width={1200} height={640} unoptimized />
+            <figcaption>{chart.label}</figcaption>
+          </figure>
+        ))}
+      </div>
+    </section>
   );
 }
