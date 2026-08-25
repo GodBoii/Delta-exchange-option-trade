@@ -303,3 +303,57 @@ async def test_scheduled_strategy_can_be_cancelled_before_entry() -> None:
 
     assert db.strategy["status"] == "cancelled"
     assert db.strategy["entry_execution_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> None:
+    class SchedulerDB:
+        def __init__(self) -> None:
+            self.strategy = {
+                "id": "scheduled-1",
+                "status": "scheduled",
+                "entry_at": (datetime.now(UTC) - timedelta(seconds=2)).isoformat(),
+                "entry_execution_at": None,
+                "last_error": None,
+            }
+            self.proposal_status: dict = {}
+
+        async def select(self, table: str, query: dict) -> list[dict]:
+            assert table == "strategies"
+            if query.get("status") == "eq.scheduled" and self.strategy["status"] == "scheduled":
+                return [{"id": self.strategy["id"], "entry_at": self.strategy["entry_at"]}]
+            return []
+
+        async def update(self, table: str, value: dict, query: dict) -> list[dict]:
+            if table == "strategies":
+                if self.strategy["status"] != "scheduled":
+                    return []
+                self.strategy.update(deepcopy(value))
+                return [{"id": self.strategy["id"]}]
+            if table == "strategy_proposals":
+                self.proposal_status.update(deepcopy(value))
+                return [{"id": "proposal-1"}]
+            raise AssertionError(f"Unexpected update: {table}")
+
+    db = SchedulerDB()
+    engine = TradingEngine(db, settings(max_entry_lateness_seconds=180))  # type: ignore[arg-type]
+    attempts = 0
+
+    async def no_active_risks() -> None:
+        return None
+
+    async def reject_for_budget(_strategy_id: str) -> dict:
+        nonlocal attempts
+        attempts += 1
+        raise AppError(409, "One lot does not fit inside an account capital slot", "automatic_lot_too_large")
+
+    engine.process_active_risks = no_active_risks  # type: ignore[method-assign]
+    engine.execute_entry = reject_for_budget  # type: ignore[method-assign]
+
+    await engine.process_due_strategies()
+    await engine.process_due_strategies()
+
+    assert attempts == 1
+    assert db.strategy["status"] == "attention"
+    assert db.strategy["last_error"] == "Entry not placed: One lot does not fit inside an account capital slot"
+    assert db.proposal_status["status"] == "rejected"
