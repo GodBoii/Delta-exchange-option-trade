@@ -11,7 +11,12 @@ from .config import Settings
 from .delta import DeltaClient
 from .errors import AppError
 from .models import StrategyDefinition
-from .strategy import combined_premium_metrics, deferred_control_warnings, delta_expiry, resolve_leg
+from .strategy import (
+    deferred_control_warnings,
+    delta_expiry,
+    resolve_leg,
+    strategy_level_metrics,
+)
 from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
@@ -125,8 +130,13 @@ def settlement_summary(orders: list[dict[str, Any]]) -> dict[str, Any]:
         symbol = str(order.get("product_symbol") or "unknown")
         bucket = symbols.setdefault(
             symbol,
-            {"entryPremium": Decimal("0"), "exitPremium": Decimal("0"), "commission": Decimal("0"),
-             "entryLots": Decimal("0"), "exitLots": Decimal("0")},
+            {
+                "entryPremium": Decimal("0"),
+                "exitPremium": Decimal("0"),
+                "commission": Decimal("0"),
+                "entryLots": Decimal("0"),
+                "exitLots": Decimal("0"),
+            },
         )
         bucket["exitPremium" if is_exit else "entryPremium"] += cash
         bucket["exitLots" if is_exit else "entryLots"] += filled
@@ -191,6 +201,83 @@ class TradingEngine:
                 )["result"]
             resolved.append(resolve_leg(leg, chains[expiry]))
         return resolved
+
+    async def apply_automatic_lots(
+        self,
+        client: DeltaClient,
+        definition: StrategyDefinition,
+        resolved: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if definition.lotsMode != "auto":
+            return resolved
+        balances = (await client.balances()).get("result") or []
+        available_values = [
+            decimal_value(item.get("available_balance"))
+            for item in balances
+            if isinstance(item, dict) and decimal_value(item.get("available_balance")) > 0
+        ]
+        if not available_values:
+            raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
+        slot_value = max(available_values) / Decimal("3")
+        contract_values = await asyncio.gather(
+            *(self.contract_value(client, str(leg["productSymbol"])) for leg in resolved)
+        )
+
+        signed_premium = Decimal("0")
+        for leg, multiplier in zip(resolved, contract_values, strict=True):
+            mark = decimal_value(leg.get("markPrice"))
+            if mark <= 0 or multiplier <= 0:
+                raise AppError(409, "A live option price is unavailable for automatic lots", "option_price_unavailable")
+            direction = Decimal("1") if leg["position"] == "sell" else Decimal("-1")
+            signed_premium += direction * mark * multiplier
+            leg["contractValue"] = str(multiplier)
+
+        if definition.riskBasis == "net_debit":
+            risk_per_lot = -signed_premium
+        elif definition.riskBasis == "defined_max_loss":
+            widths: list[Decimal] = []
+            for option_type in ("call", "put"):
+                short_strikes = [
+                    decimal_value(leg.get("strike"))
+                    for leg in resolved
+                    if leg["optionType"] == option_type and leg["position"] == "sell"
+                ]
+                long_strikes = [
+                    decimal_value(leg.get("strike"))
+                    for leg in resolved
+                    if leg["optionType"] == option_type and leg["position"] == "buy"
+                ]
+                if short_strikes and long_strikes:
+                    widths.append(
+                        min(abs(long - short) for long in long_strikes for short in short_strikes) * contract_values[0]
+                    )
+            risk_per_lot = max(widths, default=Decimal("0")) - signed_premium
+        else:
+            risk_per_lot = signed_premium * decimal_value(definition.stopLossPercent) / Decimal("100")
+        if risk_per_lot <= 0:
+            raise AppError(409, "Automatic lot risk could not be calculated", "automatic_lot_risk_invalid")
+
+        lots_by_risk = int(slot_value // risk_per_lot)
+        hard_cap = definition.maximumLots or 1
+        lots = min(lots_by_risk, hard_cap)
+        if lots < 1:
+            raise AppError(409, "One lot does not fit inside an account capital slot", "automatic_lot_too_large")
+        return [{**leg, "lots": lots} for leg in resolved]
+
+    async def reserve_capital_slot(self, user_id: str, strategy_id: str) -> int:
+        slot = await self.db.rpc(
+            "reserve_strategy_capital_slot",
+            {"p_user_id": user_id, "p_strategy_id": strategy_id},
+        )
+        if slot is None:
+            raise AppError(409, "All three account capital slots are occupied", "capital_slots_full")
+        return int(slot)
+
+    async def release_capital_slot(self, user_id: str, strategy_id: str) -> None:
+        await self.db.rpc(
+            "release_strategy_capital_slot",
+            {"p_user_id": user_id, "p_strategy_id": strategy_id},
+        )
 
     async def preview_strategy(self, client: DeltaClient, definition: StrategyDefinition) -> dict[str, Any]:
         legs = await self.resolve_strategy(client, definition)
@@ -305,9 +392,7 @@ class TradingEngine:
 
     async def record_order(self, order: dict[str, Any]) -> None:
         payload = {
-            key: value
-            for key, value in order.items()
-            if value is not None or key not in OPTIONAL_ORDER_METADATA
+            key: value for key, value in order.items() if value is not None or key not in OPTIONAL_ORDER_METADATA
         }
         try:
             rows = await self.db.insert("execution_orders", payload)
@@ -379,9 +464,7 @@ class TradingEngine:
         while True:
             live_size = await self.live_position_size(client, product_id)
             if live_size == 0 or (
-                expected_size != 0
-                and live_size * initial_size > 0
-                and abs(live_size) <= abs(expected_size)
+                expected_size != 0 and live_size * initial_size > 0 and abs(live_size) <= abs(expected_size)
             ):
                 return live_size
             if time.monotonic() >= deadline:
@@ -445,12 +528,18 @@ class TradingEngine:
         client = await self.client_for_user(str(row["user_id"]))
         try:
             resolved = await self.resolve_strategy(client, definition)
-            await self.claim_strategy(strategy_id, ["draft", "scheduled"], "executing_entry", "entry_execution_at")
-            executions = await self.db.insert(
-                "executions", {"strategy_id": strategy_id, "kind": "entry", "status": "running"}
-            )
-            if not executions:
-                raise AppError(500, "Could not start the execution record", "execution_record_failed")
+            resolved = await self.apply_automatic_lots(client, definition, resolved)
+            capital_slot = await self.reserve_capital_slot(str(row["user_id"]), strategy_id)
+            try:
+                await self.claim_strategy(strategy_id, ["draft", "scheduled"], "executing_entry", "entry_execution_at")
+                executions = await self.db.insert(
+                    "executions", {"strategy_id": strategy_id, "kind": "entry", "status": "running"}
+                )
+                if not executions:
+                    raise AppError(500, "Could not start the execution record", "execution_record_failed")
+            except Exception:
+                await self.release_capital_slot(str(row["user_id"]), strategy_id)
+                raise
             execution_id = str(executions[0]["id"])
             failure: Exception | None = None
             for index, leg in enumerate(resolved):
@@ -513,9 +602,7 @@ class TradingEngine:
                             "limit_price": str(leg["limitPrice"]) if leg.get("limitPrice") is not None else None,
                             "reference_price": reference_price,
                             "response_json": order,
-                            **slippage_fields(
-                                str(leg["position"]), reference_price, result.get("average_fill_price")
-                            ),
+                            **slippage_fields(str(leg["position"]), reference_price, result.get("average_fill_price")),
                         }
                     )
                 except Exception as exc:
@@ -560,7 +647,21 @@ class TradingEngine:
             )
             if failure:
                 raise failure
-            return {"executionId": execution_id, "legs": len(resolved)}
+            await self.db.update(
+                "strategy_capital_slots",
+                {"status": "active"},
+                {
+                    "user_id": f"eq.{row['user_id']}",
+                    "strategy_id": f"eq.{strategy_id}",
+                    "status": "eq.reserved",
+                },
+            )
+            await self.write_audit(
+                "strategy_proposals",
+                {"status": "activated"},
+                {"strategy_id": f"eq.{strategy_id}", "status": "eq.scheduled"},
+            )
+            return {"executionId": execution_id, "legs": len(resolved), "capitalSlot": capital_slot}
         finally:
             await client.close()
 
@@ -583,9 +684,7 @@ class TradingEngine:
             },
         )
 
-    async def reconcile_entry_fills(
-        self, client: DeltaClient, orders: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    async def reconcile_entry_fills(self, client: DeltaClient, orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not orders:
             return orders
         product_ids = sorted({int(order["product_id"]) for order in orders})
@@ -608,9 +707,7 @@ class TradingEngine:
                 )
                 average_fill_price = notional / filled_size if filled_size else Decimal("0")
                 commission = sum((decimal_value(fill.get("commission")) for fill in order_fills), Decimal("0"))
-                slippage = slippage_fields(
-                    str(order.get("side")), order.get("reference_price"), average_fill_price
-                )
+                slippage = slippage_fields(str(order.get("side")), order.get("reference_price"), average_fill_price)
                 order = {
                     **order,
                     "filled_size": str(filled_size),
@@ -662,9 +759,7 @@ class TradingEngine:
         )
         return [{**row, "kind": kinds.get(str(row["execution_id"]), "entry")} for row in rows]
 
-    async def enrich_contract_values(
-        self, client: DeltaClient, orders: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    async def enrich_contract_values(self, client: DeltaClient, orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Backfill the per-lot contract value on recorded orders so premium maths
         is exact. Delta's product endpoint is public and the result is cached, so
@@ -684,15 +779,11 @@ class TradingEngine:
                 enriched.append(order)
                 continue
             if order.get("id"):
-                await self.write_audit(
-                    "execution_orders", {"contract_value": str(value)}, {"id": f"eq.{order['id']}"}
-                )
+                await self.write_audit("execution_orders", {"contract_value": str(value)}, {"id": f"eq.{order['id']}"})
             enriched.append({**order, "contract_value": str(value)})
         return enriched
 
-    async def record_settlement(
-        self, client: DeltaClient, strategy_id: str
-    ) -> dict[str, Any] | None:
+    async def record_settlement(self, client: DeltaClient, strategy_id: str) -> dict[str, Any] | None:
         """
         Persist the money view of a finished run. Reporting only: a failure here
         is logged and never changes the execution outcome.
@@ -832,7 +923,7 @@ class TradingEngine:
 
     async def monitor_combined_strategy(self, row: dict[str, Any]) -> bool:
         definition = StrategyDefinition.model_validate(row["definition_json"])
-        if definition.riskMode != "combined_premium" or not definition.combinedStopLossPercent:
+        if definition.riskMode not in {"combined_premium", "strategy_level"}:
             return False
         client = await self.client_for_user(str(row["user_id"]))
         try:
@@ -842,9 +933,11 @@ class TradingEngine:
                 decimal_value(order.get("filled_size")) >= decimal_value(order.get("size")) for order in orders
             )
             risk_state: dict[str, Any] = {
-                "mode": "combined_premium",
+                "mode": "strategy_level",
                 "status": "armed" if ready else "awaiting_fills",
-                "stopPercent": str(definition.combinedStopLossPercent),
+                "riskBasis": definition.riskBasis,
+                "stopPercent": str(definition.stopLossPercent),
+                "takeProfitPercent": str(definition.takeProfitPercent),
                 "legs": [
                     {
                         "legId": order["leg_id"],
@@ -888,13 +981,16 @@ class TradingEngine:
                         "contract_value": multiplier,
                     }
                 )
-            metrics = combined_premium_metrics(
-                priced_legs, decimal_value(definition.combinedStopLossPercent)
+            metrics = strategy_level_metrics(
+                priced_legs,
+                risk_basis=definition.riskBasis,
+                stop_percent=decimal_value(definition.stopLossPercent),
+                take_profit_percent=decimal_value(definition.takeProfitPercent),
             )
-            entry_credit = metrics["entry_credit"]
-            close_cost = metrics["close_cost"]
-            if entry_credit <= 0:
-                risk_state.update({"status": "attention", "message": "Combined entry credit is not positive"})
+            entry_value = metrics["entry_value"]
+            current_value = metrics["current_value"]
+            if not isinstance(entry_value, Decimal) or entry_value <= 0:
+                risk_state.update({"status": "attention", "message": "The strategy entry risk basis is not positive"})
                 await self.db.update(
                     "strategies",
                     {"risk_state": risk_state, "risk_monitor_at": iso_now()},
@@ -902,14 +998,15 @@ class TradingEngine:
                 )
                 return False
 
-            trigger_cost = metrics["trigger_close_cost"]
             risk_state.update(
                 {
-                    "entryCredit": str(entry_credit),
-                    "currentCloseCost": str(close_cost),
-                    "triggerCloseCost": str(trigger_cost),
-                    "loss": str(close_cost - entry_credit),
-                    "progress": str(max(Decimal("0"), (close_cost - entry_credit) / entry_credit * 100)),
+                    "entryValue": str(entry_value),
+                    "currentValue": str(current_value),
+                    "currentValueLabel": metrics["current_label"],
+                    "stopValue": str(metrics["stop_value"]),
+                    "targetValue": str(metrics["target_value"]),
+                    "profit": str(metrics["profit"]),
+                    "returnPercent": str(Decimal(str(metrics["profit"])) / entry_value * 100),
                     "pricedAt": iso_now(),
                 }
             )
@@ -918,11 +1015,15 @@ class TradingEngine:
                 {"risk_state": risk_state, "risk_monitor_at": iso_now()},
                 {"id": f"eq.{row['id']}", "status": "eq.active"},
             )
-            if close_cost < trigger_cost:
+            trigger_reason = (
+                "stop_loss" if metrics["stop_triggered"] else "take_profit" if metrics["target_triggered"] else None
+            )
+            if not trigger_reason:
                 return False
 
             triggered_at = iso_now()
             risk_state["status"] = "triggered"
+            risk_state["exitReason"] = trigger_reason
             claimed = await self.db.update(
                 "strategies",
                 {
@@ -1061,9 +1162,7 @@ class TradingEngine:
                             "position_direction_mismatch",
                         )
                     close_size = min(abs(live_size), abs(owned_signed_size))
-                    client_order_id = (
-                        f"dx_{strategy_id[:8]}_{index}_{base36(int(time.time() * 1000))}"[:32]
-                    )
+                    client_order_id = f"dx_{strategy_id[:8]}_{index}_{base36(int(time.time() * 1000))}"[:32]
                     # Slippage baseline for the close. Never allowed to delay or
                     # block the exit itself.
                     reference_price: str | None = None
@@ -1096,9 +1195,7 @@ class TradingEngine:
                             "size": int(close_size),
                             "filled_size": str(max(Decimal("0"), requested_size - unfilled_size)),
                             "average_fill_price": result.get("average_fill_price"),
-                            "commission": str(
-                                decimal_value(result.get("paid_commission") or result.get("commission"))
-                            ),
+                            "commission": str(decimal_value(result.get("paid_commission") or result.get("commission"))),
                             "state": str(result.get("state") or "submitted"),
                             "order_type": "market_order",
                             "reference_price": reference_price,
@@ -1106,9 +1203,7 @@ class TradingEngine:
                             **slippage_fields(close_side, reference_price, result.get("average_fill_price")),
                         }
                     )
-                    remaining_size = await self.verify_position_reduction(
-                        client, product_id, close_size, live_size
-                    )
+                    remaining_size = await self.verify_position_reduction(client, product_id, close_size, live_size)
                     verified += 1
                     await self.db.update(
                         "execution_orders",
@@ -1165,6 +1260,7 @@ class TradingEngine:
             settlement = await self.record_settlement(client, strategy_id)
             if failure:
                 raise failure
+            await self.release_capital_slot(str(row["user_id"]), strategy_id)
             return {
                 "executionId": execution_id,
                 "ordersSubmitted": submitted,
