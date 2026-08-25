@@ -55,18 +55,35 @@ const newLeg = (overrides: Partial<StrategyLeg> = {}): StrategyLeg => ({
 });
 
 const initialStrategy = (): StrategyDefinition => ({
+  schemaVersion: 2,
+  version: 1,
   name: "BTC ATM short straddle",
+  description: "Sell the same-expiry ATM call and put when BTC is expected to remain in a tight range.",
+  category: "premium_selling",
+  marketOutlook: "sideways",
+  enabledForAi: true,
   instrument: { index: "BTCUSD", underlying: "BTC", underlyingFrom: "cash" },
   entry: { strategyType: "intraday", entryAt: toIso(localDateTime(1)), exitAt: toIso(localDateTime(8)) },
+  holdingMode: "hold_to_expiry",
+  expiryPolicy: "same_day",
+  exitMinutesBeforeExpiry: 5,
+  sameExpiryRequired: true,
   squareOff: "complete",
   riskMode: "combined_premium",
+  riskBasis: "net_credit",
+  stopLossPercent: 100,
+  takeProfitPercent: 50,
   combinedStopLossPercent: 100,
   emergencyStopLossPercent: 300,
+  emergencyExitEnabled: true,
   trailToBreakEven: false,
   breakEvenScope: "all_legs",
+  allocationMode: "one_of_three_account_slots",
+  lotsMode: "auto",
+  equalLotsRequired: true,
   legs: [
-    newLeg({ position: "sell", optionType: "call", strikeMode: "atm" }),
-    newLeg({ position: "sell", optionType: "put", strikeMode: "atm" })
+    newLeg({ position: "sell", optionType: "call", strikeMode: "atm", role: "short_call" }),
+    newLeg({ position: "sell", optionType: "put", strikeMode: "atm", role: "short_put" })
   ],
   acknowledgement: true
 });
@@ -82,12 +99,31 @@ function isStrategyDefinition(value: unknown): value is StrategyDefinition {
 }
 
 function hydrateStrategy(strategy: StrategyDefinition): StrategyDefinition {
+  const hasShortLeg = strategy.legs.some(leg => leg.position === "sell");
   return {
     ...strategy,
+    schemaVersion: 2,
+    version: strategy.version ?? 1,
+    description: strategy.description ?? "",
+    category: strategy.category ?? (hasShortLeg ? "premium_selling" : "premium_buying"),
+    marketOutlook: strategy.marketOutlook ?? (hasShortLeg ? "sideways" : "large_move_unknown_direction"),
+    enabledForAi: strategy.enabledForAi ?? false,
     acknowledgement: true,
+    holdingMode: strategy.holdingMode ?? "intraday",
+    expiryPolicy: strategy.expiryPolicy ?? "same_day",
+    exitMinutesBeforeExpiry: strategy.exitMinutesBeforeExpiry ?? 5,
+    sameExpiryRequired: strategy.sameExpiryRequired ?? true,
     riskMode: strategy.riskMode ?? "legwise",
+    riskBasis: strategy.riskBasis ?? (hasShortLeg ? "net_credit" : "net_debit"),
+    stopLossPercent: Math.min(100, strategy.stopLossPercent ?? strategy.combinedStopLossPercent ?? 100),
+    takeProfitPercent: strategy.takeProfitPercent ?? 50,
     combinedStopLossPercent: strategy.combinedStopLossPercent ?? undefined,
-    emergencyStopLossPercent: strategy.emergencyStopLossPercent ?? undefined
+    emergencyStopLossPercent: strategy.emergencyStopLossPercent ?? undefined,
+    emergencyExitEnabled: strategy.emergencyExitEnabled ?? true,
+    allocationMode: "one_of_three_account_slots",
+    lotsMode: strategy.lotsMode ?? "manual",
+    equalLotsRequired: strategy.equalLotsRequired ?? false,
+    legs: strategy.legs.map(leg => ({ ...leg, role: leg.role ?? undefined }))
   };
 }
 
@@ -119,8 +155,10 @@ function savedStrategyFromRow(row: SavedStrategyRow): SavedStrategy | null {
   if (!isStrategyDefinition(definition)) return null;
   return {
     id: row.id,
+    version: row.version,
+    enabledForAi: row.enabled_for_ai,
     name: row.name,
-    definition: hydrateStrategy(definition),
+    definition: { ...hydrateStrategy(definition), version: row.version, enabledForAi: row.enabled_for_ai },
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -152,7 +190,7 @@ function validate(strategy: StrategyDefinition): ValidationIssue[] {
   strategy.legs.forEach((leg, index) => {
     const position = `Leg ${index + 1}`;
     const add = (field: string, message: string) => issues.push({ field: `leg.${leg.id}.${field}`, legId: leg.id, message: `${position}: ${message}` });
-    if (!Number.isFinite(leg.lots) || leg.lots < 1) add("lots", "lots must be at least 1.");
+    if (strategy.lotsMode === "manual" && (!Number.isFinite(leg.lots) || leg.lots < 1)) add("lots", "lots must be at least 1.");
     if (!leg.expiry || Number.isNaN(new Date(`${leg.expiry}T00:00:00`).getTime())) add("expiry", "choose an expiry date.");
     if (leg.strikeMode === "exact" && (!leg.exactStrike || leg.exactStrike <= 0)) add("exactStrike", "enter the exact strike.");
     if (leg.orderType === "limit_order" && (!leg.limitPrice || !/^\d+(\.\d+)?$/.test(leg.limitPrice))) add("limitPrice", "enter a numeric limit price.");
@@ -162,12 +200,24 @@ function validate(strategy: StrategyDefinition): ValidationIssue[] {
   });
 
   if (strategy.riskMode === "combined_premium") {
-    if (!strategy.combinedStopLossPercent || strategy.combinedStopLossPercent <= 0) {
+    if (!strategy.combinedStopLossPercent || strategy.combinedStopLossPercent <= 0 || strategy.combinedStopLossPercent > 100) {
       issues.push({ field: "combinedStopLossPercent", message: "Set the combined stop-loss percentage." });
     }
     if (strategy.legs.filter(leg => leg.position === "sell").length < 2) {
       issues.push({ field: "riskMode", message: "Combined-premium risk needs at least two short legs." });
     }
+  }
+  if (strategy.stopLossPercent <= 0 || strategy.stopLossPercent > 100) {
+    issues.push({ field: "stopLossPercent", message: "Stop loss must be between 1% and 100%." });
+  }
+  if (strategy.takeProfitPercent <= 0) {
+    issues.push({ field: "takeProfitPercent", message: "Take profit must be greater than zero." });
+  }
+  if (strategy.holdingMode === "hold_to_expiry" && strategy.exitMinutesBeforeExpiry < 1) {
+    issues.push({ field: "exitMinutesBeforeExpiry", message: "Set an expiry safety buffer of at least one minute." });
+  }
+  if (strategy.sameExpiryRequired && new Set(strategy.legs.map(leg => leg.expiry)).size > 1) {
+    issues.push({ field: "legs", message: "Every leg must use the same fallback expiry date." });
   }
   return issues;
 }
@@ -198,7 +248,7 @@ function checklist(strategy: StrategyDefinition, issues: ValidationIssue[]): Che
   const named = !issues.some(issue => issue.field === "name");
   const scheduled = !issues.some(issue => issue.field === "entryAt" || issue.field === "exitAt");
   const legsOk = !issues.some(issue => issue.field === "legs" || issue.field.startsWith("leg."));
-  const riskOk = !issues.some(issue => issue.field === "riskMode" || issue.field === "combinedStopLossPercent");
+  const riskOk = !issues.some(issue => ["riskMode", "combinedStopLossPercent", "stopLossPercent", "takeProfitPercent"].includes(issue.field));
 
   return [
     {
@@ -230,8 +280,10 @@ function checklist(strategy: StrategyDefinition, issues: ValidationIssue[]): Che
       detail: riskOk
         ? strategy.riskMode === "combined_premium"
           ? `Combined stop at ${strategy.combinedStopLossPercent ?? 0}% of credit`
-          : "Stops held inside each leg"
-        : first(field => field === "riskMode" || field === "combinedStopLossPercent", "")
+          : strategy.riskMode === "strategy_level"
+            ? `${strategy.stopLossPercent}% stop · ${strategy.takeProfitPercent}% take profit`
+            : "Stops held inside each leg"
+        : first(field => ["riskMode", "combinedStopLossPercent", "stopLossPercent", "takeProfitPercent"].includes(field), "")
     }
   ];
 }
@@ -374,13 +426,13 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     setLibraryState("saving");
     try {
       const supabase = getSupabaseBrowserClient();
-      const columns = "id,user_id,name,definition_json,source_run_id,created_at,updated_at";
+      const columns = "id,user_id,name,definition_json,source_run_id,version,enabled_for_ai,created_at,updated_at";
       const { data, error: saveError } = savedId
         ? await supabase.from("saved_strategies")
-          .update({ name: trimmedName, definition_json: normalized as unknown as Json })
+          .update({ name: trimmedName, definition_json: normalized as unknown as Json, enabled_for_ai: normalized.enabledForAi })
           .eq("id", savedId).eq("user_id", userId).select(columns).single()
         : await supabase.from("saved_strategies")
-          .insert({ user_id: userId, name: trimmedName, definition_json: normalized as unknown as Json })
+          .insert({ user_id: userId, name: trimmedName, definition_json: normalized as unknown as Json, enabled_for_ai: normalized.enabledForAi })
           .select(columns).single();
       if (saveError) throw saveError;
 
@@ -439,7 +491,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
         for (let from = 0; ; from += pageSize) {
           const { data, error: loadError } = await getSupabaseBrowserClient()
             .from("saved_strategies")
-            .select("id,user_id,name,definition_json,source_run_id,created_at,updated_at")
+            .select("id,user_id,name,definition_json,source_run_id,version,enabled_for_ai,created_at,updated_at")
             .eq("user_id", userId)
             .order("updated_at", { ascending: false })
             .range(from, from + pageSize - 1);
@@ -680,7 +732,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   }
 
   function exportDraft() {
-    const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), strategy }, null, 2);
+    const payload = JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), strategy }, null, 2);
     const href = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = href;
@@ -764,6 +816,38 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   onChange={name => setStrategy({ ...strategy, name })}
                 />
               </Field>
+              <Field label="Description" hint="Shown to the automation agent when it compares saved strategies.">
+                <input
+                  value={strategy.description}
+                  maxLength={500}
+                  placeholder="Explain when this strategy should be used"
+                  onChange={event => setStrategy({ ...strategy, description: event.target.value })}
+                />
+              </Field>
+              <Select
+                label="Category"
+                value={strategy.category}
+                onChange={value => setStrategy({ ...strategy, category: value as StrategyDefinition["category"] })}
+                options={[
+                  { value: "premium_buying", label: "Premium buying" },
+                  { value: "premium_selling", label: "Premium selling" },
+                  { value: "defined_risk_premium_selling", label: "Defined-risk premium selling" }
+                ]}
+              />
+              <Select
+                label="Market outlook"
+                value={strategy.marketOutlook}
+                onChange={value => setStrategy({ ...strategy, marketOutlook: value as StrategyDefinition["marketOutlook"] })}
+                options={[
+                  { value: "bullish", label: "Bullish" },
+                  { value: "bearish", label: "Bearish" },
+                  { value: "large_move_unknown_direction", label: "Large move, direction unknown" },
+                  { value: "very_large_move_unknown_direction", label: "Very large move, direction unknown" },
+                  { value: "sideways", label: "Tight sideways" },
+                  { value: "wide_sideways", label: "Wide sideways" },
+                  { value: "tight_sideways", label: "ATM pinning" }
+                ]}
+              />
               <Select
                 label="Index"
                 value={strategy.instrument.index}
@@ -799,12 +883,38 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   { value: "positional", label: "Positional" }
                 ]}
               />
+              <Toggle
+                label="Available to automation"
+                description="The agent may select this saved version. It cannot edit it."
+                checked={strategy.enabledForAi}
+                onChange={enabledForAi => setStrategy({ ...strategy, enabledForAi })}
+              />
             </div>
           </Panel>
 
           <Panel>
             <PanelHeader icon={<CalendarClock />} title="Schedule" meta="Local time on this machine" />
             <div className="grid-2">
+              <Segmented
+                label="Holding mode"
+                value={strategy.holdingMode}
+                onChange={value => setStrategy({ ...strategy, holdingMode: value as StrategyDefinition["holdingMode"] })}
+                options={[
+                  { value: "intraday", label: "Intraday" },
+                  { value: "hold_to_expiry", label: "Hold to expiry" }
+                ]}
+              />
+              <Select
+                label="Expiry policy"
+                value={strategy.expiryPolicy}
+                onChange={value => setStrategy({ ...strategy, expiryPolicy: value as StrategyDefinition["expiryPolicy"] })}
+                options={[
+                  { value: "same_day", label: "Same day" },
+                  { value: "next_day", label: "Next listed day" },
+                  { value: "7_day", label: "Closest listed expiry after 7 days" },
+                  { value: "30_day", label: "Closest listed expiry after 30 days" }
+                ]}
+              />
               <Field label="Entry time" invalid={invalidFields.has("entryAt")}>
                 <input
                   type="datetime-local"
@@ -812,13 +922,23 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   onChange={event => setStrategy({ ...strategy, entry: { ...strategy.entry, entryAt: toIso(event.target.value) } })}
                 />
               </Field>
-              <Field label="Exit time" invalid={invalidFields.has("exitAt")}>
+              <Field label={strategy.holdingMode === "intraday" ? "Exit time" : "Fallback exit time"} invalid={invalidFields.has("exitAt")}>
                 <input
                   type="datetime-local"
                   value={toLocalInput(strategy.entry.exitAt)}
                   onChange={event => setStrategy({ ...strategy, entry: { ...strategy.entry, exitAt: toIso(event.target.value) } })}
                 />
               </Field>
+              {strategy.holdingMode === "hold_to_expiry" && (
+                <NumberField
+                  label="Exit minutes before expiry"
+                  min={1}
+                  max={1440}
+                  value={strategy.exitMinutesBeforeExpiry}
+                  invalid={invalidFields.has("exitMinutesBeforeExpiry")}
+                  onChange={exitMinutesBeforeExpiry => setStrategy({ ...strategy, exitMinutesBeforeExpiry })}
+                />
+              )}
             </div>
             <ScheduleTimeline entryAt={strategy.entry.entryAt} exitAt={strategy.entry.exitAt} />
           </Panel>
@@ -827,9 +947,41 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             <PanelHeader
               icon={<Shield />}
               title="Risk control"
-              meta={strategy.riskMode === "combined_premium" ? "Both short legs close together" : "Each leg closes independently"}
+              meta={strategy.riskMode === "legwise" ? "Each leg closes independently" : "The complete strategy closes together"}
             />
             <RiskControl strategy={strategy} onChange={setStrategy} invalidFields={invalidFields} />
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              icon={<CircleDollarSign />}
+              title="Capital rules"
+              meta="One account slot and deterministic lot sizing"
+            />
+            <div className="grid-3">
+              <Segmented
+                label="Lots"
+                value={strategy.lotsMode}
+                onChange={value => setStrategy({ ...strategy, lotsMode: value as StrategyDefinition["lotsMode"] })}
+                options={[{ value: "auto", label: "Automatic" }, { value: "manual", label: "Manual" }]}
+              />
+              <OptionalNumberField
+                label="Maximum lots"
+                value={strategy.maximumLots}
+                onChange={maximumLots => setStrategy({ ...strategy, maximumLots })}
+                placeholder="No extra cap"
+              />
+              <Toggle
+                label="Equal lots on every leg"
+                checked={strategy.equalLotsRequired}
+                onChange={equalLotsRequired => setStrategy({ ...strategy, equalLotsRequired })}
+              />
+              <Toggle
+                label="Require one expiry"
+                checked={strategy.sameExpiryRequired}
+                onChange={sameExpiryRequired => setStrategy({ ...strategy, sameExpiryRequired })}
+              />
+            </div>
           </Panel>
 
           <Panel className={invalidFields.has("legs") ? "invalid" : ""}>
@@ -919,7 +1071,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 >
                   {!activeSavedId && <option value="">New unsaved strategy</option>}
                   {savedStrategies.map(item => (
-                    <option key={item.id} value={item.id}>{item.name} · {formatDateTime(item.updatedAt)}</option>
+                    <option key={item.id} value={item.id}>{item.name} · v{item.version} · {formatDateTime(item.updatedAt)}</option>
                   ))}
                 </select>
                 <ChevronDown aria-hidden="true" />
@@ -972,9 +1124,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               <div><dt>Hold</dt><dd>{formatDuration(strategy.entry.entryAt, strategy.entry.exitAt)}</dd></div>
               <div>
                 <dt>Risk</dt>
-                <dd>{strategy.riskMode === "combined_premium"
-                  ? `Combined at ${strategy.combinedStopLossPercent ?? 0}%`
-                  : `Per leg · ${strategy.squareOff} square off`}</dd>
+                <dd>{strategy.riskMode === "legwise"
+                  ? `Per leg · ${strategy.squareOff} square off`
+                  : `${strategy.riskBasis.replaceAll("_", " ")} · ${strategy.stopLossPercent}% stop · ${strategy.takeProfitPercent}% target`}</dd>
               </div>
             </dl>
 
@@ -1162,14 +1314,30 @@ function RiskControl({ strategy, onChange, invalidFields }: {
   onChange: (strategy: StrategyDefinition) => void;
   invalidFields: Set<string>;
 }) {
-  const combined = strategy.riskMode === "combined_premium";
-  const stop = strategy.combinedStopLossPercent ?? 100;
-  const exitMultiple = 1 + stop / 100;
+  const strategyLevel = strategy.riskMode !== "legwise";
+  const credit = strategy.riskBasis !== "net_debit";
+  const stop = Math.min(100, strategy.stopLossPercent ?? strategy.combinedStopLossPercent ?? 100);
+  const exitMultiple = credit ? 1 + stop / 100 : Math.max(0, 1 - stop / 100);
 
   return (
     /* Switching trigger swaps a four-cell grid for a three-column one, so the
        panel tweens between the two heights instead of snapping. */
     <div className="risk-control t-resize">
+      <Select
+        label="Risk basis"
+        value={strategy.riskBasis}
+        onChange={value => onChange({ ...strategy, riskBasis: value as StrategyDefinition["riskBasis"] })}
+        options={[
+          { value: "net_debit", label: "Net debit" },
+          { value: "net_credit", label: "Net credit" },
+          { value: "defined_max_loss", label: "Defined maximum loss" }
+        ]}
+      />
+      <Toggle
+        label="Emergency exit enabled"
+        checked={strategy.emergencyExitEnabled}
+        onChange={emergencyExitEnabled => onChange({ ...strategy, emergencyExitEnabled })}
+      />
       <Segmented
         label="Trigger"
         value={strategy.riskMode}
@@ -1177,11 +1345,12 @@ function RiskControl({ strategy, onChange, invalidFields }: {
         onChange={mode => onChange({
           ...strategy,
           riskMode: mode as StrategyDefinition["riskMode"],
-          squareOff: mode === "combined_premium" ? "complete" : strategy.squareOff,
+          squareOff: mode !== "legwise" ? "complete" : strategy.squareOff,
           combinedStopLossPercent: mode === "combined_premium" ? stop : strategy.combinedStopLossPercent
         })}
         options={[
           { value: "combined_premium", label: "Combined premium" },
+          { value: "strategy_level", label: "Strategy level" },
           { value: "legwise", label: "Per leg" }
         ]}
       />
@@ -1190,26 +1359,49 @@ function RiskControl({ strategy, onChange, invalidFields }: {
           layout in rather than swapping it between frames. The container tweens
           its height around that where the browser can interpolate `auto`. */}
       <div className="risk-body t-reveal" key={strategy.riskMode}>
-      {combined ? (
+      {strategyLevel ? (
         <div className="risk-grid">
-          <label className={invalidFields.has("combinedStopLossPercent") ? "risk-input invalid" : "risk-input"}>
-            <span>Combined stop loss</span>
+          <label className={invalidFields.has("stopLossPercent") || invalidFields.has("combinedStopLossPercent") ? "risk-input invalid" : "risk-input"}>
+            <span>Maximum configured loss</span>
+            <span className="risk-input-value">
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={stop}
+                aria-label="Combined stop loss percent"
+                onChange={event => {
+                  const stopLossPercent = Math.min(100, Math.max(1, Number(event.target.value) || 1));
+                  onChange({
+                    ...strategy,
+                    stopLossPercent,
+                    combinedStopLossPercent: strategy.riskMode === "combined_premium" ? stopLossPercent : strategy.combinedStopLossPercent
+                  });
+                }}
+              />
+              <b aria-hidden="true">%</b>
+            </span>
+            <small>Measured against the complete strategy&apos;s entry credit or debit.</small>
+          </label>
+
+          <label className={invalidFields.has("takeProfitPercent") ? "risk-input invalid" : "risk-input"}>
+            <span>Take profit</span>
             <span className="risk-input-value">
               <input
                 type="number"
                 min="1"
                 max="1000"
-                value={stop}
-                aria-label="Combined stop loss percent"
-                onChange={event => onChange({ ...strategy, combinedStopLossPercent: Math.max(1, Number(event.target.value) || 1) })}
+                value={strategy.takeProfitPercent}
+                aria-label="Take profit percent"
+                onChange={event => onChange({ ...strategy, takeProfitPercent: Math.max(1, Number(event.target.value) || 1) })}
               />
               <b aria-hidden="true">%</b>
             </span>
-            <small>Closes both legs once total premium loss reaches this level.</small>
+            <small>Closes the complete strategy when this return is reached.</small>
           </label>
 
           <div className="risk-readout">
-            <span>Entry premium</span>
+            <span>Entry {credit ? "credit" : "debit"}</span>
             <strong>1.0&times;</strong>
             <small>Reference</small>
           </div>
@@ -1218,7 +1410,7 @@ function RiskControl({ strategy, onChange, invalidFields }: {
           <div className="risk-readout emphasis">
             <span>Exit trigger</span>
             <strong><AnimatedNumber value={`${exitMultiple.toFixed(1)}×`} /></strong>
-            <small>Combined premium</small>
+            <small>{credit ? "Close cost" : "Liquidation value"}</small>
           </div>
 
           <label className="risk-input">
@@ -1361,6 +1553,14 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
                 onChange={value => onUpdate({ strikeMode: value as StrategyLeg["strikeMode"] })}
                 options={STRIKE_MODES}
               />
+              <Field label="Leg role" hint="Used by validation and automation explanations.">
+                <input
+                  value={leg.role ?? ""}
+                  maxLength={40}
+                  placeholder="short_call"
+                  onChange={event => onUpdate({ role: event.target.value || undefined })}
+                />
+              </Field>
               {leg.strikeMode === "exact"
                 ? <OptionalNumberField label="Exact strike" value={leg.exactStrike} invalid={invalid("exactStrike")} onChange={exactStrike => onUpdate({ exactStrike })} placeholder="Required" />
                 : <NumberField label="Strike steps" min={0} max={100} value={leg.strikeSteps} onChange={strikeSteps => onUpdate({ strikeSteps })} hint={leg.strikeMode === "atm" ? "Ignored at the money." : undefined} />}
@@ -1401,7 +1601,7 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
               ) : (
                 <p className="leg-note">
                   <Shield aria-hidden="true" />
-                  Protected by the combined-premium trigger. Per-leg stops are not used in this mode.
+                  Protected by the strategy-level stop and take profit. Per-leg stops are not used in this mode.
                 </p>
               )}
             </div>
