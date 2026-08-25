@@ -1,10 +1,12 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
+from app.default_strategies import default_strategy_definitions
 from app.models import StrategyDefinition, StrategyLeg
-from app.strategy import combined_premium_metrics, resolve_leg
+from app.strategy import combined_premium_metrics, resolve_leg, strategy_level_metrics
 
 CHAIN = [
     item
@@ -137,3 +139,41 @@ def test_combined_premium_100_percent_triggers_at_twice_entry_credit():
     assert metrics["close_cost"] == Decimal("400")
     assert metrics["loss"] == Decimal("200")
     assert metrics["trigger_close_cost"] == Decimal("400")
+
+
+def test_default_library_contains_the_eight_approved_strategies():
+    definitions = default_strategy_definitions(datetime(2026, 8, 25, 8, tzinfo=UTC))
+
+    assert [definition.name for definition in definitions] == [
+        "Long call",
+        "Long put",
+        "Long ATM straddle",
+        "Long strangle",
+        "Short ATM straddle",
+        "Short strangle",
+        "Iron condor",
+        "Iron butterfly",
+    ]
+    assert all(definition.schemaVersion == 2 for definition in definitions)
+    assert all(definition.enabledForAi for definition in definitions)
+    assert all(definition.lotsMode == "auto" for definition in definitions)
+    assert all(definition.stopLossPercent == 100 for definition in definitions)
+
+
+def test_strategy_level_debit_stop_and_target_use_liquidation_value():
+    stopped = strategy_level_metrics(
+        [{"side": "buy", "filled_size": 1, "entry_price": 200, "mark_price": 0, "contract_value": 1}],
+        risk_basis="net_debit",
+        stop_percent=Decimal("100"),
+        take_profit_percent=Decimal("50"),
+    )
+    targeted = strategy_level_metrics(
+        [{"side": "buy", "filled_size": 1, "entry_price": 200, "mark_price": 300, "contract_value": 1}],
+        risk_basis="net_debit",
+        stop_percent=Decimal("100"),
+        take_profit_percent=Decimal("50"),
+    )
+
+    assert stopped["stop_triggered"] is True
+    assert targeted["target_triggered"] is True
+    assert targeted["profit"] == Decimal("100")
