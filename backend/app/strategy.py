@@ -28,6 +28,54 @@ def combined_premium_metrics(legs: list[dict[str, Any]], stop_percent: Decimal) 
     }
 
 
+def strategy_level_metrics(
+    legs: list[dict[str, Any]],
+    *,
+    risk_basis: str,
+    stop_percent: Decimal,
+    take_profit_percent: Decimal,
+) -> dict[str, Decimal | str | bool]:
+    signed_entry = Decimal("0")
+    signed_current = Decimal("0")
+    for leg in legs:
+        direction = Decimal("1") if leg["side"] == "sell" else Decimal("-1")
+        weight = Decimal(str(leg["filled_size"])) * Decimal(str(leg["contract_value"]))
+        signed_entry += direction * Decimal(str(leg["entry_price"])) * weight
+        signed_current += direction * Decimal(str(leg["mark_price"])) * weight
+
+    stop_ratio = stop_percent / Decimal("100")
+    target_ratio = take_profit_percent / Decimal("100")
+    if risk_basis == "net_debit":
+        entry_value = -signed_entry
+        current_value = -signed_current
+        profit = current_value - entry_value
+        stop_value = max(Decimal("0"), entry_value * (Decimal("1") - stop_ratio))
+        target_value = entry_value * (Decimal("1") + target_ratio)
+        stop_triggered = current_value <= stop_value
+        target_triggered = current_value >= target_value
+        current_label = "liquidation_value"
+    else:
+        entry_value = signed_entry
+        current_value = signed_current
+        profit = entry_value - current_value
+        stop_value = entry_value * (Decimal("1") + stop_ratio)
+        target_value = max(Decimal("0"), entry_value * (Decimal("1") - target_ratio))
+        stop_triggered = current_value >= stop_value
+        target_triggered = current_value <= target_value
+        current_label = "close_cost"
+
+    return {
+        "entry_value": entry_value,
+        "current_value": current_value,
+        "profit": profit,
+        "stop_value": stop_value,
+        "target_value": target_value,
+        "stop_triggered": stop_triggered,
+        "target_triggered": target_triggered,
+        "current_label": current_label,
+    }
+
+
 def resolve_leg(leg: StrategyLeg, chain: list[dict[str, Any]]) -> dict[str, Any]:
     contract_type = "call_options" if leg.optionType == "call" else "put_options"
     candidates: list[tuple[dict[str, Any], float]] = []
