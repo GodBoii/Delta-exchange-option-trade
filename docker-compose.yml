@@ -30,6 +30,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.news-analyzer
     env_file:
+      - .env.local
       - ./backend/.env
     environment:
       NEWS_LOG_LEVEL: DEBUG
