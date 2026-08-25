@@ -139,8 +139,48 @@ export type AccountOverview = {
 /** Reusable definition in the private Supabase library. */
 export type SavedStrategy = {
   id: string;
+  version: number;
+  enabledForAi: boolean;
   name: string;
   definition: StrategyDefinition;
   createdAt: string;
   updatedAt: string;
+};
+
+export type AutomationRun = {
+  id: string;
+  sessionId?: string | null;
+  runId?: string | null;
+  trigger: string;
+  status: string;
+  outcome?: string | null;
+  scheduledFor: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  model: string;
+  report?: string | null;
+  error?: string | null;
+};
+
+export type StrategyProposal = {
+  id: string;
+  strategyName: string;
+  strategyVersion: number;
+  status: string;
+  activationTime: string;
+  expiresAt: string;
+  confidence: number;
+  reasoning: string;
+};
+
+export type AutomationOverview = {
+  success: boolean;
+  settings: {
+    enabled: boolean;
+    model: string;
+  };
+  enabledStrategies: number;
+  totalStrategies: number;
+  runs: AutomationRun[];
+  proposals: StrategyProposal[];
 };
