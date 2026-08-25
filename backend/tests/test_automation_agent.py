@@ -1,7 +1,10 @@
+import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 
 from app.default_strategies import default_strategy_definitions
@@ -14,7 +17,10 @@ from automation_agent.charts import (
     render_volatility_chart,
     render_volume_chart,
 )
+from automation_agent.market import compact_btc_market_packet, compact_delta_option_context
+from automation_agent.storage import ChartArtifact, SupabaseChartStorage
 from automation_agent.tools import materialize_live_definition
+from news_agent.config import NewsAgentSettings
 
 
 def option_context(*expiries: datetime) -> dict:
@@ -122,3 +128,70 @@ def test_all_agent_chart_types_render_non_empty_pngs() -> None:
     ]
 
     assert all(chart.startswith(b"\x89PNG") and len(chart) > 1_000 for chart in charts)
+
+
+def test_agent_tools_return_summaries_instead_of_raw_candles_and_full_chain() -> None:
+    candles = [{"open": 100, "high": 110, "low": 90, "close": 105, "baseVolume": 12} for _ in range(100)]
+    market = {
+        "source": "Binance Spot",
+        "symbol": "BTCUSDT",
+        "ticker": {"lastPrice": 105, "bestBid": 104, "bestAsk": 106},
+        "analysis": {"atr": {"value": 10}, "sideways": {"probability": 70}},
+        "orderBook": {"bids": [[104, 2]], "asks": [[106, 3]]},
+        "recentTrades": [{"side": "buy", "quoteQuantity": 1000}],
+        "realtime": {"connected": True},
+        "deltaExecutionContext": {"openInterestUsd": 5_000_000},
+        "timeframes": {"15 minute": {"candles": candles, "summary": {"returnPercent": 1.2}}},
+    }
+    options = [
+        {
+            "symbol": f"{kind}-BTC-{strike}-250826",
+            "type": "call_options" if kind == "C" else "put_options",
+            "expiry": "2026-08-25T12:00:00Z",
+            "strike": strike,
+            "spot": 100,
+            "mark": 5,
+            "openInterest": 10,
+        }
+        for strike in range(50, 151, 5)
+        for kind in ("C", "P")
+    ]
+
+    compact_market = compact_btc_market_packet(market)
+    compact_options = compact_delta_option_context(
+        {"source": "Delta Exchange", "underlying": "BTC", "options": options}
+    )
+
+    assert "candles" not in json.dumps(compact_market)
+    assert len(compact_options["nearbyOptions"]) == 10
+    assert len(json.dumps(compact_options)) < len(json.dumps(options)) / 2
+
+
+def test_private_chart_upload_returns_signed_url() -> None:
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(404)
+        if request.url.path.endswith("/storage/v1/bucket"):
+            return httpx.Response(200, json={"name": "automation-charts"})
+        if "/object/sign/" in request.url.path:
+            return httpx.Response(200, json={"signedURL": "/object/sign/automation-charts/chart.png?token=x"})
+        return httpx.Response(200, json={"Key": "chart.png"})
+
+    settings = replace(
+        NewsAgentSettings.load(),
+        supabase_url="https://project.supabase.co",
+        supabase_service_role_key="service-key",
+    )
+    storage = SupabaseChartStorage(settings, transport=httpx.MockTransport(handler))
+    stored = storage.upload_run_charts(
+        user_id="11111111-1111-4111-8111-111111111111",
+        agent_run_id="22222222-2222-4222-8222-222222222222",
+        charts=[ChartArtifact(id="btc-price", label="BTC price", alt_text="BTC price chart", content=b"png")],
+    )
+
+    assert stored[0].signed_url.startswith("https://project.supabase.co/storage/v1/object/sign/")
+    assert any(path.endswith("/storage/v1/bucket") for _, path in requests)
+    assert any("/storage/v1/object/automation-charts/" in path for _, path in requests)
