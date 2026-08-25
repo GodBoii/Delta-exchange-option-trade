@@ -4,9 +4,17 @@ const supabaseOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://xphxxkme
 const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const binanceApiOrigin = process.env.NEXT_PUBLIC_BINANCE_API_URL ?? "http://localhost:8001";
 const binanceWsOrigin = binanceApiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+const supabaseUrl = new URL(supabaseOrigin);
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  images: {
+    remotePatterns: [{
+      protocol: supabaseUrl.protocol === "http:" ? "http" : "https",
+      hostname: supabaseUrl.hostname,
+      pathname: "/storage/v1/object/sign/**"
+    }]
+  },
   async headers() {
     return [
       {
