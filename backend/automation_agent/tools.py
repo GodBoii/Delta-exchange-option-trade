@@ -318,6 +318,7 @@ def save_market_snapshot(
     settings: NewsAgentSettings,
     *,
     user_id: str,
+    agent_run_id: str,
     market_packet: dict[str, Any],
     account_context: dict[str, Any],
 ) -> str:
@@ -331,6 +332,14 @@ def save_market_snapshot(
                 (str(UUID(user_id)), Jsonb(market_packet), Jsonb(account_context)),
             )
             snapshot_id = cursor.fetchone()["id"]
+            cursor.execute(
+                """
+                update public.automation_agent_runs
+                set market_snapshot_id = %s
+                where id = %s and user_id = %s
+                """,
+                (snapshot_id, str(UUID(agent_run_id)), str(UUID(user_id))),
+            )
         connection.commit()
     return snapshot_id
 
