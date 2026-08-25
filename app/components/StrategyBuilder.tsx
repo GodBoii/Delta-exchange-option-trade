@@ -1071,7 +1071,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 >
                   {!activeSavedId && <option value="">New unsaved strategy</option>}
                   {savedStrategies.map(item => (
-                    <option key={item.id} value={item.id}>{item.name} · v{item.version} · {formatDateTime(item.updatedAt)}</option>
+                    <option key={item.id} value={item.id}>{item.name}</option>
                   ))}
                 </select>
                 <ChevronDown aria-hidden="true" />
