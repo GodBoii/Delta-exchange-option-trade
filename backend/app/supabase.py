@@ -47,6 +47,23 @@ class SupabaseAdmin:
         )
         return self._json(response, "Database insert failed")
 
+    async def upsert(
+        self,
+        table: str,
+        payload: dict[str, Any],
+        *,
+        on_conflict: str,
+        ignore_duplicates: bool = False,
+    ) -> list[dict[str, Any]]:
+        resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
+        response = await self.client.post(
+            f"{self.settings.supabase_url}/rest/v1/{table}",
+            headers={**self.admin_headers, "Prefer": f"resolution={resolution},return=representation"},
+            params={"on_conflict": on_conflict},
+            json=payload,
+        )
+        return self._json(response, "Database upsert failed")
+
     async def update(self, table: str, payload: dict[str, Any], params: dict[str, str]) -> list[dict[str, Any]]:
         response = await self.client.patch(
             f"{self.settings.supabase_url}/rest/v1/{table}",
