@@ -12,7 +12,7 @@ services:
       FRONTEND_ORIGIN_REGEX: ^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
-      MAX_ENTRY_LATENESS_SECONDS: "60"
+      MAX_ENTRY_LATENESS_SECONDS: "180"
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped
