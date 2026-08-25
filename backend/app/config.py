@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = 2.0
-    max_entry_lateness_seconds: int = 60
+    max_entry_lateness_seconds: int = 180
     exit_verify_timeout_seconds: float = 10.0
     exit_verify_poll_seconds: float = 0.5
     frontend_origins: str = (
