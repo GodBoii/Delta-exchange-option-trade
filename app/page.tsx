@@ -32,9 +32,13 @@ const NewsAnalysis = dynamic(() => import("@/app/components/NewsAnalysis"), {
   loading: () => <TableSkeleton label="news intelligence" rows={6} />
 });
 
+const Automation = dynamic(() => import("@/app/components/Automation"), {
+  loading: () => <TableSkeleton label="automation" rows={6} />
+});
+
 type BackendStatus = "checking" | "online" | "offline";
 
-const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news"];
+const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation"];
 const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
@@ -261,6 +265,7 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
       {tab === "market" && <BtcMarketChart />}
       {tab === "news" && backendOnline && <NewsAnalysis request={requestJson} />}
+      {tab === "automation" && connected && <Automation onNotice={onNotice} />}
     </PageEnter>
   );
 }
