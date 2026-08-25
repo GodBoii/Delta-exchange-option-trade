@@ -19,6 +19,8 @@ HISTORY_RUNS = 15
 DEFAULT_SESSION_ID = "news-research-default"
 DEFAULT_USER_ID = "local-user"
 ALLOWED_DOMAINS: tuple[str, ...] = ()
+AUTOMATION_CHART_BUCKET = "automation-charts"
+CHART_SIGNED_URL_SECONDS = 3_600
 
 
 def _with_connection_defaults(url: str) -> str:
@@ -44,6 +46,10 @@ class NewsAgentSettings:
     history_runs: int | None
     default_session_id: str
     default_user_id: str
+    supabase_url: str | None
+    supabase_service_role_key: str | None
+    automation_chart_bucket: str = AUTOMATION_CHART_BUCKET
+    chart_signed_url_seconds: int = CHART_SIGNED_URL_SECONDS
     automation_session_table: str = AUTOMATION_SESSION_TABLE
 
     @classmethod
@@ -60,6 +66,8 @@ class NewsAgentSettings:
             history_runs=HISTORY_RUNS,
             default_session_id=DEFAULT_SESSION_ID,
             default_user_id=DEFAULT_USER_ID,
+            supabase_url=os.getenv("NEXT_PUBLIC_SUPABASE_URL") or None,
+            supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY") or None,
         )
 
     def require_api_key(self) -> str:
@@ -92,3 +100,11 @@ class NewsAgentSettings:
             raise RuntimeError("SUPABASE_DB_URL must include a host, username, password, and database name")
 
         return _with_connection_defaults(db_url)
+
+    def require_storage(self) -> tuple[str, str]:
+        if not self.supabase_url or not self.supabase_service_role_key:
+            raise RuntimeError(
+                "Supabase Storage is not configured for automation charts. Provide NEXT_PUBLIC_SUPABASE_URL and "
+                "SUPABASE_SERVICE_ROLE_KEY to the news-analyzer service."
+            )
+        return self.supabase_url.rstrip("/"), self.supabase_service_role_key
