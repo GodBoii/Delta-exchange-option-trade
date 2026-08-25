@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .auth import create_connection, current_account, delta_client_for_user, optional_user, require_user
+from .automation import AutomationScheduler
+from .automation import router as automation_router
 from .config import get_settings
 from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
@@ -29,13 +31,17 @@ async def lifespan(app: FastAPI):
     db = SupabaseAdmin(settings)
     engine = TradingEngine(db, settings)
     scheduler = Scheduler(engine, settings.scheduler_poll_seconds, settings.scheduler_enabled)
+    automation_scheduler = AutomationScheduler(db, engine)
     app.state.db = db
     app.state.engine = engine
     app.state.scheduler = scheduler
+    app.state.automation_scheduler = automation_scheduler
     scheduler.start()
+    automation_scheduler.start()
     try:
         yield
     finally:
+        await automation_scheduler.stop()
         await scheduler.stop()
         await db.close()
 
@@ -52,10 +58,11 @@ app.add_middleware(
     allow_origins=settings.allowed_origins,
     allow_origin_regex=settings.frontend_origin_regex,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(news_router)
+app.include_router(automation_router)
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 OptionalUser = Annotated[dict[str, Any] | None, Depends(optional_user)]
@@ -244,9 +251,7 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
     rows = await request.app.state.db.select(
         "strategies",
         {
-            "select": (
-                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,created_at"
-            ),
+            "select": ("id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,created_at"),
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
             "limit": "100",
