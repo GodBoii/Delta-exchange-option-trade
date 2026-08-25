@@ -124,8 +124,22 @@ def run_automation_team(
                     "The engine applies the user's trading budget, calculates lots, and executes later."
                 ),
                 (
+                    "You never receive the account balance. Do not request or estimate it. After scheduling, the "
+                    "system handles trade size and amount from the user's trading budget and rejects the entry if "
+                    "the minimum contract cannot fit."
+                ),
+                (
                     "If the market is unclear, use scheduled_next_agent_run for the exact time when you need fresh "
                     "evidence. Do not force a trade."
+                ),
+                (
+                    "Regular runs are Asia at 09:00 Tokyo or 05:30 IST; London at 08:00 London, which is 12:30 IST "
+                    "during British summer time or 13:30 IST during GMT; and New York at 09:30 local, which is "
+                    "19:00 IST during daylight time or 20:00 IST during standard time."
+                ),
+                (
+                    "Use those known future runs when deciding whether another agent run is needed. Schedule an "
+                    "extra run only when the market needs clarification at a different time."
                 ),
                 "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
                 (
@@ -165,8 +179,9 @@ def run_automation_team(
                 "invalidation conditions."
             ),
             additional_context=(
-                "Current open Delta orders, positions, and active strategies. Account balances are intentionally "
-                f"excluded: {json.dumps(account_context, ensure_ascii=False, default=str)}"
+                f"Current run trigger: {trigger_reason or 'scheduled market analysis'}. Current open Delta orders, "
+                "positions, and active strategies follow. Account balances are intentionally excluded: "
+                f"{json.dumps(account_context, ensure_ascii=False, default=str)}"
             ),
             db=team_db,
             add_history_to_context=True,
