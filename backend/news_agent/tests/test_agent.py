@@ -11,7 +11,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     db = InMemoryDb()
     agent = create_news_agent(require_api_key=False, db=db)
 
-    assert agent.model.id == "deepseek/deepseek-v4-flash-0731"
+    assert agent.model.id == "deepseek/deepseek-v4-flash-vision-exp"
     assert agent.model.reasoning_effort == "xhigh"
     assert agent.model.supports_native_structured_outputs is False
     assert agent.model.max_tokens is None
@@ -39,6 +39,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
         "web_search",
     }
     assert not any(token in name for name in tool_names for token in ("trade", "order", "delta", "binance"))
+
 
 def test_agent_uses_injected_database_for_test_sessions() -> None:
     db = InMemoryDb()
