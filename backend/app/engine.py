@@ -32,6 +32,19 @@ OPTIONAL_ORDER_METADATA = (
     "slippage_percent",
 )
 
+TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
+    {
+        "automatic_lot_too_large",
+        "automation_balance_unavailable",
+        "automatic_lot_risk_invalid",
+        "capital_slots_full",
+        "option_chain_empty",
+        "spot_price_missing",
+        "strike_not_found",
+        "delta_not_connected",
+    }
+)
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
@@ -1301,17 +1314,28 @@ class TradingEngine:
             entry_at = datetime.fromisoformat(str(row["entry_at"]).replace("Z", "+00:00"))
             lateness = (now - entry_at).total_seconds()
             if lateness > self.settings.max_entry_lateness_seconds:
-                await self.db.update(
-                    "strategies",
-                    {
-                        "status": "attention",
-                        "last_error": f"Entry skipped because the scheduler was {int(lateness)} seconds late",
-                    },
-                    {"id": f"eq.{row['id']}", "status": "eq.scheduled", "entry_execution_at": "is.null"},
+                await self.reject_scheduled_entry(
+                    str(row["id"]),
+                    AppError(
+                        409,
+                        f"the execution window expired after {int(lateness)} seconds",
+                        "entry_window_expired",
+                    ),
                 )
                 continue
             try:
                 await self.execute_entry(str(row["id"]))
+            except AppError as error:
+                if error.code in TERMINAL_SCHEDULED_ENTRY_CODES:
+                    await self.reject_scheduled_entry(str(row["id"]), error)
+                    logger.warning(
+                        "Scheduled entry rejected for strategy %s code=%s message=%s",
+                        row["id"],
+                        error.code,
+                        error.message,
+                    )
+                    continue
+                logger.exception("Scheduled entry failed for strategy %s", row["id"])
             except Exception:
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
         for row in due_exits:
@@ -1319,6 +1343,21 @@ class TradingEngine:
                 await self.execute_exit(str(row["id"]))
             except Exception:
                 logger.exception("Scheduled exit failed for strategy %s", row["id"])
+
+    async def reject_scheduled_entry(self, strategy_id: str, error: AppError) -> None:
+        reason = f"Entry not placed: {error.message}"
+        rows = await self.db.update(
+            "strategies",
+            {"status": "attention", "last_error": reason},
+            {"id": f"eq.{strategy_id}", "status": "eq.scheduled", "entry_execution_at": "is.null"},
+        )
+        if not rows:
+            return
+        await self.write_audit(
+            "strategy_proposals",
+            {"status": "rejected", "rejection_reason": reason},
+            {"strategy_id": f"eq.{strategy_id}", "status": "eq.scheduled"},
+        )
 
 
 class Scheduler:
