@@ -76,6 +76,11 @@ class FakeDB:
             return [{"id": "exit-order-row"}]
         raise AssertionError(f"Unexpected update: {table} {value}")
 
+    async def rpc(self, function: str, payload: dict) -> bool:
+        assert function == "release_strategy_capital_slot"
+        assert payload["p_strategy_id"] == self.strategy["id"]
+        return True
+
 
 class FakeDeltaClient:
     def __init__(self, close_on_order: bool = True) -> None:
