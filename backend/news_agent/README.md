@@ -15,7 +15,7 @@ The runtime uses deterministic evidence collection followed by one Agno synthesi
 - Persistent Agno sessions in Supabase PostgreSQL through `PostgresDb`.
 - SSRF protections that block localhost, private/reserved addresses, credentials, and nonstandard ports.
 
-The configured `deepseek/deepseek-v4-flash-0731` model is accessed through OpenRouter with its maximum supported `xhigh` reasoning effort. This prototype returns images as URLs and metadata for display but does not send image pixels to the model, so the agent is prohibited from claiming visual analysis.
+The configured `deepseek/deepseek-v4-flash-vision-exp` model is accessed through OpenRouter with `xhigh` reasoning effort. The standalone news agent returns images as URLs and metadata but does not inspect their pixels. The automation team separately supplies five server-rendered BTC chart images to the vision model.
 
 ## Install
 
