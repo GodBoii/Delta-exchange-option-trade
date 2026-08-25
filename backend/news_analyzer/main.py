@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from automation_agent.team import run_automation_team
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
 from news_agent.pipeline import run_news_pipeline
@@ -26,9 +27,7 @@ def _configure_logging() -> None:
     root.setLevel(LOG_LEVEL)
     if not root.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(threadName)s | %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(threadName)s | %(message)s"))
         root.addHandler(handler)
     for handler in root.handlers:
         handler.setLevel(LOG_LEVEL)
@@ -81,6 +80,16 @@ class NewsAnalysisRequest(BaseModel):
     @classmethod
     def normalize_query(cls, value: str) -> str:
         return " ".join(value.split())
+
+
+class AutomationAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    userId: str = Field(pattern=r"^[A-Fa-f0-9-]{36}$")
+    agentRunId: str = Field(pattern=r"^[A-Fa-f0-9-]{36}$")
+    sessionId: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    accountContext: dict[str, Any]
+    triggerReason: str | None = Field(default=None, max_length=1000)
 
 
 def _stored_session_id(user_id: str, public_session_id: str) -> str:
@@ -338,6 +347,59 @@ def _run_analysis(body: NewsAnalysisRequest, trace_id: str = "untracked") -> dic
         logger.debug("Analysis database closed trace_id=%s", trace_id)
 
 
+def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    logger.info(
+        "Automation analysis started trace_id=%s run_id=%s user_id=%s model=%s",
+        trace_id,
+        body.agentRunId,
+        body.userId,
+        settings.model_id,
+    )
+    try:
+        result = run_automation_team(
+            settings=settings,
+            user_id=body.userId,
+            agent_run_id=body.agentRunId,
+            session_id=body.sessionId,
+            account_context=body.accountContext,
+            trigger_reason=body.triggerReason,
+        )
+        tool_names = [str(tool.get("name") or "") for tool in result.tool_calls]
+        if "select_strategy_and_time" in tool_names:
+            outcome = "strategy_selected"
+        elif "scheduled_next_agent_run" in tool_names:
+            outcome = "wait_and_run_again"
+        else:
+            outcome = "no_trade_for_current_window"
+        return {
+            "success": True,
+            "runId": result.run_id,
+            "sessionId": result.session_id,
+            "agentRunId": body.agentRunId,
+            "model": result.model_id,
+            "outcome": outcome,
+            "report": result.report,
+            "marketSnapshotId": result.market_snapshot_id,
+            "memberResponses": result.member_responses,
+            "toolCalls": result.tool_calls,
+            "elapsedMs": round((time.perf_counter() - started_at) * 1_000),
+        }
+    except Exception as exc:
+        logger.exception(
+            "Automation analysis failed trace_id=%s run_id=%s elapsed_ms=%d",
+            trace_id,
+            body.agentRunId,
+            round((time.perf_counter() - started_at) * 1_000),
+            exc_info=exc,
+        )
+        raise ServiceError(
+            502,
+            "The automation analysis could not be completed. No strategy was activated.",
+            "automation_agent_failed",
+        ) from exc
+
+
 app = FastAPI(title="News Analyzer", version="1.0.0", docs_url="/docs", redoc_url=None)
 
 
@@ -457,3 +519,12 @@ async def analyze_news(body: NewsAnalysisRequest, request: Request) -> dict[str,
             "news_database_not_configured",
         )
     return await asyncio.to_thread(_run_analysis, body, request.state.trace_id)
+
+
+@app.post("/v1/automation/analyze")
+async def analyze_automation(body: AutomationAnalysisRequest, request: Request) -> dict[str, Any]:
+    if not settings.openrouter_api_key:
+        raise ServiceError(503, "Automation analysis is temporarily unavailable", "automation_agent_not_configured")
+    if not settings.supabase_db_url:
+        raise ServiceError(503, "Automation storage is temporarily unavailable", "automation_database_not_configured")
+    return await asyncio.to_thread(_run_automation_analysis, body, request.state.trace_id)
