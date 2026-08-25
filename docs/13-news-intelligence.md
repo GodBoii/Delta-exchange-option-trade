@@ -575,13 +575,13 @@ Implement the two-stage factual and interpretive schemas, evidence spans, securi
 
 Join canonical events to Binance, Delta, and cross-asset features. Run event studies, calibrate probabilities, and publish expiring regime features.
 
-### Phase 6: shadow recommendations
+### Phase 6: main-agent integration
 
-Generate recommendations without creating orders. Compare predictions with observed outcomes and manually review every high-impact event, false positive, source conflict, and correction.
+Run the news analyst only as a member of the live automation team. Store its complete member response inside the main team session and display that response in Bitcoin News.
 
-### Phase 7: guarded draft creation
+### Phase 7: live saved-strategy scheduling
 
-Allow a valid decision snapshot to create an editable strategy draft. Keep human preview and acknowledgement mandatory. Live auto-execution should remain out of scope until the execution engine's partial-fill, attribution, and fill-confirmation risks are resolved and shadow evidence is sufficient.
+Allow the main agent to select only an existing saved strategy and entry time. The deterministic strategy engine remains responsible for lots, expiry resolution, execution, reconciliation, and exits.
 
 ## 20. Initial implementation recommendation
 
@@ -595,7 +595,7 @@ Trading Economics calendar
 + GDELT for research and broader corroboration
 ```
 
-The first usable product should be a news and event dashboard with source health, upcoming-event risk windows, canonical event clusters, structured LLM analysis, and observed BTC/Delta reaction. It should operate in advisory mode and produce expiring intelligence snapshots. Strategy recommendation and draft generation should be a later layer built on measured, point-in-time performance.
+The news output is a read-only record of the news member inside each main automation run. It is not run independently from the Bitcoin News page.
 
 ## 21. Decisions required before implementation
 
@@ -610,6 +610,6 @@ The following choices should be settled before code is written:
 7. Forecast horizons used by the BTC strategy engine.
 8. Whether the initial output is dashboard-only, alerts, recommendations, or editable drafts.
 9. Human approval and audit requirements.
-10. Minimum historical/shadow evidence required before any live automation.
+10. Retention and review requirements for live automation sessions.
 
 These decisions materially affect provider selection, architecture, cost, legal review, latency, storage, and evaluation design.
