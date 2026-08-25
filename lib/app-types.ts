@@ -159,6 +159,7 @@ export type AutomationRun = {
   completedAt?: string | null;
   model: string;
   report?: string | null;
+  charts: { id: string; label: string; altText: string; url: string }[];
   error?: string | null;
 };
 
