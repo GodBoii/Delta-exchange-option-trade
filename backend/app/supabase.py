@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -87,6 +88,23 @@ class SupabaseAdmin:
             f"{self.settings.supabase_url}/rest/v1/rpc/{function}", headers=self.admin_headers, json=payload
         )
         return self._json(response, "Database function failed")
+
+    async def signed_storage_url(self, bucket: str, path: str, expires_in: int = 3_600) -> str:
+        encoded_path = quote(path, safe="/")
+        response = await self.client.post(
+            f"{self.settings.supabase_url}/storage/v1/object/sign/{bucket}/{encoded_path}",
+            headers=self.admin_headers,
+            json={"expiresIn": expires_in},
+        )
+        payload = self._json(response, "Could not sign the chart image")
+        signed = str(payload.get("signedURL") or payload.get("signedUrl") or "")
+        if not signed:
+            raise AppError(500, "Supabase returned no signed chart URL", "chart_signing_failed")
+        if signed.startswith(("http://", "https://")):
+            return signed
+        if not signed.startswith("/"):
+            signed = f"/{signed}"
+        return f"{self.settings.supabase_url}/storage/v1{signed}"
 
     @staticmethod
     def _json(response: httpx.Response, fallback: str) -> Any:
