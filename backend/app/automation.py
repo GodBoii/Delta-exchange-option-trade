@@ -54,8 +54,7 @@ async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
 async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str, Any]:
     client = await engine.client_for_user(user_id)
     try:
-        balances, orders, positions, active = await asyncio.gather(
-            client.balances(),
+        orders, positions, active = await asyncio.gather(
             client.open_orders(),
             client.positions(),
             engine.db.select(
@@ -71,20 +70,6 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
     finally:
         await client.close()
     return {
-        "balances": [
-            _pick(
-                row,
-                "asset_symbol",
-                "symbol",
-                "balance",
-                "available_balance",
-                "blocked_margin",
-                "position_margin",
-                "order_margin",
-                "portfolio_margin",
-            )
-            for row in balances.get("result") or []
-        ],
         "openOrders": [
             _pick(
                 row,
@@ -186,6 +171,24 @@ async def execute_automation_run(
         raise
 
 
+async def _signed_chart(db: SupabaseAdmin, chart: dict[str, Any]) -> dict[str, str] | None:
+    bucket = chart.get("bucket")
+    path = chart.get("path")
+    if not isinstance(bucket, str) or not isinstance(path, str):
+        return None
+    try:
+        url = await db.signed_storage_url(bucket, path)
+    except AppError as error:
+        logger.warning("Could not sign automation chart path=%s: %s", path, error.message)
+        return None
+    return {
+        "id": str(chart.get("id") or path),
+        "label": str(chart.get("label") or "Market chart"),
+        "altText": str(chart.get("altText") or chart.get("label") or "Market chart"),
+        "url": url,
+    }
+
+
 @router.get("/overview")
 async def automation_overview(request: Request, user: RequiredUser) -> dict[str, Any]:
     db: SupabaseAdmin = request.app.state.db
@@ -201,7 +204,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             {
                 "select": (
                     "id,trigger,status,outcome,scheduled_for,started_at,completed_at,model_id,"
-                    "agno_session_id,agno_run_id,report_markdown,error"
+                    "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error"
                 ),
                 "user_id": f"eq.{user_id}",
                 "order": "created_at.desc",
@@ -222,6 +225,26 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         ),
     )
     names = {row["id"]: row["name"] for row in strategies}
+    snapshot_ids = [str(row["market_snapshot_id"]) for row in runs if row.get("market_snapshot_id")]
+    snapshots = (
+        await db.select(
+            "automation_market_snapshots",
+            {
+                "select": "id,market_json",
+                "id": f"in.({','.join(snapshot_ids)})",
+                "user_id": f"eq.{user_id}",
+            },
+        )
+        if snapshot_ids
+        else []
+    )
+    stored_charts = {
+        str(snapshot["id"]): (snapshot.get("market_json") or {}).get("chartImages") or [] for snapshot in snapshots
+    }
+    charts_by_snapshot: dict[str, list[dict[str, str]]] = {}
+    for snapshot_id, chart_rows in stored_charts.items():
+        signed = await asyncio.gather(*(_signed_chart(db, chart) for chart in chart_rows if isinstance(chart, dict)))
+        charts_by_snapshot[snapshot_id] = [chart for chart in signed if chart is not None]
     return {
         "success": True,
         "settings": {
@@ -243,6 +266,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
                 "completedAt": row.get("completed_at"),
                 "model": row["model_id"],
                 "report": row.get("report_markdown"),
+                "charts": charts_by_snapshot.get(str(row.get("market_snapshot_id") or ""), []),
                 "error": row.get("error"),
             }
             for row in runs
