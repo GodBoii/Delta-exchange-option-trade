@@ -79,6 +79,14 @@ def test_accepts_valid_strategy():
     assert len(base_strategy().legs) == 1
 
 
+def test_fixed_capital_requires_positive_amount() -> None:
+    with pytest.raises(ValidationError):
+        base_strategy(allocationMode="fixed_amount")
+
+    strategy = base_strategy(allocationMode="fixed_amount", capitalAmount=25)
+    assert strategy.capitalAmount == 25
+
+
 def test_rejects_exit_before_entry():
     with pytest.raises(ValidationError):
         base_strategy(
@@ -157,6 +165,8 @@ def test_default_library_contains_the_eight_approved_strategies():
     assert all(definition.schemaVersion == 2 for definition in definitions)
     assert all(definition.enabledForAi for definition in definitions)
     assert all(definition.lotsMode == "auto" for definition in definitions)
+    assert all(definition.allocationMode == "full_balance" for definition in definitions)
+    assert all(definition.maximumLots is None for definition in definitions)
     assert all(definition.stopLossPercent == 100 for definition in definitions)
 
 
