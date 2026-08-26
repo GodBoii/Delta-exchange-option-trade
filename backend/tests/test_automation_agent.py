@@ -1,6 +1,7 @@
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -9,7 +10,7 @@ import pytest
 
 from app.automation import build_account_context
 from app.default_strategies import default_strategy_definitions
-from app.engine import TradingEngine
+from app.engine import TradingEngine, capital_budget
 from app.errors import AppError
 from automation_agent.charts import (
     render_candlestick_chart,
@@ -64,44 +65,139 @@ def test_resolves_seven_day_policy_to_first_later_listed_expiry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_automatic_lots_use_one_third_balance_and_hard_cap() -> None:
+async def test_automatic_lots_use_full_usd_available_margin_by_default() -> None:
     definition = default_strategy_definitions(datetime(2026, 8, 25, tzinfo=UTC))[0]
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
     class Client:
         async def balances(self) -> dict:
-            return {"result": [{"available_balance": "900"}]}
+            return {"result": [{"asset_symbol": "USD", "available_balance": "900"}]}
 
-    async def contract_value(_client, _symbol: str):
-        return 1
+    async def product_spec(_client, _symbol: str):
+        return {"contract_value": 1, "initial_margin": 0}
 
-    engine.contract_value = contract_value  # type: ignore[method-assign]
+    engine.product_spec = product_spec  # type: ignore[method-assign]
     resolved = [{"productSymbol": "C-BTC", "markPrice": "100", "position": "buy", "optionType": "call"}]
 
     sized = await engine.apply_automatic_lots(Client(), definition, resolved)  # type: ignore[arg-type]
 
-    assert sized[0]["lots"] == 1
+    assert sized[0]["lots"] == 8
 
 
 @pytest.mark.asyncio
-async def test_automatic_lots_reject_one_lot_outside_slot() -> None:
+async def test_automatic_lots_reject_one_lot_outside_selected_cap() -> None:
     definition = default_strategy_definitions(datetime(2026, 8, 25, tzinfo=UTC))[0]
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
     class Client:
         async def balances(self) -> dict:
-            return {"result": [{"available_balance": "200"}]}
+            return {"result": [{"asset_symbol": "USD", "available_balance": "100"}]}
 
-    async def contract_value(_client, _symbol: str):
-        return 1
+    async def product_spec(_client, _symbol: str):
+        return {"contract_value": 1, "initial_margin": 0}
 
-    engine.contract_value = contract_value  # type: ignore[method-assign]
+    engine.product_spec = product_spec  # type: ignore[method-assign]
     resolved = [{"productSymbol": "C-BTC", "markPrice": "100", "position": "buy", "optionType": "call"}]
 
     with pytest.raises(AppError) as caught:
         await engine.apply_automatic_lots(Client(), definition, resolved)  # type: ignore[arg-type]
 
     assert caught.value.code == "automatic_lot_too_large"
+
+
+@pytest.mark.asyncio
+async def test_full_balance_fits_one_long_straddle_lot_from_exchange_quotes() -> None:
+    definition = default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))[2]
+    engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
+
+    class Client:
+        async def balances(self) -> dict:
+            return {
+                "result": [
+                    {"asset_symbol": "INR", "available_balance": "107.43"},
+                    {"asset_symbol": "USD", "available_balance": "1.26"},
+                ]
+            }
+
+    async def product_spec(_client, _symbol: str):
+        return {"contract_value": "0.001", "initial_margin": "0.5"}
+
+    engine.product_spec = product_spec  # type: ignore[method-assign]
+    resolved = [
+        {
+            "productSymbol": "C-BTC",
+            "bestAsk": "289",
+            "markPrice": "287",
+            "spotPrice": "79000",
+            "position": "buy",
+            "optionType": "call",
+        },
+        {
+            "productSymbol": "P-BTC",
+            "bestAsk": "385",
+            "markPrice": "383",
+            "spotPrice": "79000",
+            "position": "buy",
+            "optionType": "put",
+        },
+    ]
+
+    sized = await engine.apply_automatic_lots(Client(), definition, resolved)  # type: ignore[arg-type]
+
+    assert {leg["lots"] for leg in sized} == {1}
+
+
+@pytest.mark.asyncio
+async def test_short_straddle_margin_estimate_matches_full_balance_example() -> None:
+    definition = default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))[4]
+    engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
+
+    class Client:
+        async def balances(self) -> dict:
+            return {
+                "result": [
+                    {"asset_symbol": "INR", "available_balance": "107.43"},
+                    {"asset_symbol": "USD", "available_balance": "1.26"},
+                ]
+            }
+
+    async def product_spec(_client, _symbol: str):
+        return {"contract_value": "0.001", "initial_margin": "0.5"}
+
+    engine.product_spec = product_spec  # type: ignore[method-assign]
+    resolved = [
+        {
+            "productSymbol": "C-BTC",
+            "bestBid": "500",
+            "markPrice": "502",
+            "spotPrice": "79000",
+            "position": "sell",
+            "optionType": "call",
+        },
+        {
+            "productSymbol": "P-BTC",
+            "bestBid": "362",
+            "markPrice": "363",
+            "spotPrice": "79000",
+            "position": "sell",
+            "optionType": "put",
+        },
+    ]
+
+    sized = await engine.apply_automatic_lots(Client(), definition, resolved)  # type: ignore[arg-type]
+
+    assert {leg["lots"] for leg in sized} == {1}
+
+
+def test_capital_budget_supports_fraction_and_fixed_caps() -> None:
+    available = Decimal("120")
+
+    assert capital_budget(available, "full_balance") == Decimal("120")
+    assert capital_budget(available, "half_balance") == Decimal("60.0")
+    assert capital_budget(available, "one_third_balance") == Decimal("40")
+    assert capital_budget(available, "one_quarter_balance") == Decimal("30.00")
+    assert capital_budget(available, "fixed_amount", 25) == Decimal("25")
+    assert capital_budget(available, "fixed_amount", 250) == available
 
 
 def test_all_agent_chart_types_render_non_empty_pngs() -> None:
