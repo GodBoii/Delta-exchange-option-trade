@@ -81,7 +81,7 @@ class AutomationStrategyTools(Toolkit):
             definition = row["definition_json"]
             reasons: list[str] = []
             if active_count >= 3:
-                reasons.append("All three account slots are potentially occupied")
+                reasons.append("All three concurrent strategy slots are potentially occupied")
             result.append(
                 {
                     "id": row["id"],
@@ -154,7 +154,7 @@ class AutomationStrategyTools(Toolkit):
             )
             occupied = int(cursor.fetchone()["count"])
             if occupied >= 3:
-                raise ValueError("No account slot is potentially available")
+                raise ValueError("No concurrent strategy slot is potentially available")
 
             cursor.execute(
                 "select market_json from public.automation_market_snapshots where id = %s and user_id = %s",
