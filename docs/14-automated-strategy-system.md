@@ -8,9 +8,9 @@ Status: implemented as live automation on 2026-08-25. The agent selects an exist
 - The saved strategy owns its legs, expiry policy, exit rules, take profit, stop loss, and allocation method.
 - The AI cannot invent or modify a strategy. It selects one saved strategy and chooses its live entry time.
 - The AI may postpone its decision by scheduling another agent run.
-- Lots are automatic. One strategy may use at most one of three account slots.
+- Lots are automatic and use each strategy's selected capital cap.
 - The system supports at most three active strategies for one account.
-- One slot is one third of eligible account balance.
+- The three-slot limit controls execution concurrency; it does not divide account capital.
 - Every strategy has a 100% maximum configured loss relative to its risk basis.
 - Short-premium strategies use a combined-credit stop.
 - Long-premium strategies use a combined-debit stop.
@@ -103,23 +103,25 @@ exit buffer: 5 minutes
 
 ## 4. Capital allocation and automatic lots
 
-The account has three logical capital slots.
+The account may run at most three strategies concurrently. Slot reservation prevents two workers from claiming the same concurrency slot, while each saved strategy independently chooses its capital cap.
 
 ```text
-slot value = eligible account balance / 3
-maximum simultaneous active strategies = 3
-slots required by one strategy = 1
+full_balance        = 100% of current Delta available margin
+half_balance        = 50%
+one_third_balance   = 33.33%
+one_quarter_balance = 25%
+fixed_amount        = user-entered USD cap, limited by available margin
 ```
 
-The system reserves a slot before submitting any leg. Two workers must never reserve the same slot.
+Every strategy defaults to `full_balance`. The sizing engine uses the USD wallet that margins BTCUSD and ETHUSD options, leaves a 2% execution buffer, rounds lots down, and applies an optional maximum-lots cap. A later concurrent strategy reads the remaining available margin after earlier entries.
 
-Unused money inside a slot remains unused. Lots always round down.
+The system reserves a concurrency slot before submitting any leg. Two workers must never reserve the same slot.
 
 ### Long-premium sizing
 
 ```text
-cost per lot = combined debit for all legs, including contract multipliers
-lots by capital = floor(slot value / cost per lot)
+cost per lot = executable buy asks - executable sell bids, including contract multipliers
+lots by capital = floor(usable capital cap / cost per lot)
 ```
 
 ### Short-premium sizing
@@ -128,8 +130,7 @@ lots by capital = floor(slot value / cost per lot)
 loss at configured stop per lot = entry credit per lot × stop-loss percentage
 
 lots = minimum of:
-  floor(slot value / required margin per lot)
-  floor(slot value / loss at configured stop per lot)
+  floor(usable capital cap / loss at configured stop per lot)
   configured maximum lots
 ```
 
@@ -139,12 +140,11 @@ lots = minimum of:
 structural maximum loss per lot = wing width value - net credit
 
 lots = minimum of:
-  floor(slot value / structural maximum loss per lot)
-  floor(slot value / required margin per lot)
+  floor(usable capital cap / structural maximum loss per lot)
   configured maximum lots
 ```
 
-If one lot does not fit, the strategy cannot activate. The result is `no_trade`, not a forced one-lot order.
+Delta performs the final exchange-margin validation when orders are submitted. If one lot does not fit the selected cap or Delta rejects the required margin, the strategy cannot activate.
 
 ## 5. Common strategy exit controller
 
@@ -225,7 +225,7 @@ expiry policy: user selected
 risk basis: net_debit
 stop loss: debit percentage, maximum 100%
 take profit: debit-return percentage
-allocation: one account slot
+allocation: full available margin by default
 lots: auto
 square-off: complete
 
@@ -272,7 +272,7 @@ expiry policy: user selected
 risk basis: net_debit
 stop loss: debit percentage, maximum 100%
 take profit: debit-return percentage
-allocation: one account slot
+allocation: full available margin by default
 lots: auto
 square-off: complete
 
@@ -315,7 +315,7 @@ expiry policy: user selected
 risk basis: net_debit
 stop loss: combined debit percentage, maximum 100%
 take profit: combined debit-return percentage
-allocation: one account slot
+allocation: full available margin by default
 lots: auto and equal for both legs
 square-off: complete
 
@@ -364,7 +364,7 @@ expiry policy: user selected
 risk basis: net_debit
 stop loss: combined debit percentage, maximum 100%
 take profit: combined debit-return percentage
-allocation: one account slot
+allocation: full available margin by default
 lots: auto and equal for both legs
 square-off: complete
 
@@ -413,7 +413,7 @@ exit buffer: 5 minutes
 risk basis: net_credit
 combined stop loss: 100% of entry credit
 take profit: percentage of entry credit
-allocation: one account slot
+allocation: full available margin by default
 lots: auto and equal for both legs
 square-off: complete
 
@@ -474,7 +474,7 @@ expiry policy: user selected
 risk basis: net_credit
 combined stop loss: 100% of entry credit
 take profit: percentage of entry credit
-allocation: one account slot
+allocation: full available margin by default
 lots: auto and equal for both legs
 square-off: complete
 
@@ -529,7 +529,7 @@ expiry policy: user selected
 risk basis: defined_max_loss
 combined stop loss: 100% of net entry credit
 take profit: percentage of net entry credit
-allocation: one account slot
+allocation: full available margin by default
 lots: auto and equal for all legs
 square-off: complete
 
@@ -578,7 +578,7 @@ expiry policy: user selected
 risk basis: defined_max_loss
 combined stop loss: 100% of net entry credit
 take profit: percentage of net entry credit
-allocation: one account slot
+allocation: full available margin by default
 lots: auto and equal for all legs
 square-off: complete
 
@@ -644,7 +644,8 @@ re-entry disabled initially
 ### Capital
 
 ```text
-allocation mode: one_of_three_account_slots
+allocation mode: full, half, one third, one quarter, or fixed amount
+custom capital amount when fixed mode is selected
 lots mode: auto
 maximum lots, optional hard cap
 equal-lots requirement for balanced multi-leg strategies
@@ -784,7 +785,7 @@ Server behavior:
 
 1. Confirm the strategy still exists and the version matches.
 2. Confirm the strategy is enabled for AI selection.
-3. Confirm an account slot is potentially available.
+3. Confirm a concurrent execution slot is potentially available.
 4. Resolve the listed Delta expiry from the saved expiry policy.
 5. Materialize entry and exit timestamps without changing the saved risk rules.
 6. Create the same `scheduled` strategy record used by manual Strategy Builder scheduling.
@@ -899,9 +900,9 @@ Execute and monitor
 
 ## 12. Implemented live system
 
-- Strategy Builder stores risk basis, holding mode, expiry policy, take profit, auto-lot intent, slot allocation, and the enabled-for-AI flag.
+- Strategy Builder stores risk basis, holding mode, expiry policy, take profit, auto-lot intent, capital allocation, and the enabled-for-AI flag.
 - Saved strategies have a database version. Proposals bind to that version and fail if it changes.
-- The database stores agent runs, market snapshots, proposals, and three account slots.
+- The database stores agent runs, market snapshots, proposals, and three concurrent execution slots.
 - The strategy-level controller monitors combined credit and combined debit take profit and stop loss.
 - The eight approved strategies have validated constructors and are seeded into empty user libraries.
 - The DeepSeek vision team receives BTC price, volume, volatility, order-book, and Delta open-interest charts, Delta option context, account context, and one news sub-agent.
@@ -913,7 +914,7 @@ Execute and monitor
 1. Every template starts with a configurable 50% take profit.
 2. Long strategies start with a configurable 100% debit stop.
 3. One agent run can select at most one strategy.
-4. The account supports at most three reserved or active strategy slots.
+4. The account supports at most three reserved or active strategy execution slots; each one sizes from current remaining margin.
 5. Every hold-to-expiry strategy starts with a five-minute buffer.
 6. Agent follow-ups require at least five minutes and are limited to 12 runs per day.
 7. The first fixed reviews are Asia, London, and New York. No extra India-time review is enabled initially.
@@ -922,8 +923,8 @@ Execute and monitor
 ## 14. Live execution responsibilities
 
 1. Resolve listed expiries from the policy before creating the scheduled record.
-2. Calculate automatic lots from one account slot and the strategy risk basis.
-3. Atomically reserve and release one of three capital slots around execution.
+2. Calculate automatic lots from the strategy's capital cap, executable option prices, product margin data, and risk basis.
+3. Atomically reserve and release one of three concurrent execution slots around execution.
 4. Use the saved strategy version selected by the agent.
 5. Keep partial-fill recovery, position reconciliation, stops, targets, and time exits inside the deterministic engine.
 
