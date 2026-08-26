@@ -101,7 +101,6 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
         ],
         "activeStrategies": active,
         "maximumConcurrentStrategies": 3,
-        "capitalAllocation": "one_of_three_account_slots",
     }
 
 
