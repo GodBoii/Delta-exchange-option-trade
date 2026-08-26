@@ -109,12 +109,16 @@ def resolve_leg(leg: StrategyLeg, chain: list[dict[str, Any]]) -> dict[str, Any]
         index = max(0, min(len(candidates) - 1, atm_index + direction * leg.strikeSteps))
 
     selected, strike = candidates[index]
+    quotes = selected.get("quotes") if isinstance(selected.get("quotes"), dict) else {}
     return {
         **leg.model_dump(mode="json", exclude_none=True),
         "productId": int(selected["product_id"]),
         "productSymbol": str(selected["symbol"]),
         "strike": strike,
+        "spotPrice": selected.get("spot_price"),
         "markPrice": selected.get("mark_price"),
+        "bestBid": quotes.get("best_bid"),
+        "bestAsk": quotes.get("best_ask"),
     }
 
 
