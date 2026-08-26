@@ -70,6 +70,24 @@ def optional_decimal(value: Any) -> Decimal | None:
         return None
 
 
+def capital_budget(available: Decimal, allocation_mode: str, fixed_amount: Any = None) -> Decimal:
+    fractions = {
+        "full_balance": Decimal("1"),
+        "half_balance": Decimal("0.5"),
+        "one_third_balance": Decimal("1") / Decimal("3"),
+        "one_quarter_balance": Decimal("0.25"),
+    }
+    if allocation_mode == "fixed_amount":
+        requested = decimal_value(fixed_amount)
+        if requested <= 0:
+            raise AppError(409, "The custom capital cap is invalid", "capital_cap_invalid")
+        return min(available, requested)
+    fraction = fractions.get(allocation_mode)
+    if fraction is None:
+        raise AppError(409, "The capital allocation mode is invalid", "capital_mode_invalid")
+    return available * fraction
+
+
 def slippage_fields(side: str, reference: Any, average: Any) -> dict[str, str]:
     """
     Execution slippage against the mark price observed before submission.
@@ -198,6 +216,7 @@ class TradingEngine:
         self.db = db
         self.settings = settings
         self.contract_values: dict[str, Decimal] = {}
+        self.product_specs: dict[str, dict[str, Any]] = {}
 
     async def client_for_user(self, user_id: str) -> DeltaClient:
         credentials = await credentials_for_user(self.db, user_id)
@@ -224,26 +243,40 @@ class TradingEngine:
         if definition.lotsMode != "auto":
             return resolved
         balances = (await client.balances()).get("result") or []
-        available_values = [
-            decimal_value(item.get("available_balance"))
-            for item in balances
-            if isinstance(item, dict) and decimal_value(item.get("available_balance")) > 0
-        ]
-        if not available_values:
-            raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
-        slot_value = max(available_values) / Decimal("3")
-        contract_values = await asyncio.gather(
-            *(self.contract_value(client, str(leg["productSymbol"])) for leg in resolved)
+        usd_wallet = next(
+            (
+                item
+                for item in balances
+                if isinstance(item, dict) and str(item.get("asset_symbol", "")).upper() == "USD"
+            ),
+            None,
         )
+        available = decimal_value(usd_wallet.get("available_balance")) if usd_wallet else Decimal("0")
+        if available <= 0:
+            raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
+        allocation = capital_budget(available, definition.allocationMode, definition.capitalAmount)
+        usable_capital = allocation * Decimal("0.98")
+        products = await asyncio.gather(*(self.product_spec(client, str(leg["productSymbol"])) for leg in resolved))
+        contract_values = [decimal_value(product.get("contract_value"), "1") for product in products]
 
         signed_premium = Decimal("0")
-        for leg, multiplier in zip(resolved, contract_values, strict=True):
-            mark = decimal_value(leg.get("markPrice"))
-            if mark <= 0 or multiplier <= 0:
+        estimated_order_margin = Decimal("0")
+        for leg, multiplier, product in zip(resolved, contract_values, products, strict=True):
+            executable_price = decimal_value(leg.get("bestAsk") if leg["position"] == "buy" else leg.get("bestBid"))
+            if executable_price <= 0:
+                executable_price = decimal_value(leg.get("markPrice"))
+            if executable_price <= 0 or multiplier <= 0:
                 raise AppError(409, "A live option price is unavailable for automatic lots", "option_price_unavailable")
             direction = Decimal("1") if leg["position"] == "sell" else Decimal("-1")
-            signed_premium += direction * mark * multiplier
+            signed_premium += direction * executable_price * multiplier
+            if leg["position"] == "buy":
+                estimated_order_margin += executable_price * multiplier
+            else:
+                spot = decimal_value(leg.get("spotPrice"))
+                initial_margin_percent = decimal_value(product.get("initial_margin"))
+                estimated_order_margin += spot * multiplier * initial_margin_percent / Decimal("100")
             leg["contractValue"] = str(multiplier)
+            leg["sizingPrice"] = str(executable_price)
 
         if definition.riskBasis == "net_debit":
             risk_per_lot = -signed_premium
@@ -267,14 +300,18 @@ class TradingEngine:
             risk_per_lot = max(widths, default=Decimal("0")) - signed_premium
         else:
             risk_per_lot = signed_premium * decimal_value(definition.stopLossPercent) / Decimal("100")
+        risk_per_lot = max(risk_per_lot, estimated_order_margin)
         if risk_per_lot <= 0:
             raise AppError(409, "Automatic lot risk could not be calculated", "automatic_lot_risk_invalid")
 
-        lots_by_risk = int(slot_value // risk_per_lot)
-        hard_cap = definition.maximumLots or 1
-        lots = min(lots_by_risk, hard_cap)
+        lots_by_risk = int(usable_capital // risk_per_lot)
+        lots = min(lots_by_risk, definition.maximumLots) if definition.maximumLots else lots_by_risk
         if lots < 1:
-            raise AppError(409, "One lot does not fit inside an account capital slot", "automatic_lot_too_large")
+            raise AppError(
+                409,
+                "One lot does not fit inside the selected capital cap",
+                "automatic_lot_too_large",
+            )
         return [{**leg, "lots": lots} for leg in resolved]
 
     async def reserve_capital_slot(self, user_id: str, strategy_id: str) -> int:
@@ -283,7 +320,7 @@ class TradingEngine:
             {"p_user_id": user_id, "p_strategy_id": strategy_id},
         )
         if slot is None:
-            raise AppError(409, "All three account capital slots are occupied", "capital_slots_full")
+            raise AppError(409, "All three concurrent strategy slots are occupied", "capital_slots_full")
         return int(slot)
 
     async def release_capital_slot(self, user_id: str, strategy_id: str) -> None:
@@ -744,9 +781,15 @@ class TradingEngine:
 
     async def contract_value(self, client: DeltaClient, symbol: str) -> Decimal:
         if symbol not in self.contract_values:
-            product = await client.product(symbol)
-            self.contract_values[symbol] = decimal_value(product.get("result", {}).get("contract_value"), "1")
+            product = await self.product_spec(client, symbol)
+            self.contract_values[symbol] = decimal_value(product.get("contract_value"), "1")
         return self.contract_values[symbol]
+
+    async def product_spec(self, client: DeltaClient, symbol: str) -> dict[str, Any]:
+        if symbol not in self.product_specs:
+            response = await client.product(symbol)
+            self.product_specs[symbol] = response.get("result") or {}
+        return self.product_specs[symbol]
 
     async def run_executions(self, strategy_id: str) -> list[dict[str, Any]]:
         return await self.db.select(
