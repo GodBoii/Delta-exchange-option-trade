@@ -78,7 +78,7 @@ const initialStrategy = (): StrategyDefinition => ({
   emergencyExitEnabled: true,
   trailToBreakEven: false,
   breakEvenScope: "all_legs",
-  allocationMode: "one_of_three_account_slots",
+  allocationMode: "full_balance",
   lotsMode: "auto",
   equalLotsRequired: true,
   legs: [
@@ -96,6 +96,14 @@ function isStrategyDefinition(value: unknown): value is StrategyDefinition {
     && Boolean(strategy.entry && typeof strategy.entry === "object")
     && Array.isArray(strategy.legs)
     && strategy.legs.length > 0;
+}
+
+function hydrateAllocationMode(value: unknown): StrategyDefinition["allocationMode"] {
+  if (value === "half_balance" || value === "one_third_balance" || value === "one_quarter_balance" || value === "fixed_amount") {
+    return value;
+  }
+  if (value === "one_of_three_account_slots") return "full_balance";
+  return "full_balance";
 }
 
 function hydrateStrategy(strategy: StrategyDefinition): StrategyDefinition {
@@ -120,7 +128,8 @@ function hydrateStrategy(strategy: StrategyDefinition): StrategyDefinition {
     combinedStopLossPercent: strategy.combinedStopLossPercent ?? undefined,
     emergencyStopLossPercent: strategy.emergencyStopLossPercent ?? undefined,
     emergencyExitEnabled: strategy.emergencyExitEnabled ?? true,
-    allocationMode: "one_of_three_account_slots",
+    allocationMode: hydrateAllocationMode(strategy.allocationMode),
+    capitalAmount: strategy.capitalAmount ?? undefined,
     lotsMode: strategy.lotsMode ?? "manual",
     equalLotsRequired: strategy.equalLotsRequired ?? false,
     legs: strategy.legs.map(leg => ({ ...leg, role: leg.role ?? undefined }))
@@ -215,6 +224,9 @@ function validate(strategy: StrategyDefinition): ValidationIssue[] {
   }
   if (strategy.holdingMode === "hold_to_expiry" && strategy.exitMinutesBeforeExpiry < 1) {
     issues.push({ field: "exitMinutesBeforeExpiry", message: "Set an expiry safety buffer of at least one minute." });
+  }
+  if (strategy.allocationMode === "fixed_amount" && (!strategy.capitalAmount || strategy.capitalAmount <= 0)) {
+    issues.push({ field: "capitalAmount", message: "Set a custom capital cap greater than zero." });
   }
   if (strategy.sameExpiryRequired && new Set(strategy.legs.map(leg => leg.expiry)).size > 1) {
     issues.push({ field: "legs", message: "Every leg must use the same fallback expiry date." });
@@ -956,9 +968,40 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             <PanelHeader
               icon={<CircleDollarSign />}
               title="Capital rules"
-              meta="One account slot and deterministic lot sizing"
+              meta="Automatic lots within the selected Delta available-margin cap"
             />
             <div className="grid-3">
+              <Select
+                label="Capital used"
+                value={strategy.allocationMode}
+                onChange={value => {
+                  const allocationMode = value as StrategyDefinition["allocationMode"];
+                  setStrategy({
+                    ...strategy,
+                    allocationMode,
+                    capitalAmount: allocationMode === "fixed_amount" ? strategy.capitalAmount ?? 1 : undefined
+                  });
+                }}
+                options={[
+                  { value: "full_balance", label: "Full available margin" },
+                  { value: "half_balance", label: "Half of available margin" },
+                  { value: "one_third_balance", label: "One third of available margin" },
+                  { value: "one_quarter_balance", label: "One quarter of available margin" },
+                  { value: "fixed_amount", label: "Custom amount cap" }
+                ]}
+              />
+              {strategy.allocationMode === "fixed_amount" && (
+                <NumberField
+                  label="Custom amount cap"
+                  min={0.01}
+                  step={0.01}
+                  suffix="USD"
+                  value={strategy.capitalAmount ?? 1}
+                  invalid={invalidFields.has("capitalAmount")}
+                  hint="Capped against Delta's available USD margin for BTC options."
+                  onChange={capitalAmount => setStrategy({ ...strategy, capitalAmount })}
+                />
+              )}
               <Segmented
                 label="Lots"
                 value={strategy.lotsMode}
@@ -1122,6 +1165,17 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               <div><dt>Legs</dt><dd>{strategy.legs.length} ({structure.shortLots} short / {structure.longLots} long lots)</dd></div>
               <div><dt>Entry</dt><dd>{formatDateTime(strategy.entry.entryAt)} <small>{relativeTime(strategy.entry.entryAt)}</small></dd></div>
               <div><dt>Hold</dt><dd>{formatDuration(strategy.entry.entryAt, strategy.entry.exitAt)}</dd></div>
+              <div>
+                <dt>Capital</dt>
+                <dd>{strategy.allocationMode === "fixed_amount"
+                  ? `$${strategy.capitalAmount ?? 0} cap`
+                  : {
+                    full_balance: "Full available margin",
+                    half_balance: "Half available margin",
+                    one_third_balance: "One third available margin",
+                    one_quarter_balance: "One quarter available margin"
+                  }[strategy.allocationMode]}</dd>
+              </div>
               <div>
                 <dt>Risk</dt>
                 <dd>{strategy.riskMode === "legwise"
