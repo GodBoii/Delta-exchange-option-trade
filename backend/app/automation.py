@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from .auth import current_account, require_user
+from .capital import percentage_concurrency_limit
 from .engine import TradingEngine, iso_now
 from .errors import AppError
 from .supabase import SupabaseAdmin
@@ -52,6 +53,7 @@ async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
 
 
 async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str, Any]:
+    policy = await engine.capital_policy(user_id)
     client = await engine.client_for_user(user_id)
     try:
         orders, positions, active = await asyncio.gather(
@@ -100,7 +102,7 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
             for row in positions.get("result") or []
         ],
         "activeStrategies": active,
-        "maximumConcurrentStrategies": 3,
+        "maximumConcurrentStrategies": percentage_concurrency_limit(policy.allocation_mode) or "calculated_at_entry",
     }
 
 
@@ -192,8 +194,9 @@ async def _signed_chart(db: SupabaseAdmin, chart: dict[str, Any]) -> dict[str, s
 async def automation_overview(request: Request, user: RequiredUser) -> dict[str, Any]:
     db: SupabaseAdmin = request.app.state.db
     user_id = str(user["id"])
-    settings, strategies, runs, proposals = await asyncio.gather(
+    settings, capital_policy, strategies, runs, proposals = await asyncio.gather(
         ensure_settings(db, user_id),
+        request.app.state.engine.capital_policy(user_id),
         db.select(
             "saved_strategies",
             {
@@ -253,6 +256,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "settings": {
             "enabled": settings["enabled"],
             "model": settings["model_id"],
+            "maximumConcurrentStrategies": percentage_concurrency_limit(capital_policy.allocation_mode),
         },
         "enabledStrategies": sum(bool(row["enabled_for_ai"]) for row in strategies),
         "totalStrategies": len(strategies),
