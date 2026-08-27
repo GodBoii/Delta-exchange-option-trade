@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from app.automation import build_account_context
+from app.capital import CapitalPolicy
 from app.default_strategies import default_strategy_definitions
 from app.engine import TradingEngine, capital_budget
 from app.errors import AppError
@@ -65,13 +66,13 @@ def test_resolves_seven_day_policy_to_first_later_listed_expiry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_automatic_lots_use_full_usd_available_margin_by_default() -> None:
+async def test_automatic_lots_use_half_of_total_usd_balance_by_default() -> None:
     definition = default_strategy_definitions(datetime(2026, 8, 25, tzinfo=UTC))[0]
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
     class Client:
         async def balances(self) -> dict:
-            return {"result": [{"asset_symbol": "USD", "available_balance": "900"}]}
+            return {"result": [{"asset_symbol": "USD", "balance": "900", "available_balance": "900"}]}
 
     async def product_spec(_client, _symbol: str):
         return {"contract_value": 1, "initial_margin": 0}
@@ -81,7 +82,7 @@ async def test_automatic_lots_use_full_usd_available_margin_by_default() -> None
 
     sized = await engine.apply_automatic_lots(Client(), definition, resolved)  # type: ignore[arg-type]
 
-    assert sized[0]["lots"] == 8
+    assert sized[0]["lots"] == 4
 
 
 @pytest.mark.asyncio
@@ -106,7 +107,7 @@ async def test_automatic_lots_reject_one_lot_outside_selected_cap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_balance_fits_one_long_straddle_lot_from_exchange_quotes() -> None:
+async def test_half_balance_fits_one_long_straddle_lot_from_exchange_quotes() -> None:
     definition = default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))[2]
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
@@ -115,7 +116,7 @@ async def test_full_balance_fits_one_long_straddle_lot_from_exchange_quotes() ->
             return {
                 "result": [
                     {"asset_symbol": "INR", "available_balance": "107.43"},
-                    {"asset_symbol": "USD", "available_balance": "1.26"},
+                    {"asset_symbol": "USD", "balance": "2.52", "available_balance": "2.52"},
                 ]
             }
 
@@ -148,7 +149,7 @@ async def test_full_balance_fits_one_long_straddle_lot_from_exchange_quotes() ->
 
 
 @pytest.mark.asyncio
-async def test_short_straddle_margin_estimate_matches_full_balance_example() -> None:
+async def test_short_straddle_margin_estimate_matches_half_balance_example() -> None:
     definition = default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))[4]
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
@@ -157,7 +158,7 @@ async def test_short_straddle_margin_estimate_matches_full_balance_example() -> 
             return {
                 "result": [
                     {"asset_symbol": "INR", "available_balance": "107.43"},
-                    {"asset_symbol": "USD", "available_balance": "1.26"},
+                    {"asset_symbol": "USD", "balance": "2.52", "available_balance": "2.52"},
                 ]
             }
 
@@ -191,13 +192,15 @@ async def test_short_straddle_margin_estimate_matches_full_balance_example() -> 
 
 def test_capital_budget_supports_fraction_and_fixed_caps() -> None:
     available = Decimal("120")
+    total = Decimal("200")
 
-    assert capital_budget(available, "full_balance") == Decimal("120")
-    assert capital_budget(available, "half_balance") == Decimal("60.0")
-    assert capital_budget(available, "one_third_balance") == Decimal("40")
-    assert capital_budget(available, "one_quarter_balance") == Decimal("30.00")
-    assert capital_budget(available, "fixed_amount", 25) == Decimal("25")
-    assert capital_budget(available, "fixed_amount", 250) == available
+    assert capital_budget(available, total, "full_balance") == available
+    assert capital_budget(available, total, "half_balance") == Decimal("100.0")
+    assert capital_budget(available, total, "one_third_balance") == total / Decimal("3")
+    assert capital_budget(available, total, "one_quarter_balance") == Decimal("50.00")
+    assert capital_budget(available, total, "fixed_amount", 25) == Decimal("25")
+    assert capital_budget(available, total, "fixed_amount", 250) == available
+    assert capital_budget(Decimal("50"), Decimal("100"), "half_balance") == Decimal("50")
 
 
 def test_all_agent_chart_types_render_non_empty_pngs() -> None:
@@ -315,6 +318,9 @@ async def test_agent_account_context_excludes_balances() -> None:
 
     class Engine:
         db = Database()
+
+        async def capital_policy(self, _user_id: str) -> CapitalPolicy:
+            return CapitalPolicy()
 
         async def client_for_user(self, _user_id: str) -> Client:
             return Client()
