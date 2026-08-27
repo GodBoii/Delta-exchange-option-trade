@@ -4,13 +4,13 @@ import {
   useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode
 } from "react";
 import {
-  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Menu, Newspaper, PieChart, X
+  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Menu, Newspaper, PieChart, WalletCards, X
 } from "lucide-react";
 import {
   Badge, Brand, IconSwap, StatusDot, SwapText, Tooltip, useDisclosure
 } from "@/app/components/ui";
 
-export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs";
+export type Tab = "connect" | "builder" | "capital" | "market" | "news" | "automation" | "dashboard" | "runs";
 
 type NavItem = { id: Tab; label: string; hint: string; icon: ReactNode };
 type NavGroup = { label: string; items: NavItem[] };
@@ -25,6 +25,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Trading",
     items: [
       { id: "connect", label: "Delta connection", hint: "Enable live execution", icon: <KeyRound /> },
+      { id: "capital", label: "Capital allocation", hint: "Account-wide trading budget", icon: <WalletCards /> },
       { id: "builder", label: "Strategy builder", hint: "Configure and schedule", icon: <Layers3 /> },
       { id: "runs", label: "Strategy history", hint: "Scheduled and active strategies", icon: <Activity /> },
       { id: "dashboard", label: "Portfolio", hint: "Balances and positions", icon: <PieChart /> }
