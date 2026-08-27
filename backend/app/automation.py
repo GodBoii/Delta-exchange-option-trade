@@ -196,7 +196,11 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         ensure_settings(db, user_id),
         db.select(
             "saved_strategies",
-            {"select": "id,name,version,enabled_for_ai", "user_id": f"eq.{user_id}", "order": "name.asc"},
+            {
+                "select": "id,name,version,enabled_for_ai",
+                "or": f"(user_id.eq.{user_id},user_id.is.null)",
+                "order": "name.asc",
+            },
         ),
         db.select(
             "automation_agent_runs",
