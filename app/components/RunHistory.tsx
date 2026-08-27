@@ -420,6 +420,13 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
     { label: "Break even scope", value: readable(definition.breakEvenScope) }
   ];
 
+  const capital: DetailItem[] = [
+    { label: "Account policy", value: readable(record?.capitalPolicy.allocationMode) },
+    { label: "Capital budget", value: record?.capitalBudget ? `${decimal(record.capitalBudget)} USD` : EM_DASH },
+    { label: "Allocation slot", value: record?.capitalSlot ?? EM_DASH },
+    { label: "Maximum simultaneous strategies", value: readable(record?.capitalPolicy.maximumConcurrentStrategies) }
+  ];
+
   const riskState = record?.riskState ?? {};
   const riskItems: DetailItem[] = Object.entries(riskState)
     .filter(([key]) => key !== "legs")
@@ -465,6 +472,10 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
 
           <DetailSection title="Timing" meta={relativeTime(record?.createdAt ?? run.createdAt)}>
             <DetailList items={timing} />
+          </DetailSection>
+
+          <DetailSection title="Capital allocation" meta="Account policy captured at entry">
+            <DetailList items={capital} />
           </DetailSection>
 
           <DetailSection
