@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Activity, Bot, CalendarClock, Play, RefreshCw, ShieldCheck, Workflow } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { cleanAgentMarkdown } from "@/lib/agent-markdown";
 import type { AutomationOverview as AutomationOverviewData } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
 import { errorMessage, formatDateTime, percent, titleCase } from "@/lib/format";
@@ -128,7 +129,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
           <div className="automation-run-output">
             <RunCharts charts={latest.charts} />
             <article className="automation-report news-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{latest.report}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(latest.report)}</ReactMarkdown>
             </article>
           </div>
         ) : latest?.error ? (
@@ -163,7 +164,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
                 <div className="automation-run-body">
                   <RunCharts charts={run.charts} />
                   {run.report ? (
-                    <article className="news-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{run.report}</ReactMarkdown></article>
+                    <article className="news-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(run.report)}</ReactMarkdown></article>
                   ) : run.error ? (
                     <InlineMessage tone="error">{run.error}</InlineMessage>
                   ) : (
