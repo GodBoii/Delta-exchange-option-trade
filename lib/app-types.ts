@@ -105,6 +105,9 @@ export type RunDetail = StrategyRun & {
   updatedAt?: string | null;
   definition: Partial<StrategyDefinition>;
   savedStrategyId?: string | null;
+  capitalSlot?: number | null;
+  capitalBudget?: string | null;
+  capitalPolicy: Record<string, unknown>;
   riskState: Record<string, unknown>;
   riskMonitoredAt?: string | null;
   combinedStopTriggeredAt?: string | null;
@@ -134,6 +137,31 @@ export type AccountOverview = {
   orders: DeltaRecord[];
   positions: DeltaRecord[];
   riskStrategies: RiskStrategy[];
+};
+
+export type CapitalAllocationMode =
+  | "full_balance"
+  | "half_balance"
+  | "one_third_balance"
+  | "one_quarter_balance"
+  | "fixed_amount";
+
+export type CapitalOverview = {
+  success: boolean;
+  settings: {
+    allocationMode: CapitalAllocationMode;
+    capitalAmount?: number | null;
+  };
+  wallet: {
+    asset: "USD";
+    totalBalance: number;
+    availableBalance: number;
+  };
+  nominalBudgetPerStrategy: number;
+  availableBudgetForNextStrategy: number;
+  maximumConcurrentStrategies: number;
+  occupiedAllocations: number;
+  availableAllocations: number;
 };
 
 /** Shared built-in template or reusable definition in the account's private library. */
@@ -180,6 +208,7 @@ export type AutomationOverview = {
   settings: {
     enabled: boolean;
     model: string;
+    maximumConcurrentStrategies?: number | null;
   };
   enabledStrategies: number;
   totalStrategies: number;
