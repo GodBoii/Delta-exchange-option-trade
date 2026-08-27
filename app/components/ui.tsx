@@ -440,11 +440,12 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
  * Unlike `ConfirmModal` this surface is wide, scrolls internally, and carries no
  * implied action, so the header keeps a single unambiguous close control.
  */
-export function Dialog({ title, subtitle, aside, footer, onClose, children }: {
+export function Dialog({ title, subtitle, aside, footer, size = "default", onClose, children }: {
   title: string;
   subtitle?: ReactNode;
   aside?: ReactNode;
   footer?: ReactNode;
+  size?: "default" | "compact";
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -463,7 +464,7 @@ export function Dialog({ title, subtitle, aside, footer, onClose, children }: {
         aria-hidden="true"
       />
       <div
-        className={`dialog t-modal${className}`}
+        className={`dialog${size === "compact" ? " dialog-compact" : ""} t-modal${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
