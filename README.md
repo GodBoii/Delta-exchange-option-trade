@@ -66,6 +66,14 @@ supabase/migrations/003_saved_strategy_library.sql
 
 and choose **Run** once. The migration creates the private `saved_strategies` table, RLS ownership policies, the optional link from execution runs to their saved definition, indexes, and grants. It also backfills every existing strategy run into the saved library without changing or deleting run history. Reusable strategy names are intentionally not unique.
 
+After migrations `004` through `008`, run:
+
+```text
+supabase/migrations/009_shared_default_strategies.sql
+```
+
+Migration `009` replaces the per-account copies of the eight built-in strategies with one shared, read-only set. Historical runs and automation proposals are relinked before the duplicate rows are removed. New user-created strategies remain private to their account.
+
 ### Apply the account phone-number migration
 
 Open **Supabase Dashboard → SQL Editor**, paste the entire contents of:
