@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = BACKEND_DIR / ".env"
 
-MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
+MODEL_ID = "deepseek/deepseek-v4-flash-0731"
+AUTOMATION_MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
 AUTOMATION_SESSION_TABLE = "automation_agent_sessions"
 SESSION_TABLE = "news_agent_sessions"
 DB_SCHEMA = "ai"
@@ -38,6 +39,7 @@ def _with_connection_defaults(url: str) -> str:
 class NewsAgentSettings:
     openrouter_api_key: str | None
     model_id: str
+    automation_model_id: str
     allowed_domains: tuple[str, ...]
     supabase_db_url: str | None
     session_table: str
@@ -58,6 +60,7 @@ class NewsAgentSettings:
         return cls(
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
             model_id=MODEL_ID,
+            automation_model_id=AUTOMATION_MODEL_ID,
             allowed_domains=ALLOWED_DOMAINS,
             supabase_db_url=os.getenv("SUPABASE_DB_URL") or None,
             session_table=SESSION_TABLE,
