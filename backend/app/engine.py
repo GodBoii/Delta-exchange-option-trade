@@ -369,7 +369,7 @@ class TradingEngine:
                 {
                     "select": "id",
                     "id": f"eq.{saved_strategy_id}",
-                    "user_id": f"eq.{user_id}",
+                    "or": f"(user_id.eq.{user_id},user_id.is.null)",
                     "limit": "1",
                 },
             )
