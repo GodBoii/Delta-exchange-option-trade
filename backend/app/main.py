@@ -12,11 +12,19 @@ from fastapi.responses import JSONResponse
 from .auth import create_connection, current_account, delta_client_for_user, optional_user, require_user
 from .automation import AutomationScheduler
 from .automation import router as automation_router
+from .capital import capital_budget, maximum_concurrent_strategies
 from .config import get_settings
 from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
 from .errors import AppError
-from .models import CancelOrderRequest, ClosePositionRequest, ConnectRequest, SaveStrategyRequest, StrategyDefinition
+from .models import (
+    CancelOrderRequest,
+    CapitalSettingsUpdate,
+    ClosePositionRequest,
+    ConnectRequest,
+    SaveStrategyRequest,
+    StrategyDefinition,
+)
 from .news import router as news_router
 from .strategy import delta_expiry
 from .supabase import SupabaseAdmin
@@ -192,6 +200,84 @@ async def account_overview(request: Request, user: RequiredUser) -> dict[str, An
             if (item.get("risk_state") or {}).get("mode") == "combined_premium"
         ],
     }
+
+
+async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
+    engine: TradingEngine = request.app.state.engine
+    policy = await engine.capital_policy(user_id)
+    client = await engine.client_for_user(user_id)
+    try:
+        available, total_balance = await engine.usd_capital(client)
+    finally:
+        await client.close()
+    maximum_slots = maximum_concurrent_strategies(
+        total_balance,
+        policy.allocation_mode,
+        policy.capital_amount,
+    )
+    slots = await request.app.state.db.select(
+        "strategy_capital_slots",
+        {
+            "select": "id",
+            "user_id": f"eq.{user_id}",
+            "status": "in.(reserved,active)",
+            "limit": "100",
+        },
+    )
+    nominal_budget = capital_budget(
+        total_balance,
+        total_balance,
+        policy.allocation_mode,
+        policy.capital_amount,
+    )
+    next_budget = capital_budget(
+        available,
+        total_balance,
+        policy.allocation_mode,
+        policy.capital_amount,
+    )
+    occupied = len(slots)
+    return {
+        "success": True,
+        "settings": {
+            "allocationMode": policy.allocation_mode,
+            "capitalAmount": float(policy.capital_amount) if policy.capital_amount is not None else None,
+        },
+        "wallet": {
+            "asset": "USD",
+            "totalBalance": float(total_balance),
+            "availableBalance": float(available),
+        },
+        "nominalBudgetPerStrategy": float(nominal_budget),
+        "availableBudgetForNextStrategy": float(next_budget),
+        "maximumConcurrentStrategies": maximum_slots,
+        "occupiedAllocations": occupied,
+        "availableAllocations": max(0, maximum_slots - occupied),
+    }
+
+
+@app.get("/api/capital/settings")
+async def get_capital_settings(request: Request, user: RequiredUser) -> dict[str, Any]:
+    await current_account(request.app.state.db, user, required=True)
+    return await capital_overview(request, str(user["id"]))
+
+
+@app.put("/api/capital/settings")
+async def update_capital_settings(
+    request: Request,
+    body: CapitalSettingsUpdate,
+    user: RequiredUser,
+) -> dict[str, Any]:
+    await current_account(request.app.state.db, user, required=True)
+    payload = {
+        "user_id": str(user["id"]),
+        "allocation_mode": body.allocationMode,
+        "capital_amount": body.capitalAmount if body.allocationMode == "fixed_amount" else None,
+    }
+    rows = await request.app.state.db.upsert("capital_settings", payload, on_conflict="user_id")
+    if not rows:
+        raise AppError(500, "Could not save the capital policy", "capital_settings_failed")
+    return await capital_overview(request, str(user["id"]))
 
 
 @app.get("/api/market/options")
