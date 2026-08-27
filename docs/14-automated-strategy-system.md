@@ -904,7 +904,7 @@ Execute and monitor
 - Saved strategies have a database version. Proposals bind to that version and fail if it changes.
 - The database stores agent runs, market snapshots, proposals, and three concurrent execution slots.
 - The strategy-level controller monitors combined credit and combined debit take profit and stop loss.
-- The eight approved strategies have validated constructors and are seeded into empty user libraries.
+- The eight approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
 - The DeepSeek vision team receives BTC price, volume, volatility, order-book, and Delta open-interest charts, Delta option context, account context, and one news sub-agent.
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
 - Asia, London, and New York triggers use their local timezones, so daylight-saving changes convert correctly.
