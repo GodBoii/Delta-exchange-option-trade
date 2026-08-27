@@ -349,7 +349,7 @@ async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> 
     async def reject_for_budget(_strategy_id: str) -> dict:
         nonlocal attempts
         attempts += 1
-        raise AppError(409, "One lot does not fit inside the selected capital cap", "automatic_lot_too_large")
+        raise AppError(409, "One lot does not fit inside the account capital budget", "automatic_lot_too_large")
 
     engine.process_active_risks = no_active_risks  # type: ignore[method-assign]
     engine.execute_entry = reject_for_budget  # type: ignore[method-assign]
@@ -359,5 +359,5 @@ async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> 
 
     assert attempts == 1
     assert db.strategy["status"] == "attention"
-    assert db.strategy["last_error"] == "Entry not placed: One lot does not fit inside the selected capital cap"
+    assert db.strategy["last_error"] == "Entry not placed: One lot does not fit inside the account capital budget"
     assert db.proposal_status["status"] == "rejected"
