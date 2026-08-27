@@ -61,7 +61,7 @@ class AutomationStrategyTools(Toolkit):
                 """
                 select id::text, name, version, definition_json, created_at, updated_at
                 from public.saved_strategies
-                where user_id = %s and enabled_for_ai = true
+                where (user_id = %s or user_id is null) and enabled_for_ai = true
                 order by name, updated_at desc
                 """,
                 (self.user_id,),
@@ -134,7 +134,7 @@ class AutomationStrategyTools(Toolkit):
                 """
                 select id::text, name, version, definition_json
                 from public.saved_strategies
-                where id = %s and user_id = %s and enabled_for_ai = true
+                where id = %s and (user_id = %s or user_id is null) and enabled_for_ai = true
                 for share
                 """,
                 (saved_id, self.user_id),
