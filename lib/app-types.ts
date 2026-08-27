@@ -136,9 +136,10 @@ export type AccountOverview = {
   riskStrategies: RiskStrategy[];
 };
 
-/** Reusable definition in the private Supabase library. */
+/** Shared built-in template or reusable definition in the account's private library. */
 export type SavedStrategy = {
   id: string;
+  isDefault: boolean;
   version: number;
   enabledForAi: boolean;
   name: string;
