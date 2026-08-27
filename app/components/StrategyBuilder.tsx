@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown, ArrowUp, CalendarClock, ChevronDown, CircleDollarSign, Copy, Download,
-  FolderOpen, Layers3, LoaderCircle, Plus, Save, Shield, ShieldCheck, Trash2, Upload, WifiOff
+  FileText, FolderOpen, Layers3, LoaderCircle, Maximize2, Plus, Save, Shield, ShieldCheck, Trash2,
+  Upload, WifiOff
 } from "lucide-react";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import type { SavedStrategy } from "@/lib/app-types";
@@ -14,7 +15,7 @@ import {
   errorMessage, formatDateTime, formatDuration, formatExpiry, relativeTime, toIso, toLocalInput
 } from "@/lib/format";
 import {
-  AnimatedNumber, ClearableInput, ConfirmModal, DrawnTick, EmptyState, Field, InlineMessage,
+  AnimatedNumber, ClearableInput, ConfirmModal, Dialog, DrawnTick, EmptyState, Field, InlineMessage,
   MorphMenu, NumberField, OptionalNumberField, Panel, PanelHeader, SectionHeading, Segmented, Select,
   Shimmer, StatusDot, SuccessCheck, SwapText, Toggle, Tooltip, useBurst, useShake,
   type NoticeHandler
@@ -28,6 +29,10 @@ import { BorderBeam } from "border-beam";
 const DRAFT_STORAGE_KEY = "delta-strategy-draft-v1";
 const DRAFT_ID_STORAGE_KEY = "delta-strategy-draft-id-v1";
 const MAX_LEGS = 12;
+const DEFAULT_STRATEGY_NAMES = [
+  "Long call", "Long put", "Long ATM straddle", "Long strangle",
+  "Short ATM straddle", "Short strangle", "Iron condor", "Iron butterfly"
+] as const;
 
 const tomorrow = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
@@ -164,6 +169,7 @@ function savedStrategyFromRow(row: SavedStrategyRow): SavedStrategy | null {
   if (!isStrategyDefinition(definition)) return null;
   return {
     id: row.id,
+    isDefault: row.user_id === null || row.is_default === true,
     version: row.version,
     enabledForAi: row.enabled_for_ai,
     name: row.name,
@@ -171,6 +177,26 @@ function savedStrategyFromRow(row: SavedStrategyRow): SavedStrategy | null {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function sortSavedStrategies(left: SavedStrategy, right: SavedStrategy) {
+  if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1;
+  return left.isDefault
+    ? left.name.localeCompare(right.name)
+    : right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function markLegacyDefaultCopies(items: SavedStrategy[]) {
+  if (items.some(item => item.isDefault)) return items;
+  const legacyIds = new Set<string>();
+  for (const name of DEFAULT_STRATEGY_NAMES) {
+    const first = items
+      .filter(item => item.name === name)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+    if (!first) return items;
+    legacyIds.add(first.id);
+  }
+  return items.map(item => legacyIds.has(item.id) ? { ...item, isDefault: true } : item);
 }
 
 /* ------------------------------------------------------------------ *
@@ -349,10 +375,11 @@ function structureModel(legs: StrategyLeg[]): StructureModel {
  * Builder
  * ------------------------------------------------------------------ */
 
-type LibraryState = "loading" | "local" | "unsaved" | "saving" | "saved" | "error";
+type LibraryState = "loading" | "template" | "local" | "unsaved" | "saving" | "saved" | "error";
 
 const LIBRARY_COPY: Record<LibraryState, { label: string; tone: "active" | "warning" | "negative" | "neutral" }> = {
   loading: { label: "Loading saved strategies", tone: "neutral" },
+  template: { label: "Built-in strategy", tone: "neutral" },
   local: { label: "Unsaved draft", tone: "warning" },
   unsaved: { label: "Unsaved changes", tone: "warning" },
   saving: { label: "Saving", tone: "warning" },
@@ -379,6 +406,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   const [libraryState, setLibraryState] = useState<LibraryState>("loading");
   const [confirmNew, setConfirmNew] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
 
   const [scheduled, setScheduled] = useState(false);
@@ -439,7 +467,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     try {
       const supabase = getSupabaseBrowserClient();
       const columns = "id,user_id,name,definition_json,source_run_id,version,enabled_for_ai,created_at,updated_at";
-      const { data, error: saveError } = savedId
+      const existing = savedStrategies.find(item => item.id === savedId);
+      const { data, error: saveError } = savedId && !existing?.isDefault
         ? await supabase.from("saved_strategies")
           .update({ name: trimmedName, definition_json: normalized as unknown as Json, enabled_for_ai: normalized.enabledForAi })
           .eq("id", savedId).eq("user_id", userId).select(columns).single()
@@ -452,7 +481,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       if (!saved) throw new Error("Supabase returned an invalid saved strategy.");
 
       setSavedStrategies(current => [saved, ...current.filter(item => item.id !== saved.id)]
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
+        .sort(sortSavedStrategies));
       setActiveSavedId(saved.id);
       setSavedFingerprint(fingerprint(saved.definition));
       setLibraryState("saved");
@@ -467,7 +496,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       if (notify) onNotice({ tone: "error", text: message });
       return null;
     }
-  }, [onNotice, userId]);
+  }, [onNotice, savedStrategies, userId]);
 
   // Browser recovery copy, restored before the Supabase library loads.
   useEffect(() => {
@@ -504,7 +533,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           const { data, error: loadError } = await getSupabaseBrowserClient()
             .from("saved_strategies")
             .select("id,user_id,name,definition_json,source_run_id,version,enabled_for_ai,created_at,updated_at")
-            .eq("user_id", userId)
             .order("updated_at", { ascending: false })
             .range(from, from + pageSize - 1);
           if (loadError) throw loadError;
@@ -514,7 +542,10 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
         }
         if (cancelled) return;
 
-        const library = rows.map(savedStrategyFromRow).filter((item): item is SavedStrategy => item !== null);
+        const parsed = rows
+          .map(savedStrategyFromRow)
+          .filter((item): item is SavedStrategy => item !== null);
+        const library = markLegacyDefaultCopies(parsed).sort(sortSavedStrategies);
         setSavedStrategies(library);
 
         const cachedId = localStorage.getItem(DRAFT_ID_STORAGE_KEY);
@@ -539,7 +570,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
         setStrategy(definition);
         setExpandedLeg(definition.legs[0]?.id ?? null);
         setSavedFingerprint(fingerprint(selected.definition));
-        setLibraryState(fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
+        setLibraryState(selected.isDefault
+          ? "template"
+          : fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
       } catch (loadError) {
         if (cancelled) return;
         setLibraryState("error");
@@ -562,6 +595,10 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   // Debounced autosave of the selected definition.
   useEffect(() => {
     if (!libraryReady || !activeSavedId) return;
+    if (savedStrategies.find(item => item.id === activeSavedId)?.isDefault) {
+      setLibraryState("template");
+      return;
+    }
     if (fingerprint(strategy) === savedFingerprint) {
       setLibraryState("saved");
       return;
@@ -570,7 +607,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     if (strategy.name.trim().length < 2) return;
     const timer = window.setTimeout(() => { void persist(strategy, activeSavedId); }, 900);
     return () => window.clearTimeout(timer);
-  }, [activeSavedId, libraryReady, persist, savedFingerprint, strategy]);
+  }, [activeSavedId, libraryReady, persist, savedFingerprint, savedStrategies, strategy]);
 
   /* ----------------------------- legs ----------------------------- */
 
@@ -626,7 +663,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   /* --------------------------- commands --------------------------- */
 
   async function startNewStrategy() {
-    if (activeSavedId && fingerprint(strategy) !== savedFingerprint) {
+    if (activeSavedId && !activeSaved?.isDefault && fingerprint(strategy) !== savedFingerprint) {
       if (!await persist(strategy, activeSavedId)) return;
     }
     const fresh = initialStrategy();
@@ -642,7 +679,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
 
   async function switchStrategy(savedId: string) {
     if (savedId === activeSavedId) return;
-    if (activeSavedId && fingerprint(strategy) !== savedFingerprint) {
+    if (activeSavedId && !activeSaved?.isDefault && fingerprint(strategy) !== savedFingerprint) {
       if (!await persist(strategy, activeSavedId)) return;
     } else if (!activeSavedId && strategy.name.trim().length >= 2) {
       if (!await persist(strategy, null)) return;
@@ -656,11 +693,13 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     setShowIssues(false);
     setError("");
     setSavedFingerprint(fingerprint(selected.definition));
-    setLibraryState(fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
+    setLibraryState(selected.isDefault
+      ? "template"
+      : fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
   }
 
   async function deleteStrategy() {
-    if (!activeSavedId) return;
+    if (!activeSavedId || activeSaved?.isDefault) return;
     const deletedId = activeSavedId;
     setLibraryState("saving");
     try {
@@ -720,7 +759,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     setError("");
     setShowIssues(false);
     try {
-      const saved = await persist(strategy, activeSavedId, false);
+      const saved = activeSaved?.isDefault
+        ? { ...activeSaved, definition: strategy }
+        : await persist(strategy, activeSavedId, false);
       if (!saved) return;
       const liveStrategy = { ...saved.definition, acknowledgement: true as const };
       await requestJson<{ result: { id: string } }>("/api/strategies", {
@@ -828,13 +869,17 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   onChange={name => setStrategy({ ...strategy, name })}
                 />
               </Field>
-              <Field label="Description" hint="Shown to the automation agent when it compares saved strategies.">
-                <input
-                  value={strategy.description}
-                  maxLength={500}
-                  placeholder="Explain when this strategy should be used"
-                  onChange={event => setStrategy({ ...strategy, description: event.target.value })}
-                />
+              <Field label="Description" hint="Included when the automation agent compares strategies.">
+                <button
+                  type="button"
+                  className="description-trigger"
+                  aria-haspopup="dialog"
+                  onClick={() => setDescriptionOpen(true)}
+                >
+                  <FileText aria-hidden="true" />
+                  <span>{strategy.description || "Add a strategy description"}</span>
+                  <span className="description-trigger-action"><Maximize2 aria-hidden="true" />Open</span>
+                </button>
               </Field>
               <Select
                 label="Category"
@@ -1102,8 +1147,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           <Panel>
             <PanelHeader
               icon={<FolderOpen />}
-              title="Saved strategies"
-              meta={`${savedStrategies.length} saved ${savedStrategies.length === 1 ? "strategy" : "strategies"}`}
+              title="Strategy library"
+              meta={`${savedStrategies.filter(item => item.isDefault).length} built-in · ${savedStrategies.filter(item => !item.isDefault).length} custom`}
             />
             <Field label="Current strategy">
               <span className="select-wrap">
@@ -1113,9 +1158,18 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   onChange={event => void switchStrategy(event.target.value)}
                 >
                   {!activeSavedId && <option value="">New unsaved strategy</option>}
-                  {savedStrategies.map(item => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))}
+                  <optgroup label="Built-in strategies">
+                    {savedStrategies.filter(item => item.isDefault).map(item => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </optgroup>
+                  {savedStrategies.some(item => !item.isDefault) && (
+                    <optgroup label="Your strategies">
+                      {savedStrategies.filter(item => !item.isDefault).map(item => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <ChevronDown aria-hidden="true" />
               </span>
@@ -1124,7 +1178,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             <p className={`library-state tone-${library.tone}`}>
               <StatusDot tone={library.tone} />
               <SwapText>{library.label}</SwapText>
-              <small>Draft recovery on</small>
+              <small>{activeSaved?.isDefault ? "Shared default" : "Draft recovery on"}</small>
             </p>
             <div className="button-row">
               <button
@@ -1137,7 +1191,11 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               >
                 <span className="t-like-icon" aria-hidden="true"><Save /></span>
                 {saveParticles}
-                <SwapText>{libraryState === "saving" ? "Saving" : libraryState === "saved" ? "Saved" : "Save"}</SwapText>
+                <SwapText>{libraryState === "saving"
+                  ? "Saving"
+                  : activeSaved?.isDefault
+                    ? "Save a copy"
+                    : libraryState === "saved" ? "Saved" : "Save"}</SwapText>
               </button>
               <button type="button" className="button primary" onClick={() => setConfirmNew(true)} disabled={busy || scheduling}>
                 <Plus aria-hidden="true" />New
@@ -1146,9 +1204,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 type="button"
                 className="button ghost icon-only"
                 onClick={() => setConfirmDelete(true)}
-                disabled={!activeSaved || busy}
+                disabled={!activeSaved || activeSaved.isDefault || busy}
                 aria-label="Delete saved strategy"
-                title="Delete saved strategy"
+                title={activeSaved?.isDefault ? "Built-in strategies cannot be deleted" : "Delete saved strategy"}
               >
                 <Trash2 aria-hidden="true" />
               </button>
@@ -1264,6 +1322,25 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           onClose={() => setConfirmDelete(false)}
           onConfirm={() => void deleteStrategy()}
         />
+      )}
+      {descriptionOpen && (
+        <Dialog
+          title="Strategy description"
+          subtitle={strategy.name}
+          aside={<span className="description-count">{strategy.description.length}/500</span>}
+          size="compact"
+          onClose={() => setDescriptionOpen(false)}
+        >
+          <Field label="Description" hint="The automation agent reads this when it compares saved strategies.">
+            <textarea
+              className="description-editor"
+              value={strategy.description}
+              maxLength={500}
+              placeholder="Explain when this strategy should be used, what market it suits, and its main risk."
+              onChange={event => setStrategy({ ...strategy, description: event.target.value })}
+            />
+          </Field>
+        </Dialog>
       )}
     </div>
   );
