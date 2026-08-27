@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .auth import credentials_for_user
+from .capital import CapitalPolicy, capital_budget, maximum_concurrent_strategies, policy_from_row
 from .config import Settings
 from .delta import DeltaClient
 from .errors import AppError
@@ -37,6 +38,7 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
         "automatic_lot_too_large",
         "automation_balance_unavailable",
         "automatic_lot_risk_invalid",
+        "manual_lots_exceed_capital_budget",
         "capital_slots_full",
         "option_chain_empty",
         "spot_price_missing",
@@ -68,24 +70,6 @@ def optional_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
-
-
-def capital_budget(available: Decimal, allocation_mode: str, fixed_amount: Any = None) -> Decimal:
-    fractions = {
-        "full_balance": Decimal("1"),
-        "half_balance": Decimal("0.5"),
-        "one_third_balance": Decimal("1") / Decimal("3"),
-        "one_quarter_balance": Decimal("0.25"),
-    }
-    if allocation_mode == "fixed_amount":
-        requested = decimal_value(fixed_amount)
-        if requested <= 0:
-            raise AppError(409, "The custom capital cap is invalid", "capital_cap_invalid")
-        return min(available, requested)
-    fraction = fractions.get(allocation_mode)
-    if fraction is None:
-        raise AppError(409, "The capital allocation mode is invalid", "capital_mode_invalid")
-    return available * fraction
 
 
 def slippage_fields(side: str, reference: Any, average: Any) -> dict[str, str]:
@@ -222,6 +206,36 @@ class TradingEngine:
         credentials = await credentials_for_user(self.db, user_id)
         return DeltaClient(self.settings, credentials["api_key"], credentials["api_secret"])
 
+    async def capital_policy(self, user_id: str) -> CapitalPolicy:
+        rows = await self.db.select(
+            "capital_settings",
+            {"select": "allocation_mode,capital_amount", "user_id": f"eq.{user_id}", "limit": "1"},
+        )
+        if rows:
+            return policy_from_row(rows[0])
+        inserted = await self.db.upsert(
+            "capital_settings",
+            {"user_id": user_id, "allocation_mode": "half_balance", "capital_amount": None},
+            on_conflict="user_id",
+        )
+        return policy_from_row(inserted[0] if inserted else None)
+
+    async def usd_capital(self, client: DeltaClient) -> tuple[Decimal, Decimal]:
+        balances = (await client.balances()).get("result") or []
+        usd_wallet = next(
+            (
+                item
+                for item in balances
+                if isinstance(item, dict) and str(item.get("asset_symbol", "")).upper() == "USD"
+            ),
+            None,
+        )
+        available = decimal_value(usd_wallet.get("available_balance")) if usd_wallet else Decimal("0")
+        total_balance = decimal_value(usd_wallet.get("balance")) if usd_wallet else Decimal("0")
+        if total_balance <= 0:
+            total_balance = available
+        return available, total_balance
+
     async def resolve_strategy(self, client: DeltaClient, definition: StrategyDefinition) -> list[dict[str, Any]]:
         chains: dict[str, list[dict[str, Any]]] = {}
         resolved: list[dict[str, Any]] = []
@@ -239,22 +253,19 @@ class TradingEngine:
         client: DeltaClient,
         definition: StrategyDefinition,
         resolved: list[dict[str, Any]],
+        policy: CapitalPolicy | None = None,
+        wallet: tuple[Decimal, Decimal] | None = None,
     ) -> list[dict[str, Any]]:
-        if definition.lotsMode != "auto":
-            return resolved
-        balances = (await client.balances()).get("result") or []
-        usd_wallet = next(
-            (
-                item
-                for item in balances
-                if isinstance(item, dict) and str(item.get("asset_symbol", "")).upper() == "USD"
-            ),
-            None,
-        )
-        available = decimal_value(usd_wallet.get("available_balance")) if usd_wallet else Decimal("0")
+        policy = policy or CapitalPolicy()
+        available, total_balance = wallet or await self.usd_capital(client)
         if available <= 0:
             raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
-        allocation = capital_budget(available, definition.allocationMode, definition.capitalAmount)
+        allocation = capital_budget(
+            available,
+            total_balance,
+            policy.allocation_mode,
+            policy.capital_amount,
+        )
         usable_capital = allocation * Decimal("0.98")
         products = await asyncio.gather(*(self.product_spec(client, str(leg["productSymbol"])) for leg in resolved))
         contract_values = [decimal_value(product.get("contract_value"), "1") for product in products]
@@ -304,24 +315,42 @@ class TradingEngine:
         if risk_per_lot <= 0:
             raise AppError(409, "Automatic lot risk could not be calculated", "automatic_lot_risk_invalid")
 
+        if definition.lotsMode == "manual":
+            requested_lots = max(decimal_value(leg.get("lots")) for leg in resolved)
+            if requested_lots * risk_per_lot > usable_capital:
+                raise AppError(
+                    409,
+                    "The manual lot size exceeds the account capital budget",
+                    "manual_lots_exceed_capital_budget",
+                )
+            return resolved
+
         lots_by_risk = int(usable_capital // risk_per_lot)
         lots = min(lots_by_risk, definition.maximumLots) if definition.maximumLots else lots_by_risk
         if lots < 1:
             raise AppError(
                 409,
-                "One lot does not fit inside the selected capital cap",
+                "One lot does not fit inside the account capital budget",
                 "automatic_lot_too_large",
             )
         return [{**leg, "lots": lots} for leg in resolved]
 
-    async def reserve_capital_slot(self, user_id: str, strategy_id: str) -> int:
-        slot = await self.db.rpc(
+    async def reserve_capital_slot(self, user_id: str, strategy_id: str, maximum_slots: int) -> dict[str, Any]:
+        reservation = await self.db.rpc(
             "reserve_strategy_capital_slot",
-            {"p_user_id": user_id, "p_strategy_id": strategy_id},
+            {"p_user_id": user_id, "p_strategy_id": strategy_id, "p_maximum_slots": maximum_slots},
         )
-        if slot is None:
-            raise AppError(409, "All three concurrent strategy slots are occupied", "capital_slots_full")
-        return int(slot)
+        if not reservation:
+            raise AppError(
+                409,
+                f"All {maximum_slots} capital allocations are occupied",
+                "capital_slots_full",
+            )
+        return {
+            "slot": int(reservation["slot"]),
+            "created": bool(reservation["created"]),
+            "occupiedBefore": int(reservation["occupiedBefore"]),
+        }
 
     async def release_capital_slot(self, user_id: str, strategy_id: str) -> None:
         await self.db.rpc(
@@ -412,11 +441,16 @@ class TradingEngine:
         return rows[0]
 
     async def claim_strategy(
-        self, strategy_id: str, statuses: list[str], next_status: str, execution_field: str
+        self,
+        strategy_id: str,
+        statuses: list[str],
+        next_status: str,
+        execution_field: str,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         rows = await self.db.update(
             "strategies",
-            {"status": next_status},
+            {"status": next_status, **(metadata or {})},
             {
                 "select": "id",
                 "id": f"eq.{strategy_id}",
@@ -576,22 +610,55 @@ class TradingEngine:
             raise AppError(409, "Strategy entry has already run", "already_executed")
         definition = StrategyDefinition.model_validate(row["definition_json"])
         client = await self.client_for_user(str(row["user_id"]))
+        reservation: dict[str, Any] | None = None
+        reservation_should_remain = False
         try:
+            policy = await self.capital_policy(str(row["user_id"]))
+            wallet = await self.usd_capital(client)
+            available, total_balance = wallet
+            maximum_slots = maximum_concurrent_strategies(
+                total_balance,
+                policy.allocation_mode,
+                policy.capital_amount,
+            )
+            reservation = await self.reserve_capital_slot(str(row["user_id"]), strategy_id, maximum_slots)
             resolved = await self.resolve_strategy(client, definition)
-            resolved = await self.apply_automatic_lots(client, definition, resolved)
-            capital_slot = await self.reserve_capital_slot(str(row["user_id"]), strategy_id)
+            resolved = await self.apply_automatic_lots(client, definition, resolved, policy, wallet)
+            allocated_budget = capital_budget(
+                available,
+                total_balance,
+                policy.allocation_mode,
+                policy.capital_amount,
+            )
             try:
-                await self.claim_strategy(strategy_id, ["draft", "scheduled"], "executing_entry", "entry_execution_at")
+                await self.claim_strategy(
+                    strategy_id,
+                    ["draft", "scheduled"],
+                    "executing_entry",
+                    "entry_execution_at",
+                    {
+                        "capital_slot": reservation["slot"],
+                        "capital_budget": str(allocated_budget),
+                        "capital_policy_json": {
+                            **policy.as_json(),
+                            "maximumConcurrentStrategies": maximum_slots,
+                            "totalBalanceAtEntry": str(total_balance),
+                            "availableBalanceAtEntry": str(available),
+                        },
+                    },
+                )
                 executions = await self.db.insert(
                     "executions", {"strategy_id": strategy_id, "kind": "entry", "status": "running"}
                 )
                 if not executions:
                     raise AppError(500, "Could not start the execution record", "execution_record_failed")
             except Exception:
-                await self.release_capital_slot(str(row["user_id"]), strategy_id)
+                if reservation["created"]:
+                    await self.release_capital_slot(str(row["user_id"]), strategy_id)
                 raise
             execution_id = str(executions[0]["id"])
             failure: Exception | None = None
+            submitted_orders = 0
             for index, leg in enumerate(resolved):
                 client_order_id = f"ds_{strategy_id[:8]}_{index}_{base36(int(time.time() * 1000))}"[:32]
                 try:
@@ -630,6 +697,7 @@ class TradingEngine:
                     if leg["orderType"] == "limit_order":
                         payload["limit_price"] = leg["limitPrice"]
                     order = await client.place_order(payload)
+                    submitted_orders += 1
                     result = order["result"]
                     requested_size = decimal_value(leg["lots"])
                     unfilled_size = decimal_value(result.get("unfilled_size"), str(leg["lots"]))
@@ -696,6 +764,15 @@ class TradingEngine:
                 ),
             )
             if failure:
+                if submitted_orders == 0:
+                    await self.release_capital_slot(str(row["user_id"]), strategy_id)
+                else:
+                    reservation_should_remain = True
+                    await self.db.update(
+                        "strategy_capital_slots",
+                        {"status": "active"},
+                        {"user_id": f"eq.{row['user_id']}", "strategy_id": f"eq.{strategy_id}"},
+                    )
                 raise failure
             await self.db.update(
                 "strategy_capital_slots",
@@ -711,7 +788,18 @@ class TradingEngine:
                 {"status": "activated"},
                 {"strategy_id": f"eq.{strategy_id}", "status": "eq.scheduled"},
             )
-            return {"executionId": execution_id, "legs": len(resolved), "capitalSlot": capital_slot}
+            reservation_should_remain = True
+            return {
+                "executionId": execution_id,
+                "legs": len(resolved),
+                "capitalSlot": reservation["slot"],
+                "capitalBudget": str(allocated_budget),
+            }
+        except Exception:
+            if reservation and reservation["created"] and not reservation_should_remain:
+                with suppress(Exception):
+                    await self.release_capital_slot(str(row["user_id"]), strategy_id)
+            raise
         finally:
             await client.close()
 
@@ -899,6 +987,9 @@ class TradingEngine:
             "lastError": row.get("last_error"),
             "definition": row.get("definition_json") or {},
             "savedStrategyId": row.get("saved_strategy_id"),
+            "capitalSlot": row.get("capital_slot"),
+            "capitalBudget": str(row.get("capital_budget")) if row.get("capital_budget") is not None else None,
+            "capitalPolicy": row.get("capital_policy_json") or {},
             "riskState": row.get("risk_state") or {},
             "riskMonitoredAt": row.get("risk_monitor_at"),
             "combinedStopTriggeredAt": row.get("combined_stop_triggered_at"),
