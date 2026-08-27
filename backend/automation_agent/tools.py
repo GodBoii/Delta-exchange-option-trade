@@ -14,6 +14,7 @@ from agno.tools import Toolkit
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from app.capital import percentage_concurrency_limit
 from app.models import StrategyDefinition
 from news_agent.config import NewsAgentSettings
 
@@ -68,10 +69,16 @@ class AutomationStrategyTools(Toolkit):
             )
             strategies = cursor.fetchall()
             cursor.execute(
+                "select allocation_mode from public.capital_settings where user_id = %s",
+                (self.user_id,),
+            )
+            capital_settings = cursor.fetchone() or {"allocation_mode": "half_balance"}
+            maximum_slots = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
+            cursor.execute(
                 """
                 select count(*)::int as count
-                from public.strategies
-                where user_id = %s and status in ('scheduled','executing_entry','active','executing_exit')
+                from public.strategy_capital_slots
+                where user_id = %s and status in ('reserved','active')
                 """,
                 (self.user_id,),
             )
@@ -80,8 +87,8 @@ class AutomationStrategyTools(Toolkit):
         for row in strategies:
             definition = row["definition_json"]
             reasons: list[str] = []
-            if active_count >= 3:
-                reasons.append("All three concurrent strategy slots are potentially occupied")
+            if maximum_slots is not None and active_count >= maximum_slots:
+                reasons.append("Every account capital allocation is occupied")
             result.append(
                 {
                     "id": row["id"],
@@ -92,7 +99,14 @@ class AutomationStrategyTools(Toolkit):
                     "reasonUnavailable": reasons or None,
                 }
             )
-        return json.dumps({"strategies": result, "activeSlotCount": active_count, "maximumSlots": 3}, default=str)
+        return json.dumps(
+            {
+                "strategies": result,
+                "activeSlotCount": active_count,
+                "maximumSlots": maximum_slots or "calculated_at_entry",
+            },
+            default=str,
+        )
 
     def select_strategy_and_time(
         self,
@@ -125,6 +139,12 @@ class AutomationStrategyTools(Toolkit):
             if not automation or not automation["enabled"]:
                 raise ValueError("Automation is turned off")
             cursor.execute(
+                "select allocation_mode from public.capital_settings where user_id = %s",
+                (self.user_id,),
+            )
+            capital_settings = cursor.fetchone() or {"allocation_mode": "half_balance"}
+            maximum_slots = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
+            cursor.execute(
                 "select 1 from public.exchange_connections where user_id = %s and status = 'connected' limit 1",
                 (self.user_id,),
             )
@@ -147,14 +167,14 @@ class AutomationStrategyTools(Toolkit):
             cursor.execute(
                 """
                 select count(*)::int as count
-                from public.strategies
-                where user_id = %s and status in ('scheduled','executing_entry','active','executing_exit')
+                from public.strategy_capital_slots
+                where user_id = %s and status in ('reserved','active')
                 """,
                 (self.user_id,),
             )
             occupied = int(cursor.fetchone()["count"])
-            if occupied >= 3:
-                raise ValueError("No concurrent strategy slot is potentially available")
+            if maximum_slots is not None and occupied >= maximum_slots:
+                raise ValueError("No account capital allocation is currently available")
 
             cursor.execute(
                 "select market_json from public.automation_market_snapshots where id = %s and user_id = %s",
