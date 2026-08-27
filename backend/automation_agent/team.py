@@ -85,7 +85,7 @@ def run_automation_team(
             persist_session=False,
         )
         model = OpenRouter(
-            id=settings.model_id,
+            id=settings.automation_model_id,
             api_key=settings.require_api_key(),
             supports_native_structured_outputs=False,
             reasoning_effort="xhigh",
@@ -228,7 +228,7 @@ def run_automation_team(
         return AutomationTeamResult(
             run_id=str(response.run_id),
             session_id=stored_session_id,
-            model_id=str(response.model or settings.model_id),
+            model_id=str(response.model or settings.automation_model_id),
             report=report,
             market_snapshot_id=market_snapshot_id,
             member_responses=[_response_summary(item) for item in response.member_responses or []],
