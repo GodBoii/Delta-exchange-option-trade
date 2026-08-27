@@ -2711,6 +2711,11 @@ time,
   box-shadow: var(--shadow-3), var(--inset-lit);
 }
 
+.dialog.dialog-compact {
+  width: min(640px, 100%);
+  max-height: min(78vh, 680px);
+}
+
 .dialog-head {
   display: flex;
   align-items: flex-start;
@@ -2755,6 +2760,67 @@ time,
 .dialog-foot-note {
   color: var(--text-3);
   font-size: var(--t-xs);
+}
+
+.description-trigger {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  color: var(--text-2);
+  text-align: left;
+  transition: border-color var(--dur) ease, box-shadow var(--dur) ease, color var(--dur) ease;
+}
+
+.description-trigger > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.description-trigger > span:not(.description-trigger-action) {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.description-trigger-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--accent-strong);
+  font-size: var(--t-xs);
+  font-weight: 650;
+}
+
+.description-trigger-action svg { width: 14px; height: 14px; }
+
+.description-trigger:hover {
+  border-color: #3b434e;
+  color: var(--text-1);
+}
+
+.description-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.description-count {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.description-editor {
+  min-height: 240px !important;
 }
 
 .dialog-foot-actions {
