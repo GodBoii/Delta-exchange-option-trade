@@ -15,13 +15,6 @@ export type MarketOutlook =
 export type ExpiryPolicy = "same_day" | "next_day" | "7_day" | "30_day";
 export type HoldingMode = "intraday" | "hold_to_expiry";
 export type RiskBasis = "net_debit" | "net_credit" | "defined_max_loss";
-export type CapitalAllocationMode =
-  | "full_balance"
-  | "half_balance"
-  | "one_third_balance"
-  | "one_quarter_balance"
-  | "fixed_amount";
-
 export type StrategyLeg = {
   id: string;
   /** Resolved execution quantity. Ignored while lotsMode is auto. */
@@ -77,8 +70,6 @@ export type StrategyDefinition = {
   breakEvenScope: "all_legs" | "stop_loss_legs";
   overallTarget?: number;
   overallStopLoss?: number;
-  allocationMode: CapitalAllocationMode;
-  capitalAmount?: number;
   lotsMode: "auto" | "manual";
   maximumLots?: number;
   equalLotsRequired: boolean;
