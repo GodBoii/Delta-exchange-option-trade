@@ -104,7 +104,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
           />
           <dl className="automation-facts">
             <div><dt>Strategies available</dt><dd>{overview ? `${overview.enabledStrategies} of ${overview.totalStrategies}` : "Loading"}</dd></div>
-            <div><dt>Maximum active slots</dt><dd>3</dd></div>
+            <div><dt>Maximum active allocations</dt><dd>{overview?.settings.maximumConcurrentStrategies ?? "Based on USD balance"}</dd></div>
             <div><dt>Execution</dt><dd>Existing live strategy scheduler</dd></div>
           </dl>
         </Panel>
