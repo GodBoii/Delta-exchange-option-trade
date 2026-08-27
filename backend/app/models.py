@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, field_validator, model_validator
 
+from .capital import CapitalAllocationMode
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -88,14 +90,6 @@ class StrategyDefinition(StrictModel):
     breakEvenScope: Literal["all_legs", "stop_loss_legs"] = "all_legs"
     overallTarget: PositiveFloat | None = None
     overallStopLoss: PositiveFloat | None = None
-    allocationMode: Literal[
-        "full_balance",
-        "half_balance",
-        "one_third_balance",
-        "one_quarter_balance",
-        "fixed_amount",
-    ] = "full_balance"
-    capitalAmount: PositiveFloat | None = None
     lotsMode: Literal["auto", "manual"] = "manual"
     maximumLots: int | None = Field(default=None, ge=1, le=100_000)
     equalLotsRequired: bool = False
@@ -109,8 +103,8 @@ class StrategyDefinition(StrictModel):
             return value
         hydrated = dict(value)
         hydrated.pop("selectionCriteria", None)
-        if hydrated.get("allocationMode") == "one_of_three_account_slots":
-            hydrated["allocationMode"] = "full_balance"
+        hydrated.pop("allocationMode", None)
+        hydrated.pop("capitalAmount", None)
         legs = hydrated.get("legs")
         has_short_leg = isinstance(legs, list) and any(
             isinstance(leg, dict) and leg.get("position") == "sell" for leg in legs
@@ -152,6 +146,15 @@ class StrategyDefinition(StrictModel):
                 raise ValueError("Combined premium mode requires at least two short legs")
         if self.riskMode == "strategy_level" and self.squareOff != "complete":
             raise ValueError("Strategy-level risk requires complete square off")
+        return self
+
+
+class CapitalSettingsUpdate(StrictModel):
+    allocationMode: CapitalAllocationMode = "half_balance"
+    capitalAmount: PositiveFloat | None = None
+
+    @model_validator(mode="after")
+    def validate_fixed_amount(self) -> "CapitalSettingsUpdate":
         if self.allocationMode == "fixed_amount" and self.capitalAmount is None:
             raise ValueError("A fixed capital amount is required")
         return self
