@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ThinkingOrb } from "thinking-orbs";
 import type { ApiRequester } from "@/lib/api";
+import { cleanAgentMarkdown } from "@/lib/agent-markdown";
 import { errorMessage } from "@/lib/format";
 import {
   HoverGroup, InlineMessage, SectionHeading, StatusDot
@@ -60,7 +61,7 @@ function MarkdownAnalysis({ children }: { children: string }) {
           a: ({ children: linkText, ...props }) => <a {...props} target="_blank" rel="noreferrer">{linkText}</a>
         }}
       >
-        {children}
+        {cleanAgentMarkdown(children)}
       </ReactMarkdown>
     </div>
   );
