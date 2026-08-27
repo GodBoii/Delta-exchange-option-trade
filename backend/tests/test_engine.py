@@ -136,7 +136,11 @@ async def test_same_name_creates_independent_strategy_runs() -> None:
 
         async def select(self, table: str, query: dict) -> list[dict]:
             assert table == "saved_strategies"
-            return [{"id": "saved-1"}] if query["id"] == "eq.saved-1" and query["user_id"] == "eq.user-1" else []
+            return (
+                [{"id": "saved-1"}]
+                if query["id"] == "eq.saved-1" and query["or"] == "(user_id.eq.user-1,user_id.is.null)"
+                else []
+            )
 
         async def insert(self, table: str, value: dict) -> list[dict]:
             assert table == "strategies"
