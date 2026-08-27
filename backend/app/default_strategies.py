@@ -84,7 +84,6 @@ def _base(
         "emergencyExitEnabled": True,
         "trailToBreakEven": False,
         "breakEvenScope": "all_legs",
-        "allocationMode": "full_balance",
         "lotsMode": "auto",
         "maximumLots": None,
         "equalLotsRequired": len(legs) > 1,
