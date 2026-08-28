@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Clock3, Layers, RefreshCw, Shield, TrendingUp, Wallet
-} from "lucide-react";
+} from "@/app/components/icons";
+import CapitalAllocation from "@/app/components/CapitalAllocation";
 import { requestJson } from "@/lib/api";
 import {
   EM_DASH, errorMessage, formatClock, money, percent, quantity, relativeTime, titleCase, toNumber
@@ -135,7 +136,6 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
   return (
     <div className="portfolio">
       <SectionHeading
-        eyebrow="Delta account"
         title="Portfolio"
         description="Wallet balances, margin usage, live positions, and outstanding orders."
         actions={
@@ -199,6 +199,10 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
               note={unfilled > 0 ? `${quantity(unfilled, 2)} contracts unfilled` : "Nothing awaiting fill"}
             />
           </div>
+
+          {/* The account-wide capital rule is derived from the balance above, so
+              it is set here rather than on a route of its own. */}
+          <CapitalAllocation onNotice={onNotice} />
 
           {data && data.riskStrategies.length > 0 && <CombinedRiskPanel strategies={data.riskStrategies} />}
 
