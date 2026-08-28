@@ -3,8 +3,8 @@
 import Image from "next/image";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Check, ChevronDown, Info, MoreHorizontal, X } from "lucide-react";
-import { readMs, SwapText, useSlidingPill } from "@/app/components/motion";
+import { AlertTriangle, Check, ChevronDown, Info, MoreHorizontal, X } from "@/app/components/icons";
+import { DrawnTick, readMs, SwapText, useSlidingPill } from "@/app/components/motion";
 
 /* Re-exported so a surface can pull a primitive and its motion from one place
  * rather than importing the same recipe from two modules. */
@@ -78,16 +78,24 @@ export function PanelHeader({ icon, title, meta, actions }: {
   );
 }
 
-export function SectionHeading({ eyebrow, title, description, actions }: {
-  eyebrow: string;
+/**
+ * The header of a workspace surface.
+ *
+ * Deliberately small. It used to open with a tracked-out eyebrow above a 38px
+ * display heading, which is a landing-page composition: on an operational
+ * screen that pushed the first row of figures below the fold and spent the most
+ * prominent type in the interface restating the destination the operator had
+ * just clicked. Title, one line of orientation, and the controls for this
+ * surface, on one row.
+ */
+export function SectionHeading({ title, description, actions }: {
   title: string;
   description?: string;
   actions?: ReactNode;
 }) {
   return (
     <header className="section-heading">
-      <div>
-        <p className="eyebrow"><span aria-hidden="true" />{eyebrow}</p>
+      <div className="section-heading-text">
         <h1>{title}</h1>
         {description && <p className="section-description">{description}</p>}
       </div>
@@ -699,38 +707,304 @@ export function DetailSection({ title, meta, children }: { title: string; meta?:
  * Form controls
  * ------------------------------------------------------------------ */
 
-export function Field({ label, hint, error, invalid = false, children }: {
+/**
+ * Label, control, and the one line of help or error text beneath it.
+ *
+ * A native input gets a real wrapping `<label>`, which is what makes the label
+ * text part of the control's hit area. When the caller passes `labelId` it is
+ * wrapping a composite control that names itself with `aria-labelledby`, so the
+ * wrapper becomes a plain element: `<label>` forwards clicks to any labelable
+ * descendant, and a forwarded click on a listbox trigger would immediately
+ * re-toggle the panel the first click just opened.
+ */
+export function Field({ label, hint, error, invalid = false, labelId, children }: {
   label: string;
   hint?: string;
   error?: string;
   invalid?: boolean;
+  labelId?: string;
   children: ReactNode;
 }) {
-  return (
-    <label className={invalid || error ? "field invalid" : "field"}>
-      <span className="field-label">{label}</span>
+  const className = invalid || error ? "field invalid" : "field";
+  const body = (
+    <>
+      <span className="field-label" id={labelId}>{label}</span>
       {children}
       {error ? <small className="field-error">{error}</small> : hint ? <small className="field-hint">{hint}</small> : null}
-    </label>
+    </>
   );
+
+  if (labelId) return <div className={className}>{body}</div>;
+  return <label className={className}>{body}</label>;
 }
 
-export function Select({ label, value, options, onChange, invalid, hint }: {
+export type SelectOption = {
+  value: string;
+  label: string;
+  /** One line on what choosing this does, shown under the label. */
+  hint?: string;
+  /** Options carrying the same group name are listed under one heading. */
+  group?: string;
+  disabled?: boolean;
+};
+
+/**
+ * Runs of options that share a group name, in the order they were given.
+ *
+ * Grouping is derived rather than required as nested input, so a caller can
+ * build one flat list and the ungrouped case needs no special shape.
+ */
+function groupOptions(options: SelectOption[]) {
+  const runs: { group?: string; options: SelectOption[] }[] = [];
+  for (const option of options) {
+    const last = runs[runs.length - 1];
+    if (last && last.group === option.group) last.options.push(option);
+    else runs.push({ group: option.group, options: [option] });
+  }
+  return runs;
+}
+
+const LISTBOX_MAX_HEIGHT = 288;
+const LISTBOX_GAP = 6;
+const LISTBOX_VIEWPORT_MARGIN = 12;
+const TYPEAHEAD_RESET_MS = 700;
+
+/**
+ * Single-choice control.
+ *
+ * A native `select` is replaced here because its popup is drawn by the operating
+ * system: it cannot show the per-option explanation these settings need, it
+ * ignores every token in this stylesheet, and on a dark interface it punches a
+ * light rectangle through the page. This is the ARIA listbox pattern instead —
+ * a labelled trigger plus an owned `listbox`, which is the one case the
+ * component guidance names for reaching past native HTML.
+ *
+ * The panel is portalled to the document and positioned from the trigger rect
+ * rather than nested in the field, because several of these sit inside panels
+ * that scroll or clip, and an absolutely positioned child would be cut off.
+ * It flips above the trigger when there is no room below.
+ */
+export function Select({ label, value, options, onChange, invalid, hint, disabled = false }: {
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: SelectOption[];
   onChange: (value: string) => void;
   invalid?: boolean;
   hint?: string;
+  disabled?: boolean;
 }) {
+  const [rect, setRect] = useState<{ top: number; left: number; width: number; origin: "top" | "bottom" } | null>(null);
+  const [phase, setPhase] = useState<"pre" | "open" | "closing">("pre");
+  const [activeValue, setActiveValue] = useState(value);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const typeahead = useRef({ query: "", at: 0 });
+  const listId = useId();
+  const labelId = useId();
+  const open = rect !== null && phase !== "closing";
+
+  const selected = options.find(option => option.value === value);
+  const enabled = options.filter(option => !option.disabled);
+
+  /**
+   * Held in `is-closing` for the close duration rather than unmounted at once,
+   * so dismissal plays its own quicker transition instead of the panel blinking
+   * out of existence.
+   */
+  const close = useCallback((restoreFocus = true) => {
+    setPhase("closing");
+    if (restoreFocus) trigger.current?.focus();
+    window.setTimeout(() => setRect(null), readMs("--dropdown-close-dur", 150));
+  }, []);
+
+  const openPanel = useCallback(() => {
+    const bounds = trigger.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const wanted = Math.min(LISTBOX_MAX_HEIGHT, options.length * 44 + 12);
+    const fitsBelow = window.innerHeight - bounds.bottom > wanted + LISTBOX_VIEWPORT_MARGIN;
+    setPhase("pre");
+    setActiveValue(value);
+    setRect({
+      top: fitsBelow ? bounds.bottom + LISTBOX_GAP : Math.max(LISTBOX_VIEWPORT_MARGIN, bounds.top - LISTBOX_GAP - wanted),
+      left: bounds.left,
+      width: bounds.width,
+      // The panel grows out of the edge it is anchored to, not the top left.
+      origin: fitsBelow ? "top" : "bottom"
+    });
+  }, [options.length, value]);
+
+  // Flip to the open state one frame after mounting, so the growth transition
+  // has a pre-open state to interpolate from.
+  useEffect(() => {
+    if (rect === null) return;
+    const frame = requestAnimationFrame(() => setPhase(current => (current === "pre" ? "open" : current)));
+    return () => cancelAnimationFrame(frame);
+  }, [rect]);
+
+  useEffect(() => {
+    if (!open) return;
+    panel.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [activeValue, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (panel.current?.contains(target) || trigger.current?.contains(target)) return;
+      close(false);
+    };
+    const dismiss = () => close(false);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+    };
+  }, [close, open]);
+
+  function commit(next: string) {
+    if (next !== value) onChange(next);
+    close();
+  }
+
+  function step(offset: number) {
+    if (!enabled.length) return;
+    const index = enabled.findIndex(option => option.value === activeValue);
+    const next = enabled[Math.min(enabled.length - 1, Math.max(0, (index === -1 ? 0 : index) + offset))];
+    if (next) setActiveValue(next.value);
+  }
+
+  /**
+   * Typeahead. Keystrokes inside a short window build one query, so "half"
+   * lands on the 50% rule rather than cycling through four options starting
+   * with H.
+   */
+  function jumpTo(character: string) {
+    const now = performance.now();
+    typeahead.current.query = now - typeahead.current.at > TYPEAHEAD_RESET_MS
+      ? character
+      : typeahead.current.query + character;
+    typeahead.current.at = now;
+    const query = typeahead.current.query.toLowerCase();
+    const match = enabled.find(option => option.label.toLowerCase().startsWith(query));
+    if (match) setActiveValue(match.value);
+  }
+
+  function onKeyDown(event: React.KeyboardEvent) {
+    if (disabled) return;
+
+    if (!open) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openPanel();
+      }
+      return;
+    }
+
+    switch (event.key) {
+      case "Escape":
+      case "Tab":
+        event.preventDefault();
+        close();
+        return;
+      case "ArrowDown":
+        event.preventDefault();
+        step(1);
+        return;
+      case "ArrowUp":
+        event.preventDefault();
+        step(-1);
+        return;
+      case "Home":
+        event.preventDefault();
+        if (enabled[0]) setActiveValue(enabled[0].value);
+        return;
+      case "End":
+        event.preventDefault();
+        if (enabled.length) setActiveValue(enabled[enabled.length - 1].value);
+        return;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        commit(activeValue);
+        return;
+      default:
+        if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) jumpTo(event.key);
+    }
+  }
+
   return (
-    <Field label={label} invalid={invalid} hint={hint}>
-      <span className="select-wrap">
-        <select value={value} onChange={event => onChange(event.target.value)} aria-invalid={invalid || undefined}>
-          {options.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
-        </select>
-        <ChevronDown aria-hidden="true" />
-      </span>
+    <Field label={label} invalid={invalid} hint={hint} labelId={labelId}>
+      <button
+        type="button"
+        ref={trigger}
+        className={open ? "listbox-trigger is-open" : "listbox-trigger"}
+        disabled={disabled}
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={open ? listId : undefined}
+        aria-labelledby={labelId}
+        aria-invalid={invalid || undefined}
+        onClick={() => (open ? close() : openPanel())}
+        onKeyDown={onKeyDown}
+      >
+        <span className="listbox-value">{selected ? selected.label : "Select an option"}</span>
+        <ChevronDown className="listbox-caret" aria-hidden="true" />
+      </button>
+
+      {rect !== null && createPortal(
+        <div
+          className={`listbox t-dropdown${phase === "open" ? " is-open" : phase === "closing" ? " is-closing" : ""}`}
+          data-origin={rect.origin === "top" ? "top-left" : "bottom-left"}
+          id={listId}
+          role="listbox"
+          aria-labelledby={labelId}
+          aria-activedescendant={`${listId}-${activeValue}`}
+          ref={panel}
+          style={{
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            maxHeight: LISTBOX_MAX_HEIGHT
+          }}
+        >
+          {groupOptions(options).map((run, runIndex) => (
+            <div className="listbox-group" role="group" aria-label={run.group} key={run.group ?? `run-${runIndex}`}>
+              {run.group && <p className="listbox-group-label">{run.group}</p>}
+              {run.options.map(option => {
+                const isSelected = option.value === value;
+                return (
+                  <div
+                    key={option.value}
+                    id={`${listId}-${option.value}`}
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-disabled={option.disabled || undefined}
+                    data-active={option.value === activeValue}
+                    className="listbox-option"
+                    onPointerEnter={() => { if (!option.disabled) setActiveValue(option.value); }}
+                    onClick={() => { if (!option.disabled) commit(option.value); }}
+                  >
+                    <span className="listbox-option-text">
+                      <strong>{option.label}</strong>
+                      {option.hint && <small>{option.hint}</small>}
+                    </span>
+                    {/* The tick draws itself as the row becomes the chosen one, so
+                        the selection is carried by motion as well as by colour. */}
+                    <span className="listbox-tick t-check" aria-hidden="true" aria-checked={isSelected}>
+                      <DrawnTick />
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
     </Field>
   );
 }
