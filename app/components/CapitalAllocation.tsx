@@ -1,27 +1,44 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CircleDollarSign, RefreshCw, Save, ShieldCheck, WalletCards } from "lucide-react";
+import { CircleDollarSign, RefreshCw, Save } from "@/app/components/icons";
 import type { CapitalAllocationMode, CapitalOverview } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
 import { errorMessage, money } from "@/lib/format";
 import {
-  InlineMessage, Meter, NumberField, Panel, PanelHeader, SectionHeading, Select, Shimmer,
-  type NoticeHandler
+  IconSwap, InlineMessage, Meter, NumberField, Panel, PanelHeader, Select, Shimmer,
+  type NoticeHandler, type SelectOption
 } from "@/app/components/ui";
 
-const MODE_OPTIONS = [
-  { value: "full_balance", label: "100% per strategy" },
-  { value: "half_balance", label: "50% per strategy" },
-  { value: "one_third_balance", label: "33.33% per strategy" },
-  { value: "one_quarter_balance", label: "25% per strategy" },
-  { value: "fixed_amount", label: "Fixed USD amount" }
+/**
+ * Every rule is one sentence about what it does to the balance, so the choice
+ * can be made from the list itself instead of from the paragraph that used to
+ * sit underneath the form explaining all five.
+ */
+const MODE_OPTIONS: SelectOption[] = [
+  { value: "full_balance", label: "100% per strategy", hint: "One live strategy at a time" },
+  { value: "half_balance", label: "50% per strategy", hint: "Up to two live strategies" },
+  { value: "one_third_balance", label: "33.33% per strategy", hint: "Up to three live strategies" },
+  { value: "one_quarter_balance", label: "25% per strategy", hint: "Up to four live strategies" },
+  { value: "fixed_amount", label: "Fixed USD amount", hint: "A flat budget you set below" }
 ];
 
 function isCapitalAllocationMode(value: string): value is CapitalAllocationMode {
   return MODE_OPTIONS.some(option => option.value === value);
 }
 
+/**
+ * Capital policy.
+ *
+ * One account-wide budget, so this is a single panel inside Portfolio rather
+ * than a destination of its own: the numbers it needs — total balance, what is
+ * available — are the numbers already on this screen, and a whole route for one
+ * setting made the operator leave the data to change the rule derived from it.
+ *
+ * The five facts read as one row of figures instead of two panels of definition
+ * lists, because they are all read together when deciding the rule and none of
+ * them is worth a heading.
+ */
 export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandler }) {
   const [overview, setOverview] = useState<CapitalOverview | null>(null);
   const [mode, setMode] = useState<CapitalAllocationMode>("half_balance");
@@ -79,87 +96,98 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
     : overview.settings.allocationMode !== mode
       || (mode === "fixed_amount" && overview.settings.capitalAmount !== capitalAmount);
 
+  const pending = loading ? "Loading" : "Unavailable";
+  const allocationsFull = overview?.availableAllocations === 0;
+
   return (
-    <div className="capital-page">
-      <SectionHeading
-        eyebrow="Account policy"
-        title="Capital allocation"
-        description="Set one capital budget for every manual and automated strategy. Strategy Builder keeps trade-specific risk controls separate."
+    <Panel className="capital-panel">
+      <PanelHeader
+        icon={<CircleDollarSign />}
+        title="Capital policy"
+        meta={overview
+          ? `${overview.occupiedAllocations} of ${overview.maximumConcurrentStrategies} allocations in use`
+          : pending}
         actions={
           <>
-            <button type="button" className="button secondary" onClick={() => void load()} disabled={loading || saving}>
-              <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
+            <button
+              type="button"
+              className="button ghost small"
+              onClick={() => void load()}
+              disabled={loading || saving}
+              aria-label="Reload capital policy"
+            >
+              <IconSwap showB={loading} a={<RefreshCw />} b={<RefreshCw className="spin" />} />
             </button>
-            <button type="button" className="button primary" onClick={() => void save()} disabled={loading || saving || !dirty}>
-              <Save aria-hidden="true" />{saving ? <Shimmer>Saving</Shimmer> : "Save policy"}
-            </button>
+            {/* The save control only exists once there is an unsaved change, so a
+                settled policy does not present an action with nothing to do. */}
+            {dirty && (
+              <button type="button" className="button primary small" onClick={() => void save()} disabled={saving}>
+                <Save aria-hidden="true" />{saving ? <Shimmer>Saving</Shimmer> : "Save"}
+              </button>
+            )}
           </>
         }
       />
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
 
-      <div className="capital-summary">
-        <Panel>
-          <PanelHeader icon={<WalletCards />} title="Trading capital" meta="Delta USD wallet" />
-          <dl className="capital-facts">
-            <div><dt>Total balance</dt><dd>{overview ? money(overview.wallet.totalBalance) : "Loading"}</dd></div>
-            <div><dt>Available now</dt><dd>{overview ? money(overview.wallet.availableBalance) : "Loading"}</dd></div>
-            <div><dt>Budget per strategy</dt><dd>{overview ? money(overview.nominalBudgetPerStrategy) : "Loading"}</dd></div>
-          </dl>
-        </Panel>
-
-        <Panel>
-          <PanelHeader
-            icon={<ShieldCheck />}
-            title="Live allocations"
-            meta={overview ? `${overview.occupiedAllocations} of ${overview.maximumConcurrentStrategies} in use` : "Loading"}
-          />
-          <Meter
-            value={overview?.occupiedAllocations ?? 0}
-            max={overview?.maximumConcurrentStrategies ?? 2}
-            label="Capital allocations currently in use"
-            tone={overview?.availableAllocations === 0 ? "warning" : "positive"}
-          />
-          <dl className="capital-facts">
-            <div><dt>Maximum simultaneous strategies</dt><dd>{overview?.maximumConcurrentStrategies ?? "Loading"}</dd></div>
-            <div><dt>Available allocations</dt><dd>{overview?.availableAllocations ?? "Loading"}</dd></div>
-            <div><dt>Next strategy can use</dt><dd>{overview ? money(overview.availableBudgetForNextStrategy) : "Loading"}</dd></div>
-          </dl>
-        </Panel>
-      </div>
-
-      <Panel>
-        <PanelHeader
-          icon={<CircleDollarSign />}
-          title="Allocation rule"
-          meta="Applied when an entry starts"
-        />
-        <div className="capital-form">
+      <div className="capital-body">
+        <div className="capital-rule">
           <Select
-            label="Capital budget"
+            label="Budget per strategy"
             value={mode}
             options={MODE_OPTIONS}
             onChange={value => { if (isCapitalAllocationMode(value)) setMode(value); }}
-            hint="The percentage is calculated from total USD balance and capped by currently available balance."
+            hint="Calculated from total USD balance, then capped by the balance actually available."
           />
           {mode === "fixed_amount" && (
             <NumberField
-              label="Amount per strategy"
+              label="Amount"
               value={capitalAmount}
               min={0.01}
               step={0.01}
               suffix="USD"
               invalid={capitalAmount <= 0}
-              hint="The number of simultaneous allocations is calculated from total balance."
               onChange={setCapitalAmount}
             />
           )}
         </div>
-        <p className="capital-explanation">
-          With the default 50% rule, the first live strategy can use half of the account balance. A second strategy can use the remaining half. No third entry can start until one allocation is released.
-        </p>
-      </Panel>
-    </div>
+
+        <dl className="capital-figures">
+          <div>
+            <dt>Total balance</dt>
+            <dd>{overview ? money(overview.wallet.totalBalance) : pending}</dd>
+          </div>
+          <div>
+            <dt>Available now</dt>
+            <dd>{overview ? money(overview.wallet.availableBalance) : pending}</dd>
+          </div>
+          <div>
+            <dt>Budget per strategy</dt>
+            <dd>{overview ? money(overview.nominalBudgetPerStrategy) : pending}</dd>
+          </div>
+          <div>
+            <dt>Next strategy can use</dt>
+            <dd>{overview ? money(overview.availableBudgetForNextStrategy) : pending}</dd>
+          </div>
+        </dl>
+
+        <div className="capital-allocations">
+          <Meter
+            value={overview?.occupiedAllocations ?? 0}
+            max={overview?.maximumConcurrentStrategies ?? 2}
+            label="Capital allocations currently in use"
+            tone={allocationsFull ? "warning" : "positive"}
+          />
+          <p>
+            {overview === null
+              ? "Reading your allocation state."
+              : allocationsFull
+                ? "Every allocation is held. No further entry can start until one is released."
+                : `${overview.availableAllocations} of ${overview.maximumConcurrentStrategies} allocations free for a new entry.`}
+          </p>
+        </div>
+      </div>
+    </Panel>
   );
 }
