@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, History } from "lucide-react";
+import { AlertTriangle, History } from "@/app/components/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ThinkingOrb } from "thinking-orbs";
@@ -118,7 +118,6 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
   return (
     <div className="news-page">
       <SectionHeading
-        eyebrow="Market research"
         title="Bitcoin news analysis"
         description="News analyses produced by the news member during main automation runs."
         actions={
@@ -184,7 +183,7 @@ function LoadingState() {
   return (
     <section className="news-status-panel" aria-label="Loading saved news analysis">
       <span className="news-orb">
-        <ThinkingOrb state="working" size={64} theme="dark" aria-label="Loading the saved analysis" />
+        <ThinkingOrb state="working" size={64} theme="auto" aria-label="Loading the saved analysis" />
       </span>
       <div className="news-skeleton" aria-hidden="true">
         <i className="skeleton" /><i className="skeleton" /><i className="skeleton" />
