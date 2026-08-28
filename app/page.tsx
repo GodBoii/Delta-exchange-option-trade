@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { RefreshCw, WifiOff } from "lucide-react";
+import { RefreshCw, WifiOff } from "@/app/components/icons";
 import { ThinkingOrb } from "thinking-orbs";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { requestJson, resetApiOrigin } from "@/lib/api";
@@ -12,7 +12,6 @@ import { AppShell, TAB_ORDER, type ConnectionState, type Tab } from "@/app/compo
 import AuthView from "@/app/components/AuthView";
 import ConnectView from "@/app/components/ConnectView";
 import StrategyBuilder from "@/app/components/StrategyBuilder";
-import CapitalAllocation from "@/app/components/CapitalAllocation";
 import Dashboard from "@/app/components/Dashboard";
 import RunHistory from "@/app/components/RunHistory";
 import {
@@ -39,7 +38,7 @@ const Automation = dynamic(() => import("@/app/components/Automation"), {
 
 type BackendStatus = "checking" | "online" | "offline";
 
-const CONNECTED_TABS: Tab[] = ["capital", "builder", "runs", "dashboard", "market", "news", "automation"];
+const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation"];
 const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
@@ -262,7 +261,6 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
         <ConnectView user={user} onConnected={onConnected} onSignOut={onSignOut} embedded />
       )}
       {tab === "builder" && <StrategyBuilder userId={userId} onNotice={onNotice} liveEnabled={connected} />}
-      {tab === "capital" && connected && <CapitalAllocation onNotice={onNotice} />}
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
       {tab === "market" && <BtcMarketChart />}
@@ -284,7 +282,7 @@ function LoadingScreen() {
     <div className="boot-screen t-stagger is-shown" role="status">
       <span className="t-stagger-line t-stagger-line--1"><Brand /></span>
       <span className="news-orb t-stagger-line t-stagger-line--2">
-        <ThinkingOrb state="connecting" size={64} theme="dark" aria-label="Restoring your secure session" />
+        <ThinkingOrb state="connecting" size={64} theme="auto" aria-label="Restoring your secure session" />
       </span>
       <div className="boot-copy">
         <strong className="t-stagger-line t-stagger-line--3">
