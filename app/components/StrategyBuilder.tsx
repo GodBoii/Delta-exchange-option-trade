@@ -5,7 +5,7 @@ import {
   ArrowDown, ArrowUp, CalendarClock, ChevronDown, CircleDollarSign, Copy, Download,
   FileText, FolderOpen, Layers3, LoaderCircle, Maximize2, Plus, Save, Shield, ShieldCheck, Trash2,
   Upload, WifiOff
-} from "lucide-react";
+} from "@/app/components/icons";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import type { SavedStrategy } from "@/lib/app-types";
 import type { Json, SavedStrategyRow } from "@/lib/supabase/types";
@@ -819,7 +819,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   return (
     <div className="builder">
       <SectionHeading
-        eyebrow="Options strategy"
         title="Strategy builder"
         description="Build a reusable options strategy, then choose when it should enter and exit."
         actions={
@@ -1110,30 +1109,23 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               title="Strategy library"
               meta={`${savedStrategies.filter(item => item.isDefault).length} built-in · ${savedStrategies.filter(item => !item.isDefault).length} custom`}
             />
-            <Field label="Current strategy">
-              <span className="select-wrap">
-                <select
-                  value={activeSavedId ?? ""}
-                  disabled={busy}
-                  onChange={event => void switchStrategy(event.target.value)}
-                >
-                  {!activeSavedId && <option value="">New unsaved strategy</option>}
-                  <optgroup label="Built-in strategies">
-                    {savedStrategies.filter(item => item.isDefault).map(item => (
-                      <option key={item.id} value={item.id}>{item.name}</option>
-                    ))}
-                  </optgroup>
-                  {savedStrategies.some(item => !item.isDefault) && (
-                    <optgroup label="Your strategies">
-                      {savedStrategies.filter(item => !item.isDefault).map(item => (
-                        <option key={item.id} value={item.id}>{item.name}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-                <ChevronDown aria-hidden="true" />
-              </span>
-            </Field>
+            {/* Built-in and saved strategies stay visibly apart: overwriting a
+                shared default is a different act from editing your own draft. */}
+            <Select
+              label="Current strategy"
+              value={activeSavedId ?? ""}
+              disabled={busy}
+              onChange={value => void switchStrategy(value)}
+              options={[
+                ...(activeSavedId ? [] : [{ value: "", label: "New unsaved strategy" }]),
+                ...savedStrategies
+                  .filter(item => item.isDefault)
+                  .map(item => ({ value: item.id, label: item.name, group: "Built-in strategies" })),
+                ...savedStrategies
+                  .filter(item => !item.isDefault)
+                  .map(item => ({ value: item.id, label: item.name, group: "Your strategies" }))
+              ]}
+            />
             {/* One status changing, not two strings replacing each other. */}
             <p className={`library-state tone-${library.tone}`}>
               <StatusDot tone={library.tone} />
@@ -1224,7 +1216,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 className="review-cta"
                 size="sm"
                 colorVariant="ocean"
-                theme="dark"
+                theme="auto"
                 strength={0.5}
                 active={issues.length === 0 && liveEnabled && !scheduling}
               >
