@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, BarChart3, CalendarClock, Check, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BarChart3, CalendarClock, Check, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck, SlidersHorizontal } from "@/app/components/icons";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { errorMessage } from "@/lib/format";
 import { normalizePhoneNumber } from "@/lib/auth-validation";
