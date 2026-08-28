@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck, Zap } from "lucide-react";
+import { AlertTriangle, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck, Zap } from "@/app/components/icons";
 import { MetalFx } from "metal-fx";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
@@ -155,7 +155,7 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
                     preset because the design language reserves hue for meaning,
                     and neutral chrome introduces none.
                   */}
-                  <MetalFx className="metal-cta" variant="button" preset="silver" theme="dark" strength={0.55} paused={busy}>
+                  <MetalFx className="metal-cta" variant="button" preset="silver" theme="auto" strength={0.55} paused={busy}>
                     <button className="button primary block" disabled={busy}>
                       {busy
                         ? <><LoaderCircle className="spin" aria-hidden="true" /><Shimmer>Verifying trading access</Shimmer></>
