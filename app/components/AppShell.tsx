@@ -1,48 +1,47 @@
 "use client";
 
 import {
-  useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode
+  useEffect, useId, useRef, useState, type ReactNode
 } from "react";
 import {
-  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Menu, Newspaper, PieChart, WalletCards, X
-} from "lucide-react";
+  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart,
+  ThemeDark, ThemeLight, ThemeSystem
+} from "@/app/components/icons";
+import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import {
-  Badge, Brand, IconSwap, StatusDot, SwapText, Tooltip, useDisclosure
+  Badge, Brand, StatusDot, SwapText, Tooltip, useDisclosure, useSlidingPill
 } from "@/app/components/ui";
 
-export type Tab = "connect" | "builder" | "capital" | "market" | "news" | "automation" | "dashboard" | "runs";
+export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs";
 
 type NavItem = { id: Tab; label: string; hint: string; icon: ReactNode };
-type NavGroup = { label: string; items: NavItem[] };
 
 /**
- * Navigation is grouped by intent: work that changes exchange state is kept
- * apart from read-only research, so an operator never lands on an execution
- * surface while browsing analysis.
+ * Navigation.
+ *
+ * One horizontal strip rather than a left rail. The rail was costing 268px of
+ * permanent width on every screen for seven destinations, and a trading surface
+ * wants that width for columns of figures. `family` splits execution from
+ * read-only research, which is the distinction that matters here: an operator
+ * browsing analysis should never land on a surface that can reach the exchange
+ * without crossing a visible boundary first.
+ *
+ * Capital allocation is deliberately absent. Setting one account-wide budget is
+ * a property of the portfolio, not a destination, so it lives inside Portfolio
+ * next to the balance it is calculated from.
  */
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Trading",
-    items: [
-      { id: "connect", label: "Delta connection", hint: "Enable live execution", icon: <KeyRound /> },
-      { id: "capital", label: "Capital allocation", hint: "Account-wide trading budget", icon: <WalletCards /> },
-      { id: "builder", label: "Strategy builder", hint: "Configure and schedule", icon: <Layers3 /> },
-      { id: "runs", label: "Strategy history", hint: "Scheduled and active strategies", icon: <Activity /> },
-      { id: "dashboard", label: "Portfolio", hint: "Balances and positions", icon: <PieChart /> }
-    ]
-  },
-  {
-    label: "Insights",
-    items: [
-      { id: "market", label: "Market analysis", hint: "Order flow and volatility", icon: <BarChart3 /> },
-      { id: "news", label: "Bitcoin news", hint: "News and market impact", icon: <Newspaper /> },
-      { id: "automation", label: "Automation", hint: "Agent reviews and proposals", icon: <Bot /> }
-    ]
-  }
+const NAV_ITEMS: (NavItem & { family: "execute" | "research" })[] = [
+  { id: "connect", label: "Connection", hint: "Enable live execution", icon: <KeyRound />, family: "execute" },
+  { id: "builder", label: "Builder", hint: "Configure and schedule", icon: <Layers3 />, family: "execute" },
+  { id: "runs", label: "History", hint: "Scheduled and active strategies", icon: <Activity />, family: "execute" },
+  { id: "dashboard", label: "Portfolio", hint: "Balances, positions and capital", icon: <PieChart />, family: "execute" },
+  { id: "market", label: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
+  { id: "news", label: "News", hint: "Headlines and market impact", icon: <Newspaper />, family: "research" },
+  { id: "automation", label: "Automation", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" }
 ];
 
 /** Reading order of the sections, so a transition knows which way it travelled. */
-export const TAB_ORDER: readonly Tab[] = NAV_GROUPS.flatMap(group => group.items.map(item => item.id));
+export const TAB_ORDER: readonly Tab[] = NAV_ITEMS.map(item => item.id);
 
 export type ConnectionState = {
   label: string;
@@ -64,173 +63,90 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   banner?: ReactNode;
   children: ReactNode;
 }) {
-  const [navOpen, setNavOpen] = useState(false);
-  const groups = NAV_GROUPS
-    .map(group => ({ ...group, items: group.items.filter(item => availableTabs.includes(item.id)) }))
-    .filter(group => group.items.length > 0);
-  const activeItem = groups.flatMap(group => group.items).find(item => item.id === tab);
-  const navRef = useRef<HTMLElement>(null);
-  const railRef = useRef<HTMLSpanElement>(null);
-  const navToggleRef = useRef<HTMLButtonElement>(null);
-  const navCloseRef = useRef<HTMLButtonElement>(null);
-  const layoutKey = availableTabs.join(",");
-
-  useEffect(() => {
-    if (!navOpen || !window.matchMedia("(max-width: 960px)").matches) return;
-    const previousOverflow = document.body.style.overflow;
-    const navToggle = navToggleRef.current;
-    document.body.style.overflow = "hidden";
-    const focusFrame = window.requestAnimationFrame(() => navCloseRef.current?.focus());
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setNavOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previousOverflow;
-      navToggle?.focus();
-    };
-  }, [navOpen]);
+  const items = NAV_ITEMS.filter(item => availableTabs.includes(item.id));
+  const activeItem = items.find(item => item.id === tab);
+  const { barRef, pill } = useSlidingPill(`${tab}:${availableTabs.join(",")}`, '[aria-current="page"]');
+  const activeRef = useRef<HTMLButtonElement>(null);
 
   /**
-   * One rail travels to the active section instead of a marker switching off one
-   * row and on to another, so the sidebar shows where the selection came from —
-   * the sliding-tabs idea, turned on its side.
-   *
-   * Position and height are measured from the live DOM rather than derived from
-   * an index, because the rows are grouped and a group can be hidden entirely
-   * while the trading backend is unreachable. The first write suspends the
-   * transition, otherwise the rail would animate down from the top on mount.
+   * The strip scrolls horizontally on a narrow viewport, so the current section
+   * is pulled into view. Without this a mobile user landing on the last
+   * destination sees a strip that appears to start somewhere else.
    */
-  useLayoutEffect(() => {
-    const nav = navRef.current;
-    const rail = railRef.current;
-    if (!nav || !rail) return;
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+  }, [tab]);
 
-    const place = (animate: boolean) => {
-      const active = nav.querySelector<HTMLElement>('.nav-item[aria-current="page"]');
-      if (!active) {
-        rail.dataset.ready = "false";
-        return;
-      }
-      const apply = () => {
-        rail.style.transform = `translateY(${active.offsetTop}px)`;
-        rail.style.height = `${active.offsetHeight}px`;
-      };
-      if (animate) {
-        apply();
-      } else {
-        const previous = rail.style.transition;
-        rail.style.transition = "none";
-        apply();
-        void rail.offsetHeight;
-        rail.style.transition = previous;
-      }
-      rail.dataset.ready = "true";
-    };
-
-    place(rail.dataset.ready === "true");
-    const onResize = () => place(false);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [layoutKey, tab]);
+  /** A visible boundary between the execution and research halves of the strip. */
+  const firstResearch = items.find(item => item.family === "research")?.id;
 
   return (
     <div className="shell">
       <a className="skip-link" href="#workspace">Skip to main content</a>
 
-      <aside
-        className="sidebar"
-        data-open={navOpen}
-        aria-label="Dashboard sections"
-        aria-modal={navOpen ? true : undefined}
-        role={navOpen ? "dialog" : undefined}
-      >
-        <div className="sidebar-head">
-          <Brand />
-          <button ref={navCloseRef} type="button" className="icon-button sidebar-close" onClick={() => setNavOpen(false)} aria-label="Close navigation">
-            <X />
-          </button>
-        </div>
+      <header className="topbar">
+        <div className="topbar-row">
+          <Brand subtitle={activeItem ? activeItem.hint : "Delta Exchange India"} />
 
-        <nav className="sidebar-nav" ref={navRef}>
-          <span className="nav-rail" ref={railRef} data-ready="false" aria-hidden="true" />
-          {groups.map(group => (
-            <div className="nav-group" key={group.label}>
-              <p className="nav-group-label">{group.label}</p>
-              <ul>
-                {group.items.map(item => {
-                  const count = badges?.[item.id] ?? 0;
-                  return (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        className="nav-item"
-                        aria-current={item.id === tab ? "page" : undefined}
-                        onClick={() => { onNavigate(item.id); setNavOpen(false); }}
-                      >
-                        <span className="nav-item-icon" aria-hidden="true">
-                          {item.icon}
-                          {/* Only the badge slides and pops; the row it sits on
-                              never moves, so the navigation cannot jump under
-                              the cursor when a run starts needing attention. */}
-                          <Badge
-                            count={count}
-                            tone="negative"
-                            label={`${count} ${item.label.toLowerCase()} ${count === 1 ? "item needs" : "items need"} attention`}
-                          />
-                        </span>
-                        <span className="nav-item-text">
-                          <strong>{item.label}</strong>
-                          <small>{item.hint}</small>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </nav>
+          <Tooltip label={connection.detail} placement="bottom">
+            <span className={`live-pill tone-${connection.tone}`}>
+              <StatusDot tone={connection.tone} />
+              {/* The label changes with the connection, so it swaps in place
+                  rather than being replaced between frames. */}
+              <span className="live-pill-text"><SwapText>{connection.label}</SwapText></span>
+            </span>
+          </Tooltip>
 
-        <div className={`sidebar-status tone-${connection.tone}`}>
-          <StatusDot tone={connection.tone} />
-          <span>
-            <strong>{connection.label}</strong>
-            <small>{connection.detail}</small>
-          </span>
-        </div>
-      </aside>
-
-      {navOpen && <button type="button" className="sidebar-scrim" onClick={() => setNavOpen(false)} aria-label="Close navigation" />}
-
-      <div className="shell-body" inert={navOpen ? true : undefined}>
-        <header className="context-bar">
-          <button
-            ref={navToggleRef}
-            type="button"
-            className="icon-button nav-toggle"
-            onClick={() => setNavOpen(value => !value)}
-            aria-label={navOpen ? "Close navigation" : "Open navigation"}
-            aria-expanded={navOpen}
-          >
-            {/* Both glyphs stay mounted in one grid cell, so the control never
-                changes size as it flips and the bar cannot reflow. */}
-            <IconSwap showB={navOpen} a={<Menu />} b={<X />} />
-          </button>
-          <div className="context-title">
-            {/* The section name changes in place rather than between frames. */}
-            <SwapText>{activeItem ? activeItem.label : "Dashboard"}</SwapText>
-            <small><SwapText>{activeItem ? activeItem.hint : "Delta Exchange India"}</SwapText></small>
+          <div className="topbar-actions">
+            <Clock />
+            <AccountMenu
+              account={account}
+              connection={connection}
+              onDisconnect={onDisconnect}
+              onSignOut={onSignOut}
+            />
           </div>
-          <Clock />
-          <AccountMenu account={account} connection={connection} onDisconnect={onDisconnect} onSignOut={onSignOut} />
-        </header>
+        </div>
 
-        <main className="workspace" id="workspace">
-          {banner}
-          {children}
-        </main>
-      </div>
+        <nav className="topnav" aria-label="Dashboard sections">
+          <div className="topnav-track" ref={barRef}>
+            {pill}
+            {items.map(item => {
+              const count = badges?.[item.id] ?? 0;
+              const current = item.id === tab;
+              return (
+                <button
+                  type="button"
+                  key={item.id}
+                  ref={current ? activeRef : undefined}
+                  className="topnav-item"
+                  data-divider={item.id === firstResearch ? "before" : undefined}
+                  aria-current={current ? "page" : undefined}
+                  onClick={() => onNavigate(item.id)}
+                >
+                  <span className="topnav-item-icon" aria-hidden="true">
+                    {item.icon}
+                    {/* Only the badge slides and pops; the row it sits on never
+                        moves, so the strip cannot shift under the cursor when a
+                        run starts needing attention. */}
+                    <Badge
+                      count={count}
+                      tone="negative"
+                      label={`${count} ${item.label.toLowerCase()} ${count === 1 ? "item needs" : "items need"} attention`}
+                    />
+                  </span>
+                  <span className="topnav-item-label">{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      </header>
+
+      <main className="workspace" id="workspace">
+        {banner}
+        {children}
+      </main>
     </div>
   );
 }
@@ -256,13 +172,27 @@ function Clock() {
   return (
     <Tooltip label="Entry and exit times use this clock" placement="bottom">
       <div className="context-clock">
-        <time dateTime={now.toISOString()}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
-        <small>{zone} · your local time</small>
+        <time dateTime={now.toISOString()}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
+        <small>{zone}</small>
       </div>
     </Tooltip>
   );
 }
 
+const APPEARANCE_OPTIONS: { value: ThemeChoice; label: string; icon: ReactNode }[] = [
+  { value: "system", label: "System", icon: <ThemeSystem /> },
+  { value: "light", label: "Light", icon: <ThemeLight /> },
+  { value: "dark", label: "Dark", icon: <ThemeDark /> }
+];
+
+/**
+ * Profile.
+ *
+ * Identity, the live connection state, appearance, and the two ways out, in one
+ * place. Appearance is a three-option segmented control rather than a sun-moon
+ * switch, because following the operating system is a real third state and a
+ * two-position switch cannot express it.
+ */
 function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
   account: { name: string; detail: string };
   connection: ConnectionState;
@@ -272,9 +202,17 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  const appearanceId = useId();
+  const { choice, setChoice } = useTheme();
   // The panel is kept in the tree for the length of its close transition, so
   // dismissal plays instead of the menu simply blinking out.
   const disclosure = useDisclosure(open, "--dropdown-close-dur");
+  /**
+   * The appearance bar only exists while the panel is mounted, so the mounted
+   * flag is part of the key: without it the pill would be measured once, before
+   * the bar had been rendered, and stay at zero width on every open.
+   */
+  const { barRef, pill } = useSlidingPill(`${choice}:${disclosure.mounted}`, '[aria-checked="true"]');
 
   useEffect(() => {
     if (!open) return;
@@ -319,21 +257,49 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
           id={menuId}
           role="menu"
         >
-          <div className="account-dropdown-head">
-            <strong>{account.name}</strong>
-            <small>{account.detail}</small>
-            <span className={`connection-chip tone-${connection.tone}`}>
-              <StatusDot tone={connection.tone} />{connection.label}
+          <div className="account-profile">
+            <span className="avatar avatar-lg" aria-hidden="true">{initials}</span>
+            <span className="account-profile-text">
+              <strong>{account.name}</strong>
+              <small>{account.detail}</small>
             </span>
           </div>
-          {onDisconnect && (
-            <button type="button" role="menuitem" onClick={() => { setOpen(false); onDisconnect(); }}>
-              <KeyRound aria-hidden="true" />Disconnect Delta Exchange
+
+          <span className={`connection-chip tone-${connection.tone}`}>
+            <StatusDot tone={connection.tone} />
+            {connection.label}
+          </span>
+
+          <div className="account-section">
+            <span className="account-section-label" id={appearanceId}>Appearance</span>
+            <div className="appearance-switch" role="radiogroup" aria-labelledby={appearanceId} ref={barRef}>
+              {pill}
+              {APPEARANCE_OPTIONS.map(option => (
+                <button
+                  type="button"
+                  key={option.value}
+                  role="radio"
+                  aria-checked={choice === option.value}
+                  className="appearance-option"
+                  onClick={() => setChoice(option.value)}
+                >
+                  <span aria-hidden="true">{option.icon}</span>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="account-section">
+            {onDisconnect && (
+              <button type="button" role="menuitem" onClick={() => { setOpen(false); onDisconnect(); }}>
+                <KeyRound aria-hidden="true" />Disconnect Delta Exchange
+              </button>
+            )}
+            <button type="button" role="menuitem" onClick={() => { setOpen(false); onSignOut(); }}>
+              <LogOut aria-hidden="true" />Sign out
             </button>
-          )}
-          <button type="button" role="menuitem" onClick={() => { setOpen(false); onSignOut(); }}>
-            <LogOut aria-hidden="true" />Sign out
-          </button>
+          </div>
         </div>
       )}
     </div>
