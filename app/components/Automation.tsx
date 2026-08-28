@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
-import { Activity, Bot, CalendarClock, Play, RefreshCw, ShieldCheck, Workflow } from "lucide-react";
+import { Activity, Bot, CalendarClock, Play, RefreshCw, ShieldCheck, Workflow } from "@/app/components/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cleanAgentMarkdown } from "@/lib/agent-markdown";
@@ -76,7 +76,6 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
   return (
     <div className="automation-page">
       <SectionHeading
-        eyebrow="Agent operations"
         title="Automation"
         description="Analyze BTC charts, news, options, account risk, and schedule saved strategies live."
         actions={
