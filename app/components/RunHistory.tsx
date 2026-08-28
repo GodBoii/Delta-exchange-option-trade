@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Ban, CircleStop, Info, RefreshCw, Trash2
-} from "lucide-react";
+} from "@/app/components/icons";
 import { requestJson } from "@/lib/api";
 import {
   EM_DASH, decimal, errorMessage, formatDateTime, formatDuration, formatTimestamp, relativeTime,
@@ -155,7 +155,6 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   return (
     <div className="runs">
       <SectionHeading
-        eyebrow="Trading activity"
         title="Strategy history"
         description="Review scheduled and completed strategies. You can cancel before entry, exit an active strategy, or delete a finished record."
         actions={
