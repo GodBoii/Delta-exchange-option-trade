@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeProvider, THEME_BOOT_SCRIPT } from "@/app/components/theme";
 import "./globals.css";
 
 /**
@@ -37,8 +38,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#000000",
-  colorScheme: "dark",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#080809" },
+    { media: "(prefers-color-scheme: light)", color: "#f4f2ee" }
+  ],
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover"
@@ -46,8 +49,16 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body>{children}</body>
+    /* `data-theme` is written by the boot script below before first paint, so
+       the server markup deliberately carries no theme and React is told not to
+       warn about the difference. */
+    <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
+      <body>
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }
