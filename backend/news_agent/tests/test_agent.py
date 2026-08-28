@@ -11,7 +11,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     db = InMemoryDb()
     agent = create_news_agent(require_api_key=False, db=db)
 
-    assert agent.model.id == "deepseek/deepseek-v4-flash-0731"
+    assert agent.model.id == "z-ai/glm-5.3-flash"
     assert agent.model.reasoning_effort == "xhigh"
     assert agent.model.supports_native_structured_outputs is False
     assert agent.model.max_tokens is None
@@ -24,6 +24,8 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     assert agent.max_tool_calls_from_history is None
     assert agent.tool_call_limit is None
     assert agent.store_events is True
+    assert agent.send_media_to_model is True
+    assert any("Inspect images attached to the run" in instruction for instruction in agent.instructions)
     assert [type(toolkit).__name__ for toolkit in agent.tools] == ["WebSearchTools", "NewsResearchTools"]
     assert agent.tools[0].timeout is None
     assert agent.tools[0].fixed_max_results is None
