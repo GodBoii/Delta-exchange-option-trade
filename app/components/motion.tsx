@@ -24,7 +24,7 @@ import {
   useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
   type ReactNode, type RefObject
 } from "react";
-import { X } from "lucide-react";
+import { X } from "@/app/components/icons";
 
 /* ------------------------------------------------------------------ *
  * Shared helpers
