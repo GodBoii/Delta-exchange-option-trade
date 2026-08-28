@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Check, KeyRound, LoaderCircle, LockKeyhole, ShieldCheck } from "@/app/components/icons";
 import { Brand, Field, InlineMessage, Shimmer } from "@/app/components/ui";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { errorMessage } from "@/lib/format";
