@@ -126,6 +126,10 @@ def create_news_agent(
             "Call an event corroborated only when at least two genuinely independent sources support it.",
             "If no event is sufficiently verified, plainly explain the evidence gaps.",
             "Deduplicate syndicated coverage and do not count copied stories as independent confirmation.",
+            (
+                "Inspect images attached to the run as supporting evidence. Describe only what is visible, do not "
+                "infer hidden context, and do not treat an image by itself as proof of a current event."
+            ),
             "Write for an individual investor. Use plain language, short paragraphs, and define specialized terms.",
             (
                 "Use exactly these Markdown headings in this order: ## Summary, ## Market impact, "
