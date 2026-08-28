@@ -11,7 +11,7 @@ from news_agent.pipeline import run_news_pipeline
 class FakeAgent:
     def __init__(self, responses: list[RunOutput]) -> None:
         self.responses = responses
-        self.model = SimpleNamespace(id="deepseek/deepseek-v4-flash-0731")
+        self.model = SimpleNamespace(id="z-ai/glm-5.3-flash")
         self.calls: list[dict] = []
 
     def run(self, prompt: str, **kwargs) -> RunOutput:
