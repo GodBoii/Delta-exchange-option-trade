@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, RefreshCw, WifiOff } from "lucide-react";
+import { BarChart3, RefreshCw, WifiOff } from "@/app/components/icons";
 import {
   AnimatedNumber, SectionHeading, Shimmer, SwapText, useSlidingPill
 } from "@/app/components/ui";
@@ -340,7 +340,6 @@ export default function BtcMarketChart() {
 
   return <div className="market-page">
     <SectionHeading
-      eyebrow="Live market data"
       title="Market analysis"
       description="Binance Spot order flow and volatility alongside Delta BTCUSD perpetual-market data."
       actions={
