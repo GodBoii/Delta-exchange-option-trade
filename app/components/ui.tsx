@@ -290,6 +290,29 @@ export function InlineMessage({ tone, children }: { tone: NoticeTone | "info"; c
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
+ * Portals a modal surface to the document body.
+ *
+ * `.modal-layer` is `position: fixed; inset: 0` and centres its child, which
+ * only centres on the viewport while the layer's containing block *is* the
+ * viewport. Rendered in place, these dialogs sat inside the page-transition
+ * wrapper, whose `transform` and `filter` make it a containing block for fixed
+ * descendants — so the surface centred on the scrolled section instead, landing
+ * low at the top of a page and high once scrolled. Portalling to the body puts
+ * the layer back outside every transformed ancestor.
+ *
+ * The document check is inline rather than gated behind an effect on purpose.
+ * An effect would cost an extra render pass before the children exist, and both
+ * surfaces run their entrance and move focus on their first commit — they would
+ * fire against an empty subtree and the dialog would open without animating or
+ * taking focus. Every caller renders these from state, so they never reach the
+ * server render and there is nothing to hydrate.
+ */
+function ModalPortal({ children }: { children: ReactNode }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
+}
+
+/**
  * Counted page scroll lock. Modals stack — a confirmation can open over a
  * reading dialog — so the original overflow is only restored once the last
  * surface has closed, independent of the order React unmounts them in.
@@ -409,36 +432,38 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
   const descriptionId = useId();
 
   return (
-    <div className="modal-layer" onKeyDown={onKeyDown}>
-      <button
-        type="button"
-        className={`modal-backdrop t-modal-scrim${className}`}
-        onClick={requestClose}
-        tabIndex={-1}
-        aria-hidden="true"
-      />
-      <div
-        className={`modal t-modal tone-${tone}${className}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        ref={dialog}
-      >
-        <span className="modal-icon" aria-hidden="true">{tone === "danger" ? <AlertTriangle /> : <Info />}</span>
-        <h2 id={titleId}>{title}</h2>
-        <p id={descriptionId}>{description}</p>
-        <div className="modal-actions">
-          <button type="button" className="button ghost" onClick={requestClose} ref={cancelButton}>{cancel}</button>
-          <button
-            type="button"
-            className={tone === "danger" ? "button danger" : "button primary"}
-            onClick={onConfirm}
-            disabled={busy}
-          >{confirm}</button>
+    <ModalPortal>
+      <div className="modal-layer" onKeyDown={onKeyDown}>
+        <button
+          type="button"
+          className={`modal-backdrop t-modal-scrim${className}`}
+          onClick={requestClose}
+          tabIndex={-1}
+          aria-hidden="true"
+        />
+        <div
+          className={`modal t-modal tone-${tone}${className}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={descriptionId}
+          ref={dialog}
+        >
+          <span className="modal-icon" aria-hidden="true">{tone === "danger" ? <AlertTriangle /> : <Info />}</span>
+          <h2 id={titleId}>{title}</h2>
+          <p id={descriptionId}>{description}</p>
+          <div className="modal-actions">
+            <button type="button" className="button ghost" onClick={requestClose} ref={cancelButton}>{cancel}</button>
+            <button
+              type="button"
+              className={tone === "danger" ? "button danger" : "button primary"}
+              onClick={onConfirm}
+              disabled={busy}
+            >{confirm}</button>
+          </div>
         </div>
       </div>
-    </div>
+    </ModalPortal>
   );
 }
 
@@ -463,37 +488,39 @@ export function Dialog({ title, subtitle, aside, footer, size = "default", onClo
   const titleId = useId();
 
   return (
-    <div className="modal-layer" onKeyDown={onKeyDown}>
-      <button
-        type="button"
-        className={`modal-backdrop t-modal-scrim${className}`}
-        onClick={requestClose}
-        tabIndex={-1}
-        aria-hidden="true"
-      />
-      <div
-        className={`dialog${size === "compact" ? " dialog-compact" : ""} t-modal${className}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        ref={dialog}
-      >
-        <header className="dialog-head">
-          <div className="dialog-head-text">
-            <h2 id={titleId}>{title}</h2>
-            {subtitle && <p>{subtitle}</p>}
-          </div>
-          <div className="dialog-head-side">
-            {aside}
-            <button type="button" className="icon-button" onClick={requestClose} ref={closeButton} aria-label="Close details">
-              <X aria-hidden="true" />
-            </button>
-          </div>
-        </header>
-        <div className="dialog-body">{children}</div>
-        {footer && <footer className="dialog-foot">{footer}</footer>}
+    <ModalPortal>
+      <div className="modal-layer" onKeyDown={onKeyDown}>
+        <button
+          type="button"
+          className={`modal-backdrop t-modal-scrim${className}`}
+          onClick={requestClose}
+          tabIndex={-1}
+          aria-hidden="true"
+        />
+        <div
+          className={`dialog${size === "compact" ? " dialog-compact" : ""} t-modal${className}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          ref={dialog}
+        >
+          <header className="dialog-head">
+            <div className="dialog-head-text">
+              <h2 id={titleId}>{title}</h2>
+              {subtitle && <p>{subtitle}</p>}
+            </div>
+            <div className="dialog-head-side">
+              {aside}
+              <button type="button" className="icon-button" onClick={requestClose} ref={closeButton} aria-label="Close details">
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          </header>
+          <div className="dialog-body">{children}</div>
+          {footer && <footer className="dialog-foot">{footer}</footer>}
+        </div>
       </div>
-    </div>
+    </ModalPortal>
   );
 }
 
@@ -853,14 +880,25 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
       if (panel.current?.contains(target) || trigger.current?.contains(target)) return;
       close(false);
     };
+    /**
+     * The panel is positioned from the trigger rect, so a scroll that moves the
+     * trigger has to dismiss it — otherwise it would hang in place, detached.
+     * Scrolling the panel's *own* option list does not move the trigger, so
+     * those events are ignored: the capture listener sees them first, and
+     * dismissing on them made a long strategy list impossible to scroll.
+     */
+    const onScroll = (event: Event) => {
+      if (panel.current?.contains(event.target as Node)) return;
+      close(false);
+    };
     const dismiss = () => close(false);
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("resize", dismiss);
-    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("resize", dismiss);
-      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [close, open]);
 
