@@ -6394,7 +6394,121 @@ time,
 .news-history-list .news-markdown { padding-top: var(--s-5); border-top: 1px solid var(--line); }
 
 /* --------------------------------------------------------------------------
-   19. Responsive
+   19. Install offer
+   --------------------------------------------------------------------------
+   The home-screen offer. Its rules live here rather than in the responsive
+   section below because the surface has no wide-screen state to override: the
+   component only mounts on a coarse-pointer viewport under 1024px, so a laptop
+   never renders it at all.
+
+   It borrows the toast's material and the panel-reveal recipe, and sits one
+   layer under the toast region — a confirmation of something the operator just
+   did outranks an offer they did not ask for.
+   -------------------------------------------------------------------------- */
+
+.install-sheet {
+  position: fixed;
+  right: max(var(--s-3), env(safe-area-inset-right));
+  bottom: max(var(--s-3), env(safe-area-inset-bottom));
+  left: max(var(--s-3), env(safe-area-inset-left));
+  z-index: 110;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-3);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
+}
+
+.install-sheet-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+}
+
+.install-sheet-copy { display: grid; gap: 2px; min-width: 0; }
+
+.install-sheet-copy strong {
+  color: var(--text-1);
+  font-size: var(--t-md);
+}
+
+.install-sheet-copy p {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: var(--lh-snug);
+}
+
+/* 44px of hit area for a 16px glyph, pulled back into the padding so the box
+   does not grow around it. */
+.install-sheet-dismiss {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: calc(var(--s-2) * -1) calc(var(--s-2) * -1) 0 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+}
+
+.install-sheet-dismiss:hover { color: var(--text-1); }
+
+.install-sheet-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* The install action takes the width it can, because it is the one thing this
+   surface exists to offer. */
+.install-sheet-actions .button.primary { flex: 1 1 auto; }
+.install-sheet-actions .button.ghost { flex: 0 0 auto; }
+
+/* Safari cannot be asked programmatically, so the offer becomes instructions.
+   Numbered, because the order is the whole content. */
+.install-sheet-steps {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  counter-reset: install-step;
+}
+
+.install-sheet-steps li {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: var(--lh-snug);
+}
+
+.install-sheet-steps li::before {
+  counter-increment: install-step;
+  content: counter(install-step);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-pill);
+  background: var(--surface-4);
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.install-sheet-steps li svg { color: var(--text-1); }
+.install-sheet-steps strong { color: var(--text-1); }
+
+/* --------------------------------------------------------------------------
+   20. Responsive
    -------------------------------------------------------------------------- */
 
 @media (max-width: 1280px) {
@@ -7053,7 +7167,7 @@ time,
 }
 
 /* --------------------------------------------------------------------------
-   20. Motion preferences
+   21. Motion preferences
    -------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
