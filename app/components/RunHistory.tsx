@@ -62,7 +62,14 @@ function statusTone(status: string): StatusTone {
 /** Mirrors the backend rule: a run that may still hold a position cannot be erased. */
 function canDeleteRun(run: StrategyRun) {
   if (["draft", "scheduled", "cancelled", "completed"].includes(run.status)) return true;
-  return run.status === "attention" && (!run.entryExecutedAt || Boolean(run.exitExecutedAt));
+  return run.status === "attention"
+    && (!run.entryExecutedAt || Boolean(run.exitExecutedAt) || run.exposureStatus === "flat");
+}
+
+function canExitRun(run: StrategyRun) {
+  if (run.exposureStatus === "flat") return false;
+  if (run.status === "active") return true;
+  return run.status === "attention" && run.exposureStatus === "open" && Boolean(run.entryExecutedAt);
 }
 
 /**
@@ -170,7 +177,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
           <AlertTriangle aria-hidden="true" />
           <span>
             <strong>{needsAttention} {needsAttention === 1 ? "run needs" : "runs need"} attention.</strong>
-            {" "}An entry or exit did not complete cleanly. Open Information on the run to read the recorded error before retrying.
+            {" "}An entry or exit did not complete cleanly. Open Information on the run to read the recorded state before taking action.
           </span>
         </p>
       )}
@@ -265,7 +272,7 @@ function RunRow({ run, onInspect, onAction }: {
   onAction: (kind: ActionKind) => void;
 }) {
   const canCancel = ["draft", "scheduled"].includes(run.status);
-  const canExit = run.status === "active" || (run.status === "attention" && Boolean(run.entryExecutedAt));
+  const canExit = canExitRun(run);
 
   const items: RowMenuItem[] = [
     {
@@ -386,7 +393,18 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
   const definition = record?.definition ?? {};
   const legs = definition.legs ?? [];
   const orders = record?.orders ?? [];
-  const canExit = status === "active" || (status === "attention" && Boolean(record?.entryExecutedAt ?? run.entryExecutedAt));
+  const riskExposure = record?.riskState.exposureStatus;
+  const exposureStatus = riskExposure === "open" || riskExposure === "flat" || riskExposure === "unknown"
+    ? riskExposure
+    : run.exposureStatus;
+  const actionableRun = {
+    ...run,
+    status,
+    exposureStatus,
+    entryExecutedAt: record?.entryExecutedAt ?? run.entryExecutedAt,
+    exitExecutedAt: record?.exitExecutedAt ?? run.exitExecutedAt
+  };
+  const canExit = canExitRun(actionableRun);
 
   const timing: DetailItem[] = [
     { label: "Created", value: formatTimestamp(record?.createdAt ?? run.createdAt) },
@@ -399,7 +417,9 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
       label: "Actual time in market",
       value: record?.entryExecutedAt && record?.exitExecutedAt
         ? formatDuration(record.entryExecutedAt, record.exitExecutedAt)
-        : record?.entryExecutedAt ? "Still open" : EM_DASH
+        : record?.entryExecutedAt
+          ? exposureStatus === "flat" ? "Closed on Delta; reporting pending" : "Still open"
+          : EM_DASH
     },
     { label: "Record updated", value: formatTimestamp(record?.updatedAt) }
   ];
@@ -448,7 +468,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                 <CircleStop aria-hidden="true" />Exit now
               </button>
             )}
-            {canDeleteRun({ ...run, status, exitExecutedAt: record?.exitExecutedAt ?? run.exitExecutedAt }) && (
+            {canDeleteRun(actionableRun) && (
               <button type="button" className="button ghost small" onClick={() => onAction("delete")}>
                 <Trash2 aria-hidden="true" />Delete run
               </button>
