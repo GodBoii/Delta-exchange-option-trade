@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import { cleanAgentMarkdown } from "@/lib/agent-markdown";
 import type { AutomationOverview as AutomationOverviewData } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
+import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage, formatDateTime, percent, titleCase } from "@/lib/format";
 import {
   EmptyState, InlineMessage, Panel, PanelHeader, SectionHeading, Shimmer, StatusChip, Toggle,
@@ -15,6 +16,7 @@ import {
 } from "@/app/components/ui";
 
 export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
+  const { automation: revision } = useRealtimeSignals();
   const [overview, setOverview] = useState<AutomationOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -34,6 +36,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (revision) void load(true); }, [load, revision]);
 
   async function updateEnabled(enabled: boolean) {
     if (!overview) return;
