@@ -6,6 +6,7 @@ import { RefreshCw, WifiOff } from "@/app/components/icons";
 import { ThinkingOrb } from "thinking-orbs";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { requestJson, resetApiOrigin } from "@/lib/api";
+import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage } from "@/lib/format";
 import type { Account, AppUser, SessionResponse, StrategyRun } from "@/lib/app-types";
 import { AppShell, TAB_ORDER, type ConnectionState, type Tab } from "@/app/components/AppShell";
@@ -54,6 +55,7 @@ const ATTENTION_POLL_MS = 60_000;
  * builder usable in design mode so work is never lost behind an offline API.
  */
 export default function Home() {
+  const { automation: automationRevision, strategies: strategyRevision } = useRealtimeSignals();
   const [sessionLoading, setSessionLoading] = useState(true);
   const [user, setUser] = useState<AppUser | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
@@ -140,9 +142,12 @@ export default function Home() {
     };
 
     void count();
-    const timer = window.setInterval(() => { void count(); }, ATTENTION_POLL_MS);
+    const timer = window.setInterval(
+      () => { void count(); },
+      automationRevision || strategyRevision ? 300_000 : ATTENTION_POLL_MS
+    );
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [connected]);
+  }, [automationRevision, connected, strategyRevision]);
 
   async function disconnectDelta() {
     try {
