@@ -1,5 +1,4 @@
 from dataclasses import replace
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -173,3 +172,55 @@ def test_analysis_reads_the_persisted_run_from_the_same_database(monkeypatch) ->
     assert captured["session_id"] == "news:user-9:btc-news-desk"
     assert response["runId"] == "saved-run"
     assert "**bullish**" in response["analysis"]
+
+
+def test_automation_uses_committed_outcome_instead_of_response_tool_list(monkeypatch) -> None:
+    result = SimpleNamespace(
+        run_id="agno-run",
+        session_id="automation:user:run",
+        model_id="model-a",
+        report="## Decision\n\nNo trade.",
+        market_snapshot_id="snapshot-1",
+        member_responses=[],
+        tool_calls=[{"name": "scheduled_next_agent_run"}],
+    )
+    monkeypatch.setattr(main, "run_automation_team", lambda **_kwargs: result)
+    monkeypatch.setattr(
+        main,
+        "read_automation_state",
+        lambda *_args, **_kwargs: {"outcome": "strategy_selected", "market_snapshot_id": "snapshot-1"},
+    )
+    body = main.AutomationAnalysisRequest(
+        userId="11111111-1111-4111-8111-111111111111",
+        agentRunId="22222222-2222-4222-8222-222222222222",
+        sessionId="scheduled-run",
+        accountContext={},
+        trigger="asia_session",
+    )
+
+    response = main._run_automation_analysis(body, "trace-1")
+
+    assert response["outcome"] == "strategy_selected"
+
+
+def test_automation_recovers_committed_action_when_final_report_fails(monkeypatch) -> None:
+    monkeypatch.setattr(main, "run_automation_team", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("provider")))
+    monkeypatch.setattr(
+        main,
+        "read_automation_state",
+        lambda *_args, **_kwargs: {"outcome": "wait_and_run_again", "market_snapshot_id": "snapshot-1"},
+    )
+    body = main.AutomationAnalysisRequest(
+        userId="11111111-1111-4111-8111-111111111111",
+        agentRunId="22222222-2222-4222-8222-222222222222",
+        sessionId="scheduled-run",
+        accountContext={},
+        trigger="agent_follow_up",
+        signalsToInspect=["volume"],
+    )
+
+    response = main._run_automation_analysis(body, "trace-1")
+
+    assert response["success"] is True
+    assert response["outcome"] == "wait_and_run_again"
+    assert "report" in response["report"].lower()
