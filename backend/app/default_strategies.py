@@ -103,8 +103,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long call",
             description=(
-                "Buy an ATM call when BTC has a strong bullish forecast and the expected move exceeds "
-                "the premium hurdle."
+                "Use for a strong, time-bound bullish BTC view backed by momentum or a positive catalyst. "
+                "The expected upside should comfortably exceed the ATM call premium and intraday time decay. "
+                "Avoid when direction is uncertain, price is range-bound, or implied volatility makes the call "
+                "expensive."
             ),
             category="premium_buying",
             outlook="bullish",
@@ -118,8 +120,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long put",
             description=(
-                "Buy an ATM put when BTC has a strong bearish forecast and the expected fall exceeds "
-                "the premium hurdle."
+                "Use for a strong, time-bound bearish BTC view backed by downside momentum or a negative catalyst. "
+                "The expected fall should comfortably exceed the ATM put premium and intraday time decay. "
+                "Avoid when direction is uncertain, price is range-bound, or implied volatility makes the put "
+                "expensive."
             ),
             category="premium_buying",
             outlook="bearish",
@@ -133,7 +137,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long ATM straddle",
             description=(
-                "Buy the same-expiry ATM call and put when a large move is likely but its direction is unclear."
+                "Use before an imminent catalyst or breakout when BTC should move sharply today but direction is "
+                "unclear. The expected move must exceed the combined ATM call and put debit. Avoid quiet sessions or "
+                "entry after "
+                "implied volatility has already priced an extreme move."
             ),
             category="premium_buying",
             outlook="large_move_unknown_direction",
@@ -150,7 +157,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long strangle",
             description=(
-                "Buy OTM calls and puts when a very large move is expected and a lower initial debit is preferred."
+                "Use when BTC may make an exceptionally large move within about seven days but direction is unclear. "
+                "The OTM options cost less than a straddle, but BTC must travel farther to profit. Avoid modest-move "
+                "setups, "
+                "slow markets, or overpriced implied volatility because both legs lose value to time decay."
             ),
             category="premium_buying",
             outlook="very_large_move_unknown_direction",
@@ -183,7 +193,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Short ATM straddle",
             description=(
-                "Sell the same-expiry ATM call and put on a quiet day with strong sideways evidence and low event risk."
+                "Use only when BTC is likely to stay tightly pinned near the current price through today's expiry, "
+                "realized volatility is subdued, option premium is rich, and no major catalyst is due. Avoid trends, "
+                "breakouts, news "
+                "events, or rising volatility. Both short legs carry uncapped tail risk."
             ),
             category="premium_selling",
             outlook="sideways",
@@ -200,8 +213,11 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Short strangle",
             description=(
-                "Sell OTM calls and puts when BTC is expected to remain inside a wider range and volatility "
-                "is low or falling."
+                "Use when BTC should remain inside a well-supported wider range through today's expiry and implied "
+                "volatility is rich relative to the expected move. It gives more room than a short straddle but "
+                "collects less premium. Avoid catalysts, directional momentum, expanding volatility, or uncertain "
+                "range boundaries; "
+                "tail risk is uncapped."
             ),
             category="premium_selling",
             outlook="wide_sideways",
@@ -233,7 +249,12 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
         _base(
             now,
             name="Iron condor",
-            description="Sell an OTM call and put with wider protective wings for a capped-risk range trade.",
+            description=(
+                "Use for a range-bound BTC session when implied volatility is rich and defined risk is preferred. The "
+                "two short OTM strikes should sit beyond the expected range, while wider long wings cap loss. It "
+                "offers more "
+                "room but less credit than an iron butterfly. Avoid strong trends, breakouts, or major catalysts."
+            ),
             category="defined_risk_premium_selling",
             outlook="wide_sideways",
             expiry_policy="same_day",
@@ -282,7 +303,12 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
         _base(
             now,
             name="Iron butterfly",
-            description="Sell the ATM call and put with equal OTM wings when BTC is expected to stay close to ATM.",
+            description=(
+                "Use when BTC is likely to finish very near the current ATM strike through today's expiry, implied "
+                "volatility is rich, and capped risk is required. The ATM shorts provide higher credit than an iron "
+                "condor, "
+                "but the profitable range is narrower; OTM wings cap loss. Avoid drift, breakouts, and event risk."
+            ),
             category="defined_risk_premium_selling",
             outlook="tight_sideways",
             expiry_policy="same_day",
