@@ -1,24 +1,28 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 import psycopg
 from agno.tools import Toolkit
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from app.automation_schedule import (
+    IST,
+    ist_day_bounds,
+    next_fixed_run,
+    normalize_run_time,
+    parse_aware_datetime,
+    utc_text,
+)
 from app.capital import percentage_concurrency_limit
 from app.models import StrategyDefinition
 from news_agent.config import NewsAgentSettings
-
-IST = ZoneInfo("Asia/Kolkata")
 
 
 class AutomationStrategyTools(Toolkit):
@@ -189,6 +193,7 @@ class AutomationStrategyTools(Toolkit):
                 activation=activation,
                 option_context=option_context,
             )
+            self._claim_terminal_outcome(cursor, "strategy_selected")
             cursor.execute(
                 """
                 insert into public.strategies (
@@ -233,10 +238,6 @@ class AutomationStrategyTools(Toolkit):
                 ),
             )
             proposal_id = cursor.fetchone()["id"]
-            cursor.execute(
-                "update public.automation_agent_runs set outcome = 'strategy_selected' where id = %s and user_id = %s",
-                (self.agent_run_id, self.user_id),
-            )
             connection.commit()
 
         return json.dumps(
@@ -259,76 +260,183 @@ class AutomationStrategyTools(Toolkit):
         reason_for_waiting: str,
         signals_to_inspect: list[str],
     ) -> str:
-        """Schedule a future analysis run after validating minimum delay, deduplication, and the daily limit."""
-        next_run = _future_datetime(next_run_time, "next_run_time")
-        if not reason_for_waiting.strip():
+        """Schedule one follow-up before the next fixed review, or reuse an earlier pending review."""
+        now = datetime.now(UTC)
+        next_run = normalize_run_time(next_run_time, "next_run_time", now=now)
+        reason = reason_for_waiting.strip()
+        signals = [signal.strip() for signal in signals_to_inspect if signal.strip()][:10]
+        if not reason:
             raise ValueError("reason_for_waiting is required")
 
         with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select pg_advisory_xact_lock(hashtextextended(%s, 43))", (self.user_id,))
             cursor.execute(
                 """
-                select enabled, minimum_follow_up_minutes, maximum_agent_runs_per_day
-                from public.automation_settings where user_id = %s
+                select runs.trigger, runs.outcome, settings.enabled,
+                       settings.minimum_follow_up_minutes, settings.maximum_agent_runs_per_day
+                from public.automation_agent_runs runs
+                join public.automation_settings settings on settings.user_id = runs.user_id
+                where runs.id = %s and runs.user_id = %s
+                for update
+                """,
+                (self.agent_run_id, self.user_id),
+            )
+            current = cursor.fetchone()
+            if not current:
+                raise ValueError("The current automation run is unavailable")
+            if not current["enabled"]:
+                raise ValueError("Automation is turned off")
+            if current["trigger"] == "agent_follow_up":
+                raise ValueError(
+                    "A follow-up run cannot schedule another follow-up; select a strategy or record no trade"
+                )
+
+            minimum = now + timedelta(minutes=int(current["minimum_follow_up_minutes"]))
+            if next_run < minimum:
+                raise ValueError(
+                    f"next_run_time must be at least {current['minimum_follow_up_minutes']} minutes ahead"
+                )
+
+            cursor.execute(
+                """
+                select id::text, trigger, scheduled_for
+                from public.automation_agent_runs
+                where user_id = %s and id <> %s and status = 'scheduled' and scheduled_for > %s
+                order by scheduled_for
+                limit 1
+                """,
+                (self.user_id, self.agent_run_id, now),
+            )
+            existing = cursor.fetchone()
+            if existing and existing["scheduled_for"] <= next_run:
+                self._claim_terminal_outcome(cursor, "wait_and_run_again")
+                connection.commit()
+                return json.dumps(
+                    {
+                        "outcome": "wait_and_run_again",
+                        "scheduledRunId": existing["id"],
+                        "nextRunTime": utc_text(existing["scheduled_for"]),
+                        "trigger": existing["trigger"],
+                        "reusedExistingRun": True,
+                    }
+                )
+
+            fixed = next_fixed_run(now)
+            if next_run >= fixed.scheduled_for:
+                raise ValueError(
+                    f"A fixed {fixed.trigger.replace('_', ' ')} review already runs at "
+                    f"{utc_text(fixed.scheduled_for)}; do not schedule another run at or after it"
+                )
+
+            cursor.execute(
+                """
+                select id::text
+                from public.automation_agent_runs
+                where user_id = %s and status = 'scheduled' and trigger = 'agent_follow_up'
+                order by scheduled_for
+                limit 1
+                for update
                 """,
                 (self.user_id,),
             )
-            settings = cursor.fetchone() or {"minimum_follow_up_minutes": 5, "maximum_agent_runs_per_day": 12}
-            if not settings.get("enabled"):
-                raise ValueError("Automation is turned off")
-            minimum = datetime.now(UTC) + timedelta(minutes=int(settings["minimum_follow_up_minutes"]))
-            if next_run < minimum:
-                raise ValueError(
-                    f"next_run_time must be at least {settings['minimum_follow_up_minutes']} minutes ahead"
+            pending_follow_up = cursor.fetchone()
+            if pending_follow_up:
+                run_key = f"follow-up:{next_run.strftime('%Y-%m-%dT%H:%MZ')}"
+                self._claim_terminal_outcome(cursor, "wait_and_run_again")
+                cursor.execute(
+                    """
+                    update public.automation_agent_runs
+                    set run_key = %s, scheduled_for = %s, reason = %s, signals_to_inspect = %s,
+                        market_snapshot_id = %s, news_analysis_id = %s
+                    where id = %s
+                    """,
+                    (
+                        run_key,
+                        next_run,
+                        reason,
+                        Jsonb(signals),
+                        self.market_snapshot_id,
+                        self.news_analysis_id,
+                        pending_follow_up["id"],
+                    ),
+                )
+                connection.commit()
+                return json.dumps(
+                    {
+                        "outcome": "wait_and_run_again",
+                        "scheduledRunId": pending_follow_up["id"],
+                        "nextRunTime": utc_text(next_run),
+                        "rescheduledExistingFollowUp": True,
+                    }
                 )
 
-            local_day = next_run.astimezone(IST).date()
-            day_start = datetime.combine(local_day, datetime.min.time(), tzinfo=IST).astimezone(UTC)
-            day_end = day_start + timedelta(days=1)
+            day_start, day_end = ist_day_bounds(next_run)
             cursor.execute(
                 """
                 select count(*)::int as count from public.automation_agent_runs
                 where user_id = %s and scheduled_for >= %s and scheduled_for < %s
-                  and status <> 'cancelled'
+                  and trigger = 'agent_follow_up' and status <> 'cancelled'
                 """,
                 (self.user_id, day_start, day_end),
             )
-            if int(cursor.fetchone()["count"]) >= int(settings["maximum_agent_runs_per_day"]):
-                raise ValueError("The daily agent-run limit has been reached")
+            if int(cursor.fetchone()["count"]) >= int(current["maximum_agent_runs_per_day"]):
+                raise ValueError("The daily follow-up limit has been reached")
 
-            digest = hashlib.sha256(f"{next_run.isoformat()}|{reason_for_waiting.strip()}".encode()).hexdigest()[:20]
-            run_key = f"follow-up:{digest}"
+            run_key = f"follow-up:{next_run.strftime('%Y-%m-%dT%H:%MZ')}"
+            self._claim_terminal_outcome(cursor, "wait_and_run_again")
             cursor.execute(
                 """
                 insert into public.automation_agent_runs (
                   user_id, run_key, trigger, status, scheduled_for, reason,
                   signals_to_inspect, market_snapshot_id, news_analysis_id
                 ) values (%s,%s,'agent_follow_up','scheduled',%s,%s,%s,%s,%s)
-                on conflict (user_id, run_key) do update set reason = excluded.reason
+                on conflict (user_id, run_key) do update
+                  set status = 'scheduled',
+                      scheduled_for = excluded.scheduled_for,
+                      completed_at = null,
+                      error = null,
+                      reason = excluded.reason,
+                      signals_to_inspect = excluded.signals_to_inspect,
+                      market_snapshot_id = excluded.market_snapshot_id,
+                      news_analysis_id = excluded.news_analysis_id
+                  where public.automation_agent_runs.status = 'cancelled'
                 returning id::text
                 """,
                 (
                     self.user_id,
                     run_key,
                     next_run,
-                    reason_for_waiting.strip(),
-                    Jsonb(signals_to_inspect),
+                    reason,
+                    Jsonb(signals),
                     self.market_snapshot_id,
                     self.news_analysis_id,
                 ),
             )
-            scheduled_run_id = cursor.fetchone()["id"]
-            cursor.execute(
-                "update public.automation_agent_runs set outcome = 'wait_and_run_again' where id = %s and user_id = %s",
-                (self.agent_run_id, self.user_id),
-            )
+            scheduled = cursor.fetchone()
+            if not scheduled:
+                raise ValueError("A run already used this exact UTC minute")
+            scheduled_run_id = scheduled["id"]
             connection.commit()
         return json.dumps(
             {
                 "outcome": "wait_and_run_again",
                 "scheduledRunId": scheduled_run_id,
-                "nextRunTime": next_run.isoformat(),
+                "nextRunTime": utc_text(next_run),
             }
         )
+
+    def _claim_terminal_outcome(self, cursor: psycopg.Cursor, outcome: str) -> None:
+        cursor.execute(
+            """
+            update public.automation_agent_runs
+            set outcome = %s
+            where id = %s and user_id = %s and status = 'running' and outcome is null
+            returning id
+            """,
+            (outcome, self.agent_run_id, self.user_id),
+        )
+        if not cursor.fetchone():
+            raise ValueError("This automation run has already chosen its terminal action")
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self.database_url, row_factory=dict_row)
@@ -364,6 +472,15 @@ def save_market_snapshot(
     return snapshot_id
 
 
+def read_automation_state(settings: NewsAgentSettings, *, user_id: str, agent_run_id: str) -> dict[str, Any] | None:
+    with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
+        row = connection.execute(
+            "select outcome, market_snapshot_id::text from public.automation_agent_runs where id = %s and user_id = %s",
+            (str(UUID(agent_run_id)), str(UUID(user_id))),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def _psycopg_url(url: str) -> str:
     normalized = url.replace("postgresql+psycopg://", "postgresql://", 1)
     parts = urlsplit(normalized)
@@ -371,16 +488,7 @@ def _psycopg_url(url: str) -> str:
 
 
 def _future_datetime(value: str, field: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError(f"{field} must be an ISO-8601 datetime") from error
-    if parsed.utcoffset() is None:
-        raise ValueError(f"{field} must include a timezone")
-    parsed = parsed.astimezone(UTC)
-    if parsed <= datetime.now(UTC):
-        raise ValueError(f"{field} must be in the future")
-    return parsed
+    return parse_aware_datetime(value, field)
 
 
 def materialize_live_definition(
