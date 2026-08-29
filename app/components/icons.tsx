@@ -22,9 +22,9 @@ import {
   Broadcast, CalendarBlank, CaretDown, CaretUp, ChartBar, ChartDonut,
   ChartLineUp, Check, CirclesThreePlus, ClockCounterClockwise, Copy, CurrencyDollar,
   DownloadSimple, Equalizer, Eye, FileText, Fingerprint, FloppyDisk, Folders, Gauge,
-  Info, Key, Lightning, List, Lock, MoonStars, Newspaper, Path, Plus, Prohibit,
-  SignOut, Skull, SlidersHorizontal, Spinner, Square, Stack, Sun, Trash, TrendUp,
-  UploadSimple, User, Vault, Warning, WifiSlash, X
+  DeviceMobile, Export, Info, Key, Lightning, List, Lock, MoonStars, Newspaper, Path, Plus,
+  PlusSquare, Prohibit, SignOut, Skull, SlidersHorizontal, Spinner, Square, Stack, Sun, Trash,
+  TrendUp, UploadSimple, User, Vault, Warning, WifiSlash, X
 } from "@phosphor-icons/react";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -92,3 +92,9 @@ export const Danger = Skull as Icon;
 export const ThemeLight = Sun as Icon;
 export const ThemeDark = MoonStars as Icon;
 export const ThemeSystem = Gauge as Icon;
+
+/* Install to home screen. `ShareSheet` is the iOS share glyph specifically —
+   the arrow leaving a tray — because the instructions name that button. */
+export const Smartphone = DeviceMobile as Icon;
+export const ShareSheet = Export as Icon;
+export const AddToHomeScreen = PlusSquare as Icon;
