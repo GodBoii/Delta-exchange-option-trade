@@ -812,10 +812,13 @@ current news analysis id
 Rules:
 
 - The requested time must be in the future.
-- Store UTC and display Asia/Kolkata.
+- Accept timezone-aware ISO-8601 in UTC or with an explicit offset such as `+05:30`, then store UTC.
+- Display automation timestamps in Asia/Kolkata with the `IST` timezone label.
 - Enforce a minimum delay to prevent rapid loops.
-- Deduplicate identical pending runs.
-- Limit the number of agent-created runs per day.
+- Reuse an earlier pending review instead of creating another.
+- A follow-up must occur before the next fixed review.
+- A follow-up run cannot schedule another follow-up.
+- Limit agent follow-ups to three per Asia/Kolkata calendar day.
 - A scheduled run cannot bypass the normal session and account controls.
 
 The more conventional tool name would be `schedule_next_agent_run`, but this draft retains the requested name until the API naming is finalized.
@@ -823,6 +826,7 @@ The more conventional tool name would be `schedule_next_agent_run`, but this dra
 ## 10. Agent run schedule
 
 The agent runs from fixed session triggers and its own approved follow-up triggers.
+The scheduler stores the upcoming fixed reviews ahead of time. This makes them visible to the agent, prevents overlap with follow-ups, and avoids missing a review during a short restart.
 
 ### Proposed session triggers
 
@@ -920,7 +924,7 @@ Execute and monitor
 3. One agent run can select at most one strategy.
 4. The default 50% account policy supports two reserved or active allocations. Other percentages derive their limit from the same rule.
 5. Every hold-to-expiry strategy starts with a five-minute buffer.
-6. Agent follow-ups require at least five minutes and are limited to 12 runs per day.
+6. Agent follow-ups require at least five minutes, must occur before the next fixed review, cannot chain, and are limited to three per day.
 7. The first fixed reviews are Asia, London, and New York. No extra India-time review is enabled initially.
 8. The AI chooses the strategy without user-configured signal thresholds.
 
