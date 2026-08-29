@@ -90,12 +90,21 @@ class FakeDeltaClient:
         self.closed = False
 
     async def open_orders(self, product_ids: list[int] | None = None) -> dict:
-        assert product_ids == [101]
+        assert product_ids in (None, [101])
         return {"success": True, "result": []}
 
-    async def fills(self, product_ids: list[int], start_time: int | None = None) -> dict:
+    async def positions(self) -> dict:
+        return {"success": True, "result": [{"product_id": 101, "size": str(self.position_size)}]}
+
+    async def fills(
+        self,
+        product_ids: list[int] | None = None,
+        start_time: int | None = None,
+        after: str | None = None,
+    ) -> dict:
         assert product_ids == [101]
         assert start_time is not None
+        assert after is None
         return {
             "success": True,
             "result": [{"order_id": "1001", "size": "1.0", "price": "100", "commission": "0"}],
@@ -116,6 +125,181 @@ class FakeDeltaClient:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class SettlementDB:
+    def __init__(self) -> None:
+        self.strategy = {
+            "id": "expired-12345678",
+            "user_id": "user-1",
+            "name": "Expired strategy",
+            "status": "attention",
+            "entry_execution_at": "2026-08-28T00:00:00Z",
+            "exit_execution_at": None,
+            "risk_state": {},
+            "result_json": {},
+        }
+        self.executions = [
+            {
+                "id": "entry-execution",
+                "strategy_id": self.strategy["id"],
+                "kind": "entry",
+                "status": "completed",
+                "error": None,
+                "started_at": "2026-08-28T00:00:00Z",
+                "completed_at": "2026-08-28T00:00:01Z",
+            }
+        ]
+        self.orders = [
+            {
+                "id": "entry-order",
+                "execution_id": "entry-execution",
+                "leg_id": "leg-1",
+                "delta_order_id": "1001",
+                "client_order_id": "entry-client",
+                "product_id": 101,
+                "product_symbol": "C-BTC-65000-280826",
+                "side": "sell",
+                "size": 1,
+                "filled_size": "1",
+                "average_fill_price": "100",
+                "commission": "0",
+                "contract_value": "0.001",
+                "state": "closed",
+                "created_at": "2026-08-28T00:00:01Z",
+            }
+        ]
+        self.release_count = 0
+
+    async def select(self, table: str, query: dict) -> list[dict]:
+        if table == "strategies":
+            return [deepcopy(self.strategy)]
+        if table == "executions":
+            rows = self.executions
+            if query.get("kind") == "eq.entry":
+                rows = [row for row in rows if row["kind"] == "entry"]
+            return deepcopy(rows)
+        if table == "execution_orders":
+            if query.get("client_order_id"):
+                ids = str(query["client_order_id"]).removeprefix("in.(").removesuffix(")").split(",")
+                return [
+                    {"client_order_id": row["client_order_id"], "execution_id": row["execution_id"]}
+                    for row in self.orders
+                    if row["client_order_id"] in ids
+                ]
+            execution_filter = str(query.get("execution_id") or "")
+            ids = execution_filter.removeprefix("in.(").removesuffix(")").split(",")
+            return deepcopy([row for row in self.orders if row["execution_id"] in ids])
+        raise AssertionError(f"Unexpected select: {table} {query}")
+
+    async def insert(self, table: str, value: dict) -> list[dict]:
+        if table == "executions":
+            row = {
+                "id": f"exit-execution-{len(self.executions)}",
+                "started_at": "2026-08-28T12:00:00Z",
+                "completed_at": None,
+                "error": None,
+                **deepcopy(value),
+            }
+            self.executions.append(row)
+            return [deepcopy(row)]
+        if table == "execution_orders":
+            row = {
+                "id": f"settlement-order-{len(self.orders)}",
+                "created_at": "2026-08-28T12:00:00Z",
+                **deepcopy(value),
+            }
+            self.orders.append(row)
+            return [deepcopy(row)]
+        raise AssertionError(f"Unexpected insert: {table} {value}")
+
+    async def update(self, table: str, value: dict, query: dict) -> list[dict]:
+        if table == "strategies":
+            self.strategy.update(deepcopy(value))
+            return [{"id": self.strategy["id"]}]
+        if table == "executions":
+            execution_id = str(query["id"]).removeprefix("eq.")
+            for execution in self.executions:
+                if execution["id"] == execution_id:
+                    execution.update(deepcopy(value))
+                    return [{"id": execution_id}]
+            return []
+        if table == "execution_orders":
+            return [{"id": "entry-order"}]
+        raise AssertionError(f"Unexpected update: {table} {value}")
+
+    async def rpc(self, function: str, payload: dict) -> bool:
+        assert function == "release_strategy_capital_slot"
+        self.release_count += 1
+        return True
+
+
+class ExpiredDeltaClient:
+    def __init__(
+        self,
+        settlement: bool = True,
+        settlement_size: str = "1",
+        settlement_commission: str = "0",
+    ) -> None:
+        self.settlement = settlement
+        self.settlement_size = settlement_size
+        self.settlement_commission = settlement_commission
+        self.placed_orders: list[dict] = []
+
+    async def positions(self) -> dict:
+        return {"success": True, "result": []}
+
+    async def open_orders(self, product_ids: list[int] | None = None) -> dict:
+        return {"success": True, "result": []}
+
+    async def position(self, product_id: int) -> dict:
+        raise AppError(400, "Invalid contract", "invalid_contract")
+
+    async def fills(
+        self,
+        product_ids: list[int] | None = None,
+        start_time: int | None = None,
+        after: str | None = None,
+    ) -> dict:
+        if product_ids:
+            raise AppError(400, "Invalid contract", "invalid_contract")
+        result = [
+            {
+                "id": 1,
+                "order_id": "1001",
+                "fill_type": "normal",
+                "product_id": 101,
+                "product_symbol": "C-BTC-65000-280826",
+                "side": "sell",
+                "size": "1",
+                "price": "100",
+                "commission": "0",
+                "created_at": "2026-08-28T00:00:01Z",
+            }
+        ]
+        if self.settlement:
+            result.append(
+                {
+                    "id": 2,
+                    "order_id": "settlement-uuid",
+                    "fill_type": "settlement",
+                    "product_id": 101,
+                    "product_symbol": "C-BTC-65000-280826",
+                    "side": "buy",
+                    "size": self.settlement_size,
+                    "price": "200",
+                    "commission": self.settlement_commission,
+                    "created_at": "2026-08-28T12:00:00Z",
+                }
+            )
+        return {"success": True, "result": result, "meta": {"after": None}}
+
+    async def place_order(self, order: dict) -> dict:
+        self.placed_orders.append(deepcopy(order))
+        raise AssertionError("An expired contract must never receive a close order")
+
+    async def close(self) -> None:
+        return None
 
 
 def settings(**overrides):
@@ -262,6 +446,116 @@ async def test_unconfirmed_exit_is_attention_and_remains_retryable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_expired_flat_strategy_records_settlement_and_releases_capital() -> None:
+    db = SettlementDB()
+    delta = ExpiredDeltaClient(settlement=True)
+    engine = TradingEngine(db, settings())
+
+    result = await engine.reconcile_run_if_flat(db.strategy, delta)  # type: ignore[arg-type]
+
+    assert result is not None
+    assert result["closureReason"] == "exchange_settlement"
+    assert db.strategy["status"] == "completed"
+    assert db.strategy["risk_state"]["exposureStatus"] == "flat"
+    assert db.strategy["result_json"]["realizedPnl"] == "-0.100"
+    assert db.strategy["exit_execution_at"] == "2026-08-28T12:00:00Z"
+    assert db.release_count == 1
+    assert delta.placed_orders == []
+    assert len([order for order in db.orders if order["leg_id"] == "settlement"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_expiry_reconciliation_is_idempotent() -> None:
+    db = SettlementDB()
+    delta = ExpiredDeltaClient(settlement=True)
+    engine = TradingEngine(db, settings())
+
+    await engine.reconcile_run_if_flat(db.strategy, delta)  # type: ignore[arg-type]
+    await engine.reconcile_run_if_flat(db.strategy, delta)  # type: ignore[arg-type]
+
+    assert len([execution for execution in db.executions if execution["kind"] == "exit"]) == 1
+    assert len([order for order in db.orders if order["leg_id"] == "settlement"]) == 1
+    assert db.strategy["result_json"]["realizedPnl"] == "-0.100"
+
+
+@pytest.mark.asyncio
+async def test_settlement_fill_is_capped_to_the_strategy_owned_size() -> None:
+    db = SettlementDB()
+    delta = ExpiredDeltaClient(settlement=True, settlement_size="2", settlement_commission="2")
+    engine = TradingEngine(db, settings())
+
+    await engine.reconcile_run_if_flat(db.strategy, delta)  # type: ignore[arg-type]
+
+    settlement_order = next(order for order in db.orders if order["leg_id"] == "settlement")
+    assert settlement_order["size"] == 1
+    assert settlement_order["commission"] == "1"
+    assert db.strategy["result_json"]["realizedPnl"] == "-1.100"
+
+
+@pytest.mark.asyncio
+async def test_confirmed_flat_strategy_releases_slot_when_settlement_is_unavailable() -> None:
+    db = SettlementDB()
+    delta = ExpiredDeltaClient(settlement=False)
+    engine = TradingEngine(db, settings())
+
+    result = await engine.reconcile_run_if_flat(db.strategy, delta)  # type: ignore[arg-type]
+
+    assert result is not None
+    assert result["closureReason"] == "exchange_flat"
+    assert db.strategy["status"] == "attention"
+    assert db.strategy["risk_state"]["exposureStatus"] == "flat"
+    assert db.release_count == 1
+    assert delta.placed_orders == []
+
+
+@pytest.mark.asyncio
+async def test_expired_product_catalogue_recovers_historical_contract_value() -> None:
+    class ProductClient:
+        product_list_calls = 0
+
+        async def product(self, symbol: str) -> dict:
+            raise AppError(400, "Invalid contract", "invalid_contract")
+
+        async def products(self, query: dict) -> dict:
+            self.product_list_calls += 1
+            assert query["states"] == "expired,settled"
+            return {
+                "success": True,
+                "result": [{"symbol": "C-BTC-65000-280826", "contract_value": "0.001"}],
+                "meta": {"after": None},
+            }
+
+    client = ProductClient()
+    engine = TradingEngine(SettlementDB(), settings())  # type: ignore[arg-type]
+
+    first = await engine.contract_value(client, "C-BTC-65000-280826")  # type: ignore[arg-type]
+    second = await engine.contract_value(client, "C-BTC-65000-280826")  # type: ignore[arg-type]
+
+    assert first == Decimal("0.001")
+    assert second == first
+    assert client.product_list_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_exchange_snapshot_failure_never_releases_capital() -> None:
+    class UnavailableDeltaClient(ExpiredDeltaClient):
+        async def positions(self) -> dict:
+            raise AppError(502, "Delta Exchange is unreachable", "delta_unreachable")
+
+    db = SettlementDB()
+    delta = UnavailableDeltaClient()
+    engine = TradingEngine(db, settings())
+
+    with pytest.raises(AppError) as raised:
+        await engine.reconcile_run_if_flat(db.strategy, delta)  # type: ignore[arg-type]
+
+    assert raised.value.code == "delta_unreachable"
+    assert db.strategy["status"] == "attention"
+    assert db.strategy["risk_state"] == {}
+    assert db.release_count == 0
+
+
+@pytest.mark.asyncio
 async def test_open_orders_uses_documented_states_filter() -> None:
     client = object.__new__(DeltaClient)
     captured: dict = {}
@@ -275,6 +569,7 @@ async def test_open_orders_uses_documented_states_filter() -> None:
 
     assert captured["query"]["states"] == "open,pending"
     assert captured["query"]["product_ids"] == "101,202"
+    assert captured["query"]["page_size"] == 50
     assert "state" not in captured["query"]
 
 
