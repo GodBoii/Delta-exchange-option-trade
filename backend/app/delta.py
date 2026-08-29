@@ -79,7 +79,7 @@ class DeltaClient:
             query={
                 "product_ids": ",".join(str(product_id) for product_id in product_ids) if product_ids else None,
                 "states": "open,pending",
-                "page_size": 100,
+                "page_size": 50,
             },
             authenticated=True,
         )
@@ -92,14 +92,20 @@ class DeltaClient:
             "GET", "/v2/positions", query={"product_id": product_id}, authenticated=True
         )
 
-    async def fills(self, product_ids: list[int], start_time: int | None = None) -> dict[str, Any]:
+    async def fills(
+        self,
+        product_ids: list[int] | None = None,
+        start_time: int | None = None,
+        after: str | None = None,
+    ) -> dict[str, Any]:
         return await self.request(
             "GET",
             "/v2/fills",
             query={
-                "product_ids": ",".join(str(product_id) for product_id in product_ids),
+                "product_ids": ",".join(str(product_id) for product_id in product_ids) if product_ids else None,
                 "start_time": start_time,
-                "page_size": 100,
+                "after": after,
+                "page_size": 50,
             },
             authenticated=True,
         )
