@@ -74,7 +74,7 @@ supabase/migrations/009_shared_default_strategies.sql
 
 Migration `009` replaces the per-account copies of the eight built-in strategies with one shared, read-only set. Historical runs and automation proposals are relinked before the duplicate rows are removed. New user-created strategies remain private to their account.
 
-Then apply `010_account_capital_policy.sql` and `011_strategy_slot_reconciliation.sql` in order. Migration `011` releases slots for terminal runs, repairs terminal slots left by older code, and prevents a deleted run from leaving an occupied allocation.
+Then apply migrations `010` through `013` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, and `013` serializes automation runs per account and removes redundant follow-ups.
 
 ### Apply the account phone-number migration
 
