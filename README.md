@@ -11,6 +11,7 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 - **Trading API and scheduler:** Python FastAPI in the `Delta-exchange` container, published through Cloudflare Tunnel at `https://api.tradecognition.online`.
 - **BTC spot analysis:** A separate read-only FastAPI service in the `Binace` container, published through the same tunnel at `https://market-api.tradecognition.online`. It never places orders.
 - **News analysis:** Agno and OpenRouter run only in the private `news-analyzer` container. Agno stores sessions directly in Supabase PostgreSQL through `PostgresDb`; the trading API is only an authenticated gateway.
+- **Realtime UI invalidation:** Convex carries small authenticated change signals for automation and strategy status. Supabase remains authoritative for every trade, execution, setting, and report.
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
@@ -190,6 +191,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 NEXT_PUBLIC_SITE_URL=https://www.tradecognition.online
 NEXT_PUBLIC_API_URL=https://api.tradecognition.online
 NEXT_PUBLIC_BINANCE_API_URL=https://market-api.tradecognition.online
+NEXT_PUBLIC_CONVEX_URL=https://your-production-deployment.convex.cloud
 ```
 
 Do not add `SUPABASE_SERVICE_ROLE_KEY`, Delta API secrets, or the Cloudflare tunnel token to Vercel. Redeploy the production deployment after changing any `NEXT_PUBLIC_` value because Next.js embeds these values during the build.
@@ -233,6 +235,8 @@ Required backend variables are documented in `backend/.env.example`. `FRONTEND_O
 https://tradecognition.online
 https://www.tradecognition.online
 ```
+
+Set `CONVEX_URL` to the same production deployment and give `CONVEX_SYNC_SECRET` the same random value in Docker and that Convex deployment. `CONVEX_DEPLOY_KEY` belongs only in the deployment pipeline.
 
 Run exactly one `Delta-exchange` container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design. `Binace` is isolated from Supabase and Delta credentials and only accesses public market endpoints. `news-analyzer` owns Agno, OpenRouter, and `SUPABASE_DB_URL`; it does not import or call Delta or Binance.
 
