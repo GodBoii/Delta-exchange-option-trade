@@ -36,6 +36,7 @@ export type StrategyRun = {
   entryExecutedAt?: string | null;
   exitExecutedAt?: string | null;
   lastError?: string | null;
+  exposureStatus?: "open" | "flat" | "unknown" | null;
   createdAt: string;
 };
 
@@ -89,6 +90,9 @@ export type RunSettlement = {
   closedLots?: string;
   fullyClosed?: boolean;
   settledAt?: string;
+  closureReason?: "scheduled_exit" | "exchange_settlement" | "exchange_flat";
+  reconciledAt?: string;
+  exchangeSettlementFillIds?: string[];
   bySymbol?: {
     symbol: string;
     entryPremium: string;
