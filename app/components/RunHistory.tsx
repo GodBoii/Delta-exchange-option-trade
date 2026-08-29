@@ -5,6 +5,7 @@ import {
   Activity, AlertTriangle, Ban, CircleStop, Info, RefreshCw, Trash2
 } from "@/app/components/icons";
 import { requestJson } from "@/lib/api";
+import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import {
   EM_DASH, decimal, errorMessage, formatDateTime, formatDuration, formatTimestamp, relativeTime,
   signedDecimal, titleCase, toNumber
@@ -17,6 +18,7 @@ import {
 } from "@/app/components/ui";
 
 const AUTO_REFRESH_MS = 30_000;
+const REALTIME_FALLBACK_MS = 300_000;
 
 type FilterId = "all" | "pending" | "live" | "attention" | "closed";
 type ActionKind = "cancel" | "exit" | "delete";
@@ -88,6 +90,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
    */
   onAttentionChange?: (count: number) => void;
 }) {
+  const { automation: automationRevision, strategies: strategyRevision } = useRealtimeSignals();
   const [runs, setRuns] = useState<StrategyRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterId>("all");
@@ -114,9 +117,16 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => { void load(true); }, AUTO_REFRESH_MS);
+    if (automationRevision || strategyRevision) void load(true);
+  }, [automationRevision, load, strategyRevision]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => { void load(true); },
+      automationRevision || strategyRevision ? REALTIME_FALLBACK_MS : AUTO_REFRESH_MS
+    );
     return () => window.clearInterval(timer);
-  }, [load]);
+  }, [automationRevision, load, strategyRevision]);
 
   const counts = useMemo(() => {
     const result = {} as Record<FilterId, number>;
