@@ -4,15 +4,15 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
-from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from .auth import current_account, require_user
+from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
 from .capital import percentage_concurrency_limit
 from .engine import TradingEngine, iso_now
 from .errors import AppError
@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automation", tags=["automation"])
 news_analyzer_url = "http://news-analyzer:8002"
 MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
+FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
+FIXED_RUN_CATCH_UP = timedelta(minutes=5)
+FIXED_RUN_SYNC_SECONDS = 60.0
+MAX_AUTOMATION_RUN_LATENESS = timedelta(minutes=10)
+MAX_AUTOMATION_RUN_RUNTIME = timedelta(minutes=20)
+MAX_PARALLEL_AUTOMATION_RUNS = 3
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
@@ -54,9 +60,10 @@ async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
 
 async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str, Any]:
     policy = await engine.capital_policy(user_id)
+    fixed = next_fixed_run(datetime.now(UTC))
     client = await engine.client_for_user(user_id)
     try:
-        orders, positions, active = await asyncio.gather(
+        orders, positions, active, upcoming_runs = await asyncio.gather(
             client.open_orders(),
             client.positions(),
             engine.db.select(
@@ -66,6 +73,17 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
                     "user_id": f"eq.{user_id}",
                     "status": "in.(scheduled,executing_entry,active,executing_exit,attention)",
                     "limit": "25",
+                },
+            ),
+            engine.db.select(
+                "automation_agent_runs",
+                {
+                    "select": "id,trigger,scheduled_for,reason,signals_to_inspect",
+                    "user_id": f"eq.{user_id}",
+                    "status": "eq.scheduled",
+                    "scheduled_for": f"gt.{iso_now()}",
+                    "order": "scheduled_for.asc",
+                    "limit": "5",
                 },
             ),
         )
@@ -102,6 +120,19 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
             for row in positions.get("result") or []
         ],
         "activeStrategies": active,
+        "nextFixedAgentRun": {
+            "trigger": fixed.trigger,
+            "scheduledForUtc": utc_text(fixed.scheduled_for),
+            "scheduledForIst": ist_text(fixed.scheduled_for),
+        },
+        "upcomingAgentRuns": [
+            {
+                **_pick(row, "id", "trigger", "reason", "signals_to_inspect"),
+                "scheduledForUtc": row["scheduled_for"],
+                "scheduledForIst": ist_text(datetime.fromisoformat(row["scheduled_for"].replace("Z", "+00:00"))),
+            }
+            for row in upcoming_runs
+        ],
         "maximumConcurrentStrategies": percentage_concurrency_limit(policy.allocation_mode) or "calculated_at_entry",
     }
 
@@ -113,12 +144,14 @@ async def execute_automation_run(
     user_id: str,
     run_id: str,
     session_id: str,
+    trigger: str,
     reason: str | None,
+    signals_to_inspect: list[str] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
         account_context = await build_account_context(engine, user_id)
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5)) as client:
             response = await client.post(
                 f"{news_analyzer_url}/v1/automation/analyze",
                 json={
@@ -126,7 +159,9 @@ async def execute_automation_run(
                     "agentRunId": run_id,
                     "sessionId": session_id,
                     "accountContext": account_context,
+                    "trigger": trigger,
                     "triggerReason": reason,
+                    "signalsToInspect": signals_to_inspect or [],
                 },
             )
         try:
@@ -153,7 +188,7 @@ async def execute_automation_run(
                 "tool_calls": payload.get("toolCalls") or [],
                 "error": None,
             },
-            {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}"},
+            {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": "eq.running"},
         )
         logger.info(
             "Automation run completed run_id=%s user_id=%s outcome=%s elapsed_ms=%d",
@@ -164,10 +199,47 @@ async def execute_automation_run(
         )
         return payload
     except Exception as error:
+        try:
+            recorded = await db.select(
+                "automation_agent_runs",
+                {
+                    "select": "outcome,market_snapshot_id",
+                    "id": f"eq.{run_id}",
+                    "user_id": f"eq.{user_id}",
+                    "limit": "1",
+                },
+            )
+        except Exception:
+            logger.exception("Could not recover automation outcome run_id=%s", run_id)
+            recorded = []
+        if recorded and recorded[0].get("outcome"):
+            report = (
+                "## Decision\n\nThe terminal action was recorded, "
+                "but the model provider did not return the final report."
+            )
+            payload = {
+                "outcome": recorded[0]["outcome"],
+                "marketSnapshotId": recorded[0].get("market_snapshot_id"),
+                "report": report,
+                "memberResponses": [],
+                "toolCalls": [],
+            }
+            await db.update(
+                "automation_agent_runs",
+                {
+                    "status": "completed",
+                    "completed_at": iso_now(),
+                    "report_markdown": report,
+                    "error": "Final report unavailable",
+                },
+                {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": "eq.running"},
+            )
+            logger.warning("Recovered committed automation outcome run_id=%s outcome=%s", run_id, payload["outcome"])
+            return payload
         await db.update(
             "automation_agent_runs",
             {"status": "failed", "completed_at": iso_now(), "error": str(error)},
-            {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}"},
+            {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": "eq.running"},
         )
         raise
 
@@ -359,9 +431,8 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
         {
             "user_id": user_id,
             "trigger": "manual",
-            "status": "running",
+            "status": "scheduled",
             "scheduled_for": iso_now(),
-            "started_at": iso_now(),
             "model_id": MODEL_ID,
             "reason": body.reason or "Manual automation review",
         },
@@ -369,13 +440,22 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     if not rows:
         raise AppError(500, "Could not create the automation run", "automation_run_create_failed")
     run_id = str(rows[0]["id"])
+    claimed = await db.rpc("claim_automation_agent_run", {"p_user_id": user_id, "p_run_id": run_id})
+    if not claimed:
+        await db.update(
+            "automation_agent_runs",
+            {"status": "cancelled", "completed_at": iso_now(), "error": "Another automation run is active"},
+            {"id": f"eq.{run_id}", "status": "eq.scheduled"},
+        )
+        raise AppError(409, "Another automation run is already active", "automation_run_active")
     payload = await execute_automation_run(
         db=db,
         engine=engine,
         user_id=user_id,
         run_id=run_id,
         session_id=f"run-{run_id}",
-        reason=body.reason,
+        trigger="manual",
+        reason=body.reason or "Manual automation review",
     )
     return {"success": True, **payload}
 
@@ -387,6 +467,8 @@ class AutomationScheduler:
         self.poll_seconds = max(10.0, poll_seconds)
         self.stop_event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
+        self.running_tasks: set[asyncio.Task[None]] = set()
+        self.last_fixed_sync = 0.0
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="automation-agent-scheduler")
@@ -396,12 +478,18 @@ class AutomationScheduler:
         if self.task:
             with suppress(TimeoutError):
                 await asyncio.wait_for(self.task, timeout=5)
+        if self.running_tasks:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.gather(*self.running_tasks), timeout=5)
 
     async def run(self) -> None:
         logger.info("Automation scheduler started; polling every %.1f seconds", self.poll_seconds)
         while not self.stop_event.is_set():
             try:
-                await self._enqueue_session_reviews()
+                monotonic_now = time.monotonic()
+                if monotonic_now - self.last_fixed_sync >= FIXED_RUN_SYNC_SECONDS:
+                    await self._enqueue_session_reviews()
+                    self.last_fixed_sync = monotonic_now
                 await self._process_due_runs()
             except Exception:
                 logger.exception("Automation scheduler polling cycle failed")
@@ -417,33 +505,34 @@ class AutomationScheduler:
                 "enabled": "eq.true",
             },
         )
-        sessions = (
-            ("asia_session", ZoneInfo("Asia/Tokyo"), 9, 0),
-            ("london_session", ZoneInfo("Europe/London"), 8, 0),
-            ("new_york_session", ZoneInfo("America/New_York"), 9, 30),
-        )
-        for row in settings:
-            for trigger, zone, hour, minute in sessions:
-                local = now.astimezone(zone)
-                if local.hour != hour or local.minute != minute:
-                    continue
-                run_key = f"{trigger}:{local.date().isoformat()}"
-                await self.db.upsert(
-                    "automation_agent_runs",
-                    {
-                        "user_id": row["user_id"],
-                        "run_key": run_key,
-                        "trigger": trigger,
-                        "status": "scheduled",
-                        "scheduled_for": now.isoformat(),
-                        "model_id": MODEL_ID,
-                        "reason": f"Fixed {trigger.replace('_', ' ')} review",
-                    },
-                    on_conflict="user_id,run_key",
-                    ignore_duplicates=True,
-                )
+        fixed_runs = fixed_runs_between(now - FIXED_RUN_CATCH_UP, now + FIXED_RUN_LOOKAHEAD)
+        payload = [
+            {
+                "user_id": row["user_id"],
+                "run_key": run.run_key,
+                "trigger": run.trigger,
+                "status": "scheduled",
+                "scheduled_for": utc_text(run.scheduled_for),
+                "model_id": MODEL_ID,
+                "reason": f"Fixed {run.trigger.replace('_', ' ')} review",
+            }
+            for row in settings
+            for run in fixed_runs
+        ]
+        if payload:
+            await self.db.rpc("ensure_automation_fixed_runs", {"p_runs": payload})
+            await self.db.rpc("cancel_redundant_automation_followups", {})
 
     async def _process_due_runs(self) -> None:
+        stale_before = utc_text(datetime.now(UTC) - MAX_AUTOMATION_RUN_RUNTIME)
+        await self.db.update(
+            "automation_agent_runs",
+            {"status": "failed", "completed_at": iso_now(), "error": "Automation run exceeded its time limit"},
+            {"status": "eq.running", "started_at": f"lt.{stale_before}"},
+        )
+        available = MAX_PARALLEL_AUTOMATION_RUNS - len(self.running_tasks)
+        if available <= 0:
+            return
         enabled_rows = await self.db.select(
             "automation_settings",
             {"select": "user_id", "enabled": "eq.true"},
@@ -454,27 +543,37 @@ class AutomationScheduler:
         due = await self.db.select(
             "automation_agent_runs",
             {
-                "select": "id,user_id,reason",
+                "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for",
                 "status": "eq.scheduled",
                 "scheduled_for": f"lte.{iso_now()}",
                 "order": "scheduled_for.asc",
-                "limit": "3",
+                "limit": str(max(12, available * 4)),
             },
         )
-        claimed: list[dict[str, Any]] = []
+        now = datetime.now(UTC)
         for row in due:
+            if available <= 0:
+                break
             if str(row["user_id"]) not in enabled_users:
                 continue
-            rows = await self.db.update(
-                "automation_agent_runs",
-                {"status": "running", "started_at": iso_now()},
-                {"id": f"eq.{row['id']}", "status": "eq.scheduled"},
+            scheduled_for = datetime.fromisoformat(str(row["scheduled_for"]).replace("Z", "+00:00"))
+            if now - scheduled_for > MAX_AUTOMATION_RUN_LATENESS:
+                await self.db.update(
+                    "automation_agent_runs",
+                    {"status": "cancelled", "completed_at": iso_now(), "error": "Scheduled review became stale"},
+                    {"id": f"eq.{row['id']}", "status": "eq.scheduled"},
+                )
+                continue
+            claimed = await self.db.rpc(
+                "claim_automation_agent_run",
+                {"p_user_id": str(row["user_id"]), "p_run_id": str(row["id"])},
             )
-            if rows:
-                claimed.append(row)
-        if not claimed:
-            return
-        await asyncio.gather(*(self._execute(row) for row in claimed))
+            if not claimed:
+                continue
+            task = asyncio.create_task(self._execute(claimed[0]), name=f"automation-run-{row['id']}")
+            self.running_tasks.add(task)
+            task.add_done_callback(self.running_tasks.discard)
+            available -= 1
 
     async def _execute(self, row: dict[str, Any]) -> None:
         try:
@@ -484,7 +583,9 @@ class AutomationScheduler:
                 user_id=str(row["user_id"]),
                 run_id=str(row["id"]),
                 session_id=f"scheduled-{row['id']}",
+                trigger=str(row["trigger"]),
                 reason=row.get("reason"),
+                signals_to_inspect=row.get("signals_to_inspect") or [],
             )
         except Exception:
             logger.exception("Scheduled automation run failed run_id=%s", row["id"])
