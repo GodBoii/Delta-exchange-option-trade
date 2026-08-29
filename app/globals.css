@@ -4940,6 +4940,11 @@ time,
   border-radius: var(--r-md);
   background: var(--canvas);
   width: max-content;
+  /* `min-width: 0` is load-bearing, not defensive. As a grid item the bar's
+     minimum contribution would otherwise be the summed width of every nowrap
+     tab, which sizes the whole column past the viewport and clips the panel,
+     the callout and the heading with it on a phone. */
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
 }
@@ -6759,12 +6764,41 @@ time,
   .portfolio .tile-note { font-size: 11px; }
   .portfolio-footer .toggle { width: 100%; }
 
+  /* A phone cannot show five status filters at once, so the bar becomes a
+     swipeable strip: full width, no visible scrollbar, and it keeps its own
+     inertia rather than dragging the page sideways. */
   .filter-bar {
     width: 100%;
+    min-width: 0;
     scrollbar-width: none;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+    scroll-padding-inline: var(--s-2);
   }
 
   .filter-bar::-webkit-scrollbar { display: none; }
+  /* The tabs keep their own width inside the strip: a squashed count badge is
+     worse than a swipe, and the travelling pill needs stable measurements. */
+  .filter-tab { flex: none; min-height: 40px; scroll-snap-align: center; }
+
+  /* Every stacked surface is a grid item, and a grid item's automatic minimum
+     size is its content, so one wide table or nowrap strip would size the whole
+     column past the viewport and clip its siblings. Pinning the minimum to zero
+     keeps the overflow inside the element that owns it. */
+  .workspace > *,
+  .runs > *,
+  .runs > .t-reveal > *,
+  .portfolio > *,
+  .portfolio > .t-reveal > *,
+  .builder > *,
+  .market-page > *,
+  .panel > *,
+  .dialog-body > *,
+  .detail-section > * { min-width: 0; }
+
+  /* A row header is the card's title wherever it sits in the source order, so a
+     table whose identifying column is not the first still reads top-down. */
+  .mobile-card-table tbody th[scope="row"] { order: -1; }
   .row-menu-trigger { width: 44px; height: 44px; }
   .row-menu [role="menuitem"] { min-height: 44px; }
   .candlestick-chart,

@@ -493,8 +493,8 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                   <Tile label="Lots closed" value={decimal(settlement.closedLots, 0)} />
                 </div>
                 {Boolean(settlement.bySymbol?.length) && (
-                  <div className="table-scroll">
-                    <table className="data-table detail-table">
+                  <div className="table-scroll mobile-card-list">
+                    <table className="data-table detail-table mobile-card-table">
                       <thead>
                         <tr>
                           <th scope="col">Contract</th>
@@ -509,11 +509,14 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                         {settlement.bySymbol?.map(item => (
                           <tr key={item.symbol}>
                             <th scope="row" className="mono">{item.symbol}</th>
-                            <td>{signedDecimal(item.entryPremium)}</td>
-                            <td>{signedDecimal(item.exitPremium)}</td>
-                            <td>{decimal(item.commission)}</td>
-                            <td>{decimal(item.entryLots, 0)} / {decimal(item.exitLots, 0)}</td>
-                            <td className={pnlTone(toNumber(item.realizedPnl)) === "positive" ? "up" : pnlTone(toNumber(item.realizedPnl)) === "negative" ? "down" : undefined}>
+                            <td data-label="Entry premium">{signedDecimal(item.entryPremium)}</td>
+                            <td data-label="Exit premium">{signedDecimal(item.exitPremium)}</td>
+                            <td data-label="Commission">{decimal(item.commission)}</td>
+                            <td data-label="Lots in / out">{decimal(item.entryLots, 0)} / {decimal(item.exitLots, 0)}</td>
+                            <td
+                              data-label="Realized"
+                              className={pnlTone(toNumber(item.realizedPnl)) === "positive" ? "up" : pnlTone(toNumber(item.realizedPnl)) === "negative" ? "down" : undefined}
+                            >
                               {signedDecimal(item.realizedPnl)}
                             </td>
                           </tr>
@@ -535,8 +538,8 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
           <DetailSection title="Criteria" meta={`${legs.length} ${legs.length === 1 ? "leg" : "legs"}`}>
             <DetailList items={criteria} />
             {Boolean(legs.length) && (
-              <div className="table-scroll">
-                <table className="data-table detail-table">
+              <div className="table-scroll mobile-card-list">
+                <table className="data-table detail-table mobile-card-table">
                   <thead>
                     <tr>
                       <th scope="col">Leg</th>
@@ -555,22 +558,22 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                     {legs.map((leg, index) => (
                       <tr key={leg.id}>
                         <th scope="row">Leg {index + 1}</th>
-                        <td>{titleCase(leg.position)} {titleCase(leg.optionType)}</td>
-                        <td>
+                        <td data-label="Side">{titleCase(leg.position)} {titleCase(leg.optionType)}</td>
+                        <td data-label="Strike">
                           {leg.strikeMode === "exact"
                             ? decimal(leg.exactStrike, 0)
                             : `${leg.strikeMode.toUpperCase()}${leg.strikeSteps ? ` +${leg.strikeSteps}` : ""}`}
                         </td>
-                        <td>{leg.expiry}</td>
-                        <td>{leg.lots}</td>
-                        <td>
+                        <td data-label="Expiry">{leg.expiry}</td>
+                        <td data-label="Lots">{leg.lots}</td>
+                        <td data-label="Order">
                           {titleCase(leg.orderType.replace("_order", ""))}
                           {leg.limitPrice ? ` @ ${decimal(leg.limitPrice)}` : ""}
                         </td>
-                        <td>{leg.targetProfit ? decimal(leg.targetProfit) : EM_DASH}</td>
-                        <td>{leg.stopLoss ? decimal(leg.stopLoss) : EM_DASH}</td>
-                        <td>{leg.trailStop ? decimal(leg.trailStop) : EM_DASH}</td>
-                        <td>{leg.reentryOnTarget || leg.reentryOnStop ? `${leg.reentryOnTarget} / ${leg.reentryOnStop}` : EM_DASH}</td>
+                        <td data-label="Target">{leg.targetProfit ? decimal(leg.targetProfit) : EM_DASH}</td>
+                        <td data-label="Stop">{leg.stopLoss ? decimal(leg.stopLoss) : EM_DASH}</td>
+                        <td data-label="Trail">{leg.trailStop ? decimal(leg.trailStop) : EM_DASH}</td>
+                        <td data-label="Re-entry">{leg.reentryOnTarget || leg.reentryOnStop ? `${leg.reentryOnTarget} / ${leg.reentryOnStop}` : EM_DASH}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -581,8 +584,8 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
 
           {Boolean(orders.length) && (
             <DetailSection title="Fills and execution quality" meta="Positive slippage is adverse">
-              <div className="table-scroll">
-                <table className="data-table detail-table">
+              <div className="table-scroll mobile-card-list">
+                <table className="data-table detail-table mobile-card-table">
                   <thead>
                     <tr>
                       <th scope="col">Phase</th>
@@ -604,36 +607,39 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                       const slippage = toNumber(order.slippage);
                       return (
                         <tr key={order.id}>
-                          <td>{titleCase(order.kind ?? "entry")}</td>
+                          <td data-label="Phase">{titleCase(order.kind ?? "entry")}</td>
                           <th scope="row" className="mono">
                             <span className="cell-stack">
                               <span>{order.productSymbol ?? EM_DASH}</span>
                             </span>
                           </th>
-                          <td>{titleCase(order.side ?? "")}</td>
-                          <td>
+                          <td data-label="Side">{titleCase(order.side ?? "")}</td>
+                          <td data-label="Lots">
                             <span className="cell-stack">
                               <span>{decimal(order.filledSize, 0)} filled</span>
                               <small>{decimal(order.size, 0)} requested</small>
                             </span>
                           </td>
-                          <td>{decimal(order.averageFillPrice)}</td>
-                          <td>{decimal(order.referencePrice)}</td>
-                          <td className={slippage === null || slippage === 0 ? undefined : slippage > 0 ? "down" : "up"}>
+                          <td data-label="Avg fill">{decimal(order.averageFillPrice)}</td>
+                          <td data-label="Reference">{decimal(order.referencePrice)}</td>
+                          <td
+                            data-label="Slippage"
+                            className={slippage === null || slippage === 0 ? undefined : slippage > 0 ? "down" : "up"}
+                          >
                             <span className="cell-stack">
                               <span>{signedDecimal(order.slippage)}</span>
                               <small>{order.slippagePercent ? `${signedDecimal(order.slippagePercent, 3)}%` : EM_DASH}</small>
                             </span>
                           </td>
-                          <td>{decimal(order.commission)}</td>
-                          <td>
+                          <td data-label="Fees">{decimal(order.commission)}</td>
+                          <td data-label="Notional">
                             <span className="cell-stack">
                               <span>{value === null ? EM_DASH : decimal(value)}</span>
                               <small>lot {decimal(order.contractValue, 4)}</small>
                             </span>
                           </td>
-                          <td>{titleCase(order.state ?? "")}</td>
-                          <td>
+                          <td data-label="State">{titleCase(order.state ?? "")}</td>
+                          <td data-label="Placed">
                             <span className="cell-stack">
                               <span>{formatDateTime(order.createdAt)}</span>
                             </span>
