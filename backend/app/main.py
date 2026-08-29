@@ -337,7 +337,10 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
     rows = await request.app.state.db.select(
         "strategies",
         {
-            "select": ("id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,created_at"),
+            "select": (
+                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,"
+                "last_error,risk_state,created_at"
+            ),
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
             "limit": "100",
@@ -355,6 +358,7 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "entryExecutedAt": row["entry_execution_at"],
                 "exitExecutedAt": row["exit_execution_at"],
                 "lastError": row["last_error"],
+                "exposureStatus": (row.get("risk_state") or {}).get("exposureStatus"),
                 "createdAt": row["created_at"],
             }
             for row in rows
