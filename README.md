@@ -74,6 +74,8 @@ supabase/migrations/009_shared_default_strategies.sql
 
 Migration `009` replaces the per-account copies of the eight built-in strategies with one shared, read-only set. Historical runs and automation proposals are relinked before the duplicate rows are removed. New user-created strategies remain private to their account.
 
+Then apply `010_account_capital_policy.sql` and `011_strategy_slot_reconciliation.sql` in order. Migration `011` releases slots for terminal runs, repairs terminal slots left by older code, and prevents a deleted run from leaving an occupied allocation.
+
 ### Apply the account phone-number migration
 
 Open **Supabase Dashboard → SQL Editor**, paste the entire contents of:
@@ -246,7 +248,8 @@ Add the backend server's static public IP to the Delta API key allowlist. Vercel
 6. It resolves current option contracts and submits legs sequentially to Delta.
 7. At the configured exit time, it cancels any still-open recorded entry orders and sends reduce-only market orders for the recorded fills.
 8. It checks Delta's real-time per-product position endpoint and marks the strategy complete only after the reduction is confirmed.
-9. Every execution and order response is recorded in Supabase. Failed or unconfirmed exits remain `attention` and can be retried from Run history.
+9. After a restart, attention runs are reconciled against account positions and open orders. Expired contracts use Delta settlement fills instead of receiving another close order.
+10. Confirmed settlement records the closing cash flow and P&L, marks the run complete, and releases its capital slot. A confirmed-flat run with missing settlement data releases capital but stays in `attention` for reporting repair.
 
 The builder's **Schedule strategy** action stores a scheduled run; it does not place orders immediately. Use **Exit** in Run history to close a live or attention-required strategy early. The **Close** action on the Portfolio page closes the entire live position for one product after first cancelling that product's open orders. Both close actions use reduce-only market orders and verify the live position before reporting success.
 
