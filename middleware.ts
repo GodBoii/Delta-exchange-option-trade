@@ -21,6 +21,11 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+/**
+ * The service worker script and the manifest are fetched by the browser itself,
+ * outside any page, so refreshing a Supabase session on their behalf is work
+ * with no reader. They are excluded for the same reason static assets are.
+ */
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"]
 };
