@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from automation_agent.team import run_automation_team
+from automation_agent.tools import read_automation_state
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
 from news_agent.pipeline import run_news_pipeline
@@ -89,7 +90,11 @@ class AutomationAnalysisRequest(BaseModel):
     agentRunId: str = Field(pattern=r"^[A-Fa-f0-9-]{36}$")
     sessionId: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     accountContext: dict[str, Any]
+    trigger: str = Field(
+        pattern=r"^(manual|asia_session|london_session|new_york_session|agent_follow_up|activation_recheck)$"
+    )
     triggerReason: str | None = Field(default=None, max_length=1000)
+    signalsToInspect: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=10)
 
 
 def _stored_session_id(user_id: str, public_session_id: str) -> str:
@@ -354,7 +359,7 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
         trace_id,
         body.agentRunId,
         body.userId,
-        settings.model_id,
+        settings.automation_model_id,
     )
     try:
         result = run_automation_team(
@@ -363,15 +368,16 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
             agent_run_id=body.agentRunId,
             session_id=body.sessionId,
             account_context=body.accountContext,
+            trigger=body.trigger,
             trigger_reason=body.triggerReason,
+            signals_to_inspect=body.signalsToInspect,
         )
-        tool_names = [str(tool.get("name") or "") for tool in result.tool_calls]
-        if "select_strategy_and_time" in tool_names:
-            outcome = "strategy_selected"
-        elif "scheduled_next_agent_run" in tool_names:
-            outcome = "wait_and_run_again"
-        else:
-            outcome = "no_trade_for_current_window"
+        state = read_automation_state(
+            settings,
+            user_id=body.userId,
+            agent_run_id=body.agentRunId,
+        )
+        outcome = str(state.get("outcome") or "no_trade_for_current_window") if state else "no_trade_for_current_window"
         return {
             "success": True,
             "runId": result.run_id,
@@ -386,6 +392,38 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
             "elapsedMs": round((time.perf_counter() - started_at) * 1_000),
         }
     except Exception as exc:
+        try:
+            state = read_automation_state(
+                settings,
+                user_id=body.userId,
+                agent_run_id=body.agentRunId,
+            )
+        except Exception:
+            logger.exception("Could not recover automation state run_id=%s", body.agentRunId)
+            state = None
+        if state and state.get("outcome"):
+            logger.exception(
+                "Automation report failed after terminal action trace_id=%s run_id=%s outcome=%s",
+                trace_id,
+                body.agentRunId,
+                state["outcome"],
+            )
+            return {
+                "success": True,
+                "runId": None,
+                "sessionId": f"automation:{body.userId}:{body.sessionId}",
+                "agentRunId": body.agentRunId,
+                "model": settings.automation_model_id,
+                "outcome": state["outcome"],
+                "report": (
+                    "## Decision\n\nThe terminal action was recorded, "
+                    "but the model provider did not return the final report."
+                ),
+                "marketSnapshotId": state.get("market_snapshot_id"),
+                "memberResponses": [],
+                "toolCalls": [],
+                "elapsedMs": round((time.perf_counter() - started_at) * 1_000),
+            }
         logger.exception(
             "Automation analysis failed trace_id=%s run_id=%s elapsed_ms=%d",
             trace_id,
