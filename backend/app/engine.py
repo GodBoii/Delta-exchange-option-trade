@@ -22,6 +22,8 @@ from .strategy import (
 from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
+ATTENTION_RECONCILE_SECONDS = 30.0
+FLAT_REPORT_RECONCILE_SECONDS = 300.0
 
 # Columns added by migration 004. Execution must never fail because an audit
 # field is missing, so writes degrade to the pre-migration column set instead.
@@ -220,6 +222,7 @@ class TradingEngine:
         self.settings = settings
         self.contract_values: dict[str, Decimal] = {}
         self.product_specs: dict[str, dict[str, Any]] = {}
+        self.last_attention_reconcile = 0.0
 
     async def client_for_user(self, user_id: str) -> DeltaClient:
         credentials = await credentials_for_user(self.db, user_id)
@@ -379,12 +382,20 @@ class TradingEngine:
 
     async def account_exposure(self, client: DeltaClient) -> AccountExposure:
         positions_response, orders_response = await asyncio.gather(client.positions(), client.open_orders())
+        orders = list(orders_response.get("result") or [])
+        after = str((orders_response.get("meta") or {}).get("after") or "")
+        seen: set[str] = set()
+        while after and after not in seen:
+            seen.add(after)
+            orders_response = await client.open_orders(after=after)
+            orders.extend(orders_response.get("result") or [])
+            after = str((orders_response.get("meta") or {}).get("after") or "")
         positions = {
             int(item["product_id"]): decimal_value(item.get("size"))
             for item in positions_response.get("result") or []
             if item.get("product_id") is not None
         }
-        return AccountExposure(positions=positions, open_orders=tuple(orders_response.get("result") or []))
+        return AccountExposure(positions=positions, open_orders=tuple(orders))
 
     async def fills_since(
         self,
@@ -944,8 +955,38 @@ class TradingEngine:
 
     async def product_spec(self, client: DeltaClient, symbol: str) -> dict[str, Any]:
         if symbol not in self.product_specs:
-            response = await client.product(symbol)
-            self.product_specs[symbol] = response.get("result") or {}
+            try:
+                response = await client.product(symbol)
+                product = response.get("result") or {}
+            except AppError as error:
+                if error.code != "invalid_contract" and error.status != 404:
+                    raise
+                product = {}
+            if not product:
+                after: str | None = None
+                seen: set[str] = set()
+                while True:
+                    response = await client.products(
+                        {
+                            "contract_types": "call_options,put_options",
+                            "states": "expired,settled",
+                            "page_size": 100,
+                            "after": after,
+                        }
+                    )
+                    for item in response.get("result") or []:
+                        item_symbol = str(item.get("symbol") or "")
+                        if item_symbol:
+                            self.product_specs[item_symbol] = item
+                    if symbol in self.product_specs:
+                        return self.product_specs[symbol]
+                    next_after = str((response.get("meta") or {}).get("after") or "")
+                    if not next_after or next_after in seen:
+                        break
+                    seen.add(next_after)
+                    after = next_after
+                raise AppError(502, f"Product specification is unavailable for {symbol}", "product_spec_unavailable")
+            self.product_specs[symbol] = product
         return self.product_specs[symbol]
 
     async def run_executions(self, strategy_id: str) -> list[dict[str, Any]]:
@@ -1033,8 +1074,18 @@ class TradingEngine:
         if any(not value or value <= 0 for value in contract_values.values()):
             return None
 
+        remaining: dict[int, Decimal] = {}
+        for order in enriched:
+            product_id = int(order["product_id"])
+            filled = decimal_value(order.get("filled_size"))
+            if filled <= 0 and str(order.get("state")) == "closed":
+                filled = decimal_value(order.get("size"))
+            remaining[product_id] = remaining.get(product_id, Decimal("0")) + (
+                filled if order.get("side") == "buy" else -filled
+            )
+
         valid: list[tuple[dict[str, Any], int, str]] = []
-        for fill in fills:
+        for fill in sorted(fills, key=lambda item: (str(item.get("created_at") or ""), str(item.get("id") or ""))):
             size = decimal_value(fill.get("size"))
             side = str(fill.get("side") or "")
             product_id = int(fill.get("product_id") or 0)
@@ -1042,8 +1093,20 @@ class TradingEngine:
                 continue
             if product_id not in contract_values:
                 continue
-            valid.append((fill, int(size), settlement_client_order_id(strategy_id, fill)))
-        if not valid:
+            owned = remaining.get(product_id, Decimal("0"))
+            if owned == 0 or (owned > 0 and side != "sell") or (owned < 0 and side != "buy"):
+                continue
+            allocated = min(size, abs(owned))
+            commission = decimal_value(fill.get("commission")) * allocated / size
+            fill = {
+                **fill,
+                "exchange_size": str(size),
+                "size": str(allocated),
+                "commission": str(commission),
+            }
+            valid.append((fill, int(allocated), settlement_client_order_id(strategy_id, fill)))
+            remaining[product_id] = owned - allocated if owned > 0 else owned + allocated
+        if not valid or any(size != 0 for size in remaining.values()):
             return None
 
         client_ids = [client_id for _, _, client_id in valid]
@@ -1134,8 +1197,9 @@ class TradingEngine:
         row: dict[str, Any],
         client: DeltaClient,
         snapshot: AccountExposure | None = None,
+        entry_orders: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
-        entry_orders = await self.entry_orders(str(row["id"]))
+        entry_orders = entry_orders if entry_orders is not None else await self.entry_orders(str(row["id"]))
         if not entry_orders:
             return None
         product_ids = {int(order["product_id"]) for order in entry_orders}
@@ -1181,12 +1245,12 @@ class TradingEngine:
             {"exposureStatus": "flat", "closureReason": "exchange_flat", "reconciledAt": reconciled_at}
         )
         message = "Delta confirms this strategy has no open position or order; settlement P&L is unavailable"
+        await self.release_capital_slot(str(row["user_id"]), str(row["id"]))
         await self.db.update(
             "strategies",
             {"status": "attention", "last_error": message, "risk_state": risk_state},
             {"id": f"eq.{row['id']}"},
         )
-        await self.release_capital_slot(str(row["user_id"]), str(row["id"]))
         logger.warning("Released flat unresolved strategy_id=%s user_id=%s", row["id"], row["user_id"])
         return {
             "verified": True,
@@ -1212,20 +1276,31 @@ class TradingEngine:
         rows = await self.db.select("strategies", params)
         groups: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
-            if (row.get("risk_state") or {}).get("exposureStatus") == "flat":
-                continue
+            risk_state = row.get("risk_state") or {}
+            if risk_state.get("exposureStatus") == "flat" and risk_state.get("reconciledAt"):
+                try:
+                    reconciled_at = datetime.fromisoformat(str(risk_state["reconciledAt"]).replace("Z", "+00:00"))
+                except ValueError:
+                    reconciled_at = None
+                if reconciled_at and reconciled_at.utcoffset() is None:
+                    reconciled_at = None
+                if reconciled_at and (utc_now() - reconciled_at).total_seconds() < FLAT_REPORT_RECONCILE_SECONDS:
+                    continue
             groups.setdefault(str(row["user_id"]), []).append(row)
         for owner, owned_rows in groups.items():
-            owned_client = client if client is not None and owner == user_id else await self.client_for_user(owner)
+            owned_client: DeltaClient | None = None
             try:
+                owned_client = client if client is not None and owner == user_id else await self.client_for_user(owner)
                 snapshot = await self.account_exposure(owned_client)
                 for row in owned_rows:
                     try:
                         await self.reconcile_run_if_flat(row, owned_client, snapshot)
                     except Exception:
                         logger.exception("Could not reconcile attention strategy %s", row["id"])
+            except Exception:
+                logger.exception("Could not load Delta exposure for user %s", owner)
             finally:
-                if owned_client is not client:
+                if owned_client is not None and owned_client is not client:
                     await owned_client.close()
 
     async def run_detail(self, strategy_id: str, user_id: str) -> dict[str, Any]:
@@ -1507,7 +1582,13 @@ class TradingEngine:
         client = await self.client_for_user(str(row["user_id"]))
         try:
             recorded_orders = await self.entry_orders(strategy_id)
-            reconciled = await self.reconcile_run_if_flat(row, client)
+            snapshot = await self.account_exposure(client)
+            reconciled = await self.reconcile_run_if_flat(
+                row,
+                client,
+                snapshot=snapshot,
+                entry_orders=recorded_orders,
+            )
             if reconciled is not None:
                 return reconciled
             if not preclaimed:
@@ -1538,16 +1619,10 @@ class TradingEngine:
             else:
                 product_ids = sorted({int(item["product_id"]) for item in recorded_orders})
                 try:
-                    open_responses = await asyncio.gather(
-                        *(
-                            client.open_orders(product_ids[index : index + 10])
-                            for index in range(0, len(product_ids), 10)
-                        )
-                    )
                     open_order_ids = {
                         str(item.get("id"))
-                        for response in open_responses
-                        for item in (response.get("result") or [])
+                        for item in snapshot.open_orders
+                        if int(item.get("product_id") or 0) in product_ids
                         if item.get("id") is not None
                     }
                     for item in recorded_orders:
@@ -1710,7 +1785,10 @@ class TradingEngine:
             await client.close()
 
     async def process_due_strategies(self) -> None:
-        await self.reconcile_attention_runs()
+        monotonic_now = time.monotonic()
+        reconcile_attention = monotonic_now - self.last_attention_reconcile >= ATTENTION_RECONCILE_SECONDS
+        if reconcile_attention:
+            self.last_attention_reconcile = monotonic_now
         now = utc_now()
         now_iso = now.isoformat().replace("+00:00", "Z")
         due_entries, due_exits = await asyncio.gather(
@@ -1768,6 +1846,8 @@ class TradingEngine:
                 await self.execute_exit(str(row["id"]))
             except Exception:
                 logger.exception("Scheduled exit failed for strategy %s", row["id"])
+        if reconcile_attention:
+            await self.reconcile_attention_runs()
         await self.process_active_risks()
 
     async def reject_scheduled_entry(self, strategy_id: str, error: AppError) -> None:
