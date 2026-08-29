@@ -8,9 +8,11 @@
  * corners cut off. The brand mark ships transparent at 512px, which covers the
  * `any` purpose but not the masked one.
  *
- * The masked and iOS variants sit on the light-theme canvas rather than the
- * dark one. The mark's navy arms are #0a1068, which all but disappear against
- * the #080809 app background once the icon is 48px on a home screen.
+ * The masked and iOS variants sit on the dark canvas. Two of the mark's three
+ * hexagons are #fcfafb, near enough to white that a light plate erased them and
+ * left only the cyan third readable at 48px. On the dark plate those two read as
+ * the brightest thing in the icon, and the navy arms at #0a1068 fall back to
+ * negative space, which is closer to how the mark is drawn anyway.
  *
  * sharp arrives with Next's image optimiser, so this needs no extra install.
  * Run it after the mark changes:
@@ -26,8 +28,8 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const SOURCE = path.join(ROOT, "public", "polycognition-mark.png");
 const OUT_DIR = path.join(ROOT, "public", "icons");
 
-/** The light theme's canvas, so a masked icon matches the app it opens. */
-const BACKDROP = { r: 0xf4, g: 0xf2, b: 0xee, alpha: 1 };
+/** The app's canvas, so the icon matches the splash screen and the app it opens. */
+const BACKDROP = { r: 0x08, g: 0x08, b: 0x09, alpha: 1 };
 const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 };
 
 /**
