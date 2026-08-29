@@ -46,7 +46,9 @@ def run_automation_team(
     agent_run_id: str,
     session_id: str,
     account_context: dict[str, Any],
+    trigger: str,
     trigger_reason: str | None = None,
+    signals_to_inspect: list[str] | None = None,
 ) -> AutomationTeamResult:
     market_tools = MarketIntelligenceTools()
     market_packet = market_tools.collect_btc_market_packet()
@@ -133,13 +135,12 @@ def run_automation_team(
                     "evidence. Do not force a trade."
                 ),
                 (
-                    "Regular runs are Asia at 09:00 Tokyo or 05:30 IST; London at 08:00 London, which is 12:30 IST "
-                    "during British summer time or 13:30 IST during GMT; and New York at 09:30 local, which is "
-                    "19:00 IST during daylight time or 20:00 IST during standard time."
+                    "Use upcomingAgentRuns in the supplied account context as the authoritative schedule. Do not "
+                    "recalculate fixed-session times."
                 ),
                 (
                     "Use those known future runs when deciding whether another agent run is needed. Schedule an "
-                    "extra run only when the market needs clarification at a different time."
+                    "extra run only before the next fixed review. A follow-up run cannot schedule another follow-up."
                 ),
                 "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
                 (
@@ -167,7 +168,10 @@ def run_automation_team(
                     "select_strategy_and_time schedules the selected saved strategy on the existing live engine. "
                     "Orders are submitted later by that engine at the activation time, never inside the tool call."
                 ),
-                "Use Asia/Kolkata for customer-facing times. Tool timestamps must be timezone-aware ISO-8601 values.",
+                (
+                    "Use Asia/Kolkata for customer-facing times. Tool timestamps must use timezone-aware ISO-8601: "
+                    "UTC such as 2026-08-30T00:00:00Z or IST such as 2026-08-30T05:30:00+05:30."
+                ),
                 (
                     "Return a concise Markdown report with headings: ## Market regime, ## News analysis, "
                     "## Chart and data evidence, ## Decision, ## Invalidation."
@@ -179,13 +183,13 @@ def run_automation_team(
                 "invalidation conditions."
             ),
             additional_context=(
-                f"Current run trigger: {trigger_reason or 'scheduled market analysis'}. Current open Delta orders, "
-                "positions, and active strategies follow. Account balances are intentionally excluded: "
+                f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}. "
+                f"Signals requested by the prior run: {json.dumps(signals_to_inspect or [], ensure_ascii=False)}. "
+                "Current open Delta orders, positions, active strategies, and upcoming agent runs follow. "
+                "Account balances are intentionally excluded: "
                 f"{json.dumps(account_context, ensure_ascii=False, default=str)}"
             ),
             db=team_db,
-            add_history_to_context=True,
-            num_history_runs=10,
             add_datetime_to_context=True,
             timezone_identifier="Asia/Kolkata",
             add_member_tools_to_context=True,
@@ -215,6 +219,8 @@ def run_automation_team(
             images=images,
             metadata={
                 "triggerReason": trigger_reason or "scheduled market analysis",
+                "trigger": trigger,
+                "signalsToInspect": signals_to_inspect or [],
                 "marketSnapshotId": market_snapshot_id,
             },
         )
@@ -225,6 +231,8 @@ def run_automation_team(
         )
         if not report:
             raise RuntimeError("Automation team returned an empty report")
+        if report.casefold() == "provider returned error":
+            raise RuntimeError("Automation model provider returned an error")
         return AutomationTeamResult(
             run_id=str(response.run_id),
             session_id=stored_session_id,
