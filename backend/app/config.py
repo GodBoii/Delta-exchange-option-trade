@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     supabase_url: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_URL")
     supabase_publishable_key: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
     supabase_service_role_key: str = Field(validation_alias="SUPABASE_SERVICE_ROLE_KEY")
+    convex_url: str | None = Field(default=None, validation_alias="CONVEX_URL")
+    convex_sync_secret: str | None = Field(default=None, validation_alias="CONVEX_SYNC_SECRET")
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = 2.0
