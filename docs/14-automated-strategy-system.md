@@ -116,6 +116,10 @@ Every account defaults to `half_balance`. The engine calculates the nominal budg
 
 The system reserves a concurrency slot before submitting any leg. Two workers must never reserve the same slot.
 
+Capital slots follow confirmed Delta exposure. The scheduler reconciles entered attention runs against account positions and open orders every 30 seconds, and a slot-full entry performs one immediate reconciliation before rejecting the new run. A run that Delta confirms as flat releases its slot even when settlement reporting still needs attention.
+
+If the backend misses an option exit and the contract expires, it reads Delta settlement fills through the account history endpoint. It records those fills as the run's exit, calculates P&L with the contract value captured at entry, marks the run completed, and releases the slot. `invalid_contract` alone never proves that exposure is flat; account positions and open orders must be read successfully first.
+
 ### Long-premium sizing
 
 ```text
