@@ -12,6 +12,7 @@ export const EM_DASH = "—";
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 1 });
 const usdCompact = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 });
 const compactNumber = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
+const tradingTimeZone = "Asia/Kolkata";
 
 export function isNumeric(value: unknown): value is number | string {
   if (typeof value === "number") return Number.isFinite(value);
@@ -81,10 +82,15 @@ export function titleCase(value: string) {
 }
 
 const dayMonthYear = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
-const dayMonthTime = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-const clock = new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const dayMonthTime = new Intl.DateTimeFormat("en-IN", {
+  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: tradingTimeZone, timeZoneName: "short"
+});
+const clock = new Intl.DateTimeFormat("en-IN", {
+  hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: tradingTimeZone, timeZoneName: "short"
+});
 const fullTimestamp = new Intl.DateTimeFormat("en-IN", {
-  day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit"
+  day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+  timeZone: tradingTimeZone, timeZoneName: "short"
 });
 
 /** `YYYY-MM-DD` expiry input value rendered for humans. */
