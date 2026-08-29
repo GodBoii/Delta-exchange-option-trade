@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -46,6 +47,18 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
         "delta_not_connected",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AccountExposure:
+    positions: dict[int, Decimal]
+    open_orders: tuple[dict[str, Any], ...]
+
+
+def has_exchange_exposure(product_ids: set[int], snapshot: AccountExposure) -> bool:
+    return any(snapshot.positions.get(product_id, Decimal("0")) != 0 for product_id in product_ids) or any(
+        int(order.get("product_id") or 0) in product_ids for order in snapshot.open_orders
+    )
 
 
 def utc_now() -> datetime:
@@ -193,6 +206,12 @@ def base36(value: int) -> str:
         value, remainder = divmod(value, 36)
         result = alphabet[remainder] + result
     return result
+
+
+def settlement_client_order_id(strategy_id: str, fill: dict[str, Any]) -> str:
+    identity = str(fill.get("id") or fill.get("order_id") or fill.get("created_at") or "settlement")
+    token = "".join(character for character in identity.lower() if character.isalnum())[-18:]
+    return f"st_{strategy_id[:8]}_{token}"[:32]
 
 
 class TradingEngine:
@@ -357,6 +376,47 @@ class TradingEngine:
             "release_strategy_capital_slot",
             {"p_user_id": user_id, "p_strategy_id": strategy_id},
         )
+
+    async def account_exposure(self, client: DeltaClient) -> AccountExposure:
+        positions_response, orders_response = await asyncio.gather(client.positions(), client.open_orders())
+        positions = {
+            int(item["product_id"]): decimal_value(item.get("size"))
+            for item in positions_response.get("result") or []
+            if item.get("product_id") is not None
+        }
+        return AccountExposure(positions=positions, open_orders=tuple(orders_response.get("result") or []))
+
+    async def fills_since(
+        self,
+        client: DeltaClient,
+        product_ids: set[int],
+        start_time: int,
+    ) -> list[dict[str, Any]]:
+        async def pages(ids: list[int] | None) -> list[dict[str, Any]]:
+            result: list[dict[str, Any]] = []
+            after: str | None = None
+            seen: set[str] = set()
+            while True:
+                response = await client.fills(ids, start_time, after)
+                result.extend(response.get("result") or [])
+                next_after = str((response.get("meta") or {}).get("after") or "")
+                if not next_after or next_after in seen:
+                    return result
+                seen.add(next_after)
+                after = next_after
+
+        try:
+            batches = [sorted(product_ids)[index : index + 10] for index in range(0, len(product_ids), 10)]
+            return [fill for batch in await asyncio.gather(*(pages(ids) for ids in batches)) for fill in batch]
+        except AppError as error:
+            if error.code != "invalid_contract":
+                raise
+            logger.info("Falling back to account fills because a recorded contract has expired")
+            return [
+                fill
+                for fill in await pages(None)
+                if int(fill.get("product_id") or 0) in product_ids
+            ]
 
     async def preview_strategy(self, client: DeltaClient, definition: StrategyDefinition) -> dict[str, Any]:
         legs = await self.resolve_strategy(client, definition)
@@ -621,7 +681,13 @@ class TradingEngine:
                 policy.allocation_mode,
                 policy.capital_amount,
             )
-            reservation = await self.reserve_capital_slot(str(row["user_id"]), strategy_id, maximum_slots)
+            try:
+                reservation = await self.reserve_capital_slot(str(row["user_id"]), strategy_id, maximum_slots)
+            except AppError as error:
+                if error.code != "capital_slots_full":
+                    raise
+                await self.reconcile_attention_runs(str(row["user_id"]), client)
+                reservation = await self.reserve_capital_slot(str(row["user_id"]), strategy_id, maximum_slots)
             resolved = await self.resolve_strategy(client, definition)
             resolved = await self.apply_automatic_lots(client, definition, resolved, policy, wallet)
             allocated_budget = capital_budget(
@@ -719,6 +785,7 @@ class TradingEngine:
                             "order_type": leg["orderType"],
                             "limit_price": str(leg["limitPrice"]) if leg.get("limitPrice") is not None else None,
                             "reference_price": reference_price,
+                            "contract_value": leg.get("contractValue"),
                             "response_json": order,
                             **slippage_fields(str(leg["position"]), reference_price, result.get("average_fill_price")),
                         }
@@ -828,8 +895,7 @@ class TradingEngine:
         product_ids = sorted({int(order["product_id"]) for order in orders})
         created = [datetime.fromisoformat(str(order["created_at"]).replace("Z", "+00:00")) for order in orders]
         start_time = int((min(created).timestamp() - 5) * 1_000_000)
-        response = await client.fills(product_ids, start_time)
-        fills = response.get("result") or []
+        fills = await self.fills_since(client, set(product_ids), start_time)
         by_order: dict[str, list[dict[str, Any]]] = {}
         for fill in fills:
             by_order.setdefault(str(fill.get("order_id") or ""), []).append(fill)
@@ -870,7 +936,10 @@ class TradingEngine:
     async def contract_value(self, client: DeltaClient, symbol: str) -> Decimal:
         if symbol not in self.contract_values:
             product = await self.product_spec(client, symbol)
-            self.contract_values[symbol] = decimal_value(product.get("contract_value"), "1")
+            value = decimal_value(product.get("contract_value"))
+            if value <= 0:
+                raise AppError(502, f"Contract value is unavailable for {symbol}", "contract_value_unavailable")
+            self.contract_values[symbol] = value
         return self.contract_values[symbol]
 
     async def product_spec(self, client: DeltaClient, symbol: str) -> dict[str, Any]:
@@ -949,6 +1018,216 @@ class TradingEngine:
         )
         return summary
 
+    async def finalize_exchange_settlement(
+        self,
+        client: DeltaClient,
+        row: dict[str, Any],
+        entry_orders: list[dict[str, Any]],
+        fills: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        strategy_id = str(row["id"])
+        enriched = await self.enrich_contract_values(client, entry_orders)
+        contract_values = {
+            int(order["product_id"]): optional_decimal(order.get("contract_value")) for order in enriched
+        }
+        if any(not value or value <= 0 for value in contract_values.values()):
+            return None
+
+        valid: list[tuple[dict[str, Any], int, str]] = []
+        for fill in fills:
+            size = decimal_value(fill.get("size"))
+            side = str(fill.get("side") or "")
+            product_id = int(fill.get("product_id") or 0)
+            if size <= 0 or size != size.to_integral_value() or side not in {"buy", "sell"}:
+                continue
+            if product_id not in contract_values:
+                continue
+            valid.append((fill, int(size), settlement_client_order_id(strategy_id, fill)))
+        if not valid:
+            return None
+
+        client_ids = [client_id for _, _, client_id in valid]
+        existing = await self.db.select(
+            "execution_orders",
+            {
+                "select": "client_order_id,execution_id",
+                "client_order_id": f"in.({','.join(client_ids)})",
+            },
+        )
+        existing_ids = {str(item["client_order_id"]): str(item["execution_id"]) for item in existing}
+        execution_id = next(iter(existing_ids.values()), None)
+        completed = max((str(fill.get("created_at") or "") for fill, _, _ in valid), default="") or iso_now()
+        if execution_id is None:
+            executions = await self.db.insert(
+                "executions",
+                {"strategy_id": strategy_id, "kind": "exit", "status": "running"},
+            )
+            if not executions:
+                raise AppError(500, "Could not record the Delta settlement", "settlement_record_failed")
+            execution_id = str(executions[0]["id"])
+
+        for fill, size, client_id in valid:
+            if client_id in existing_ids:
+                continue
+            product_id = int(fill["product_id"])
+            await self.record_order(
+                {
+                    "execution_id": execution_id,
+                    "leg_id": "settlement",
+                    "delta_order_id": str(fill.get("order_id") or fill.get("id") or ""),
+                    "client_order_id": client_id,
+                    "product_id": product_id,
+                    "product_symbol": str(fill.get("product_symbol") or "unknown"),
+                    "side": str(fill["side"]),
+                    "size": size,
+                    "filled_size": str(size),
+                    "average_fill_price": str(fill.get("price") or "0"),
+                    "commission": str(decimal_value(fill.get("commission"))),
+                    "state": "settled",
+                    "order_type": "settlement",
+                    "contract_value": str(contract_values[product_id]),
+                    "response_json": {"success": True, "result": fill},
+                }
+            )
+
+        await self.db.update(
+            "executions",
+            {"status": "completed", "error": None, "completed_at": completed},
+            {"id": f"eq.{execution_id}"},
+        )
+        summary = settlement_summary(await self.run_orders(strategy_id))
+        reconciled_at = iso_now()
+        summary.update(
+            {
+                "settledAt": completed,
+                "closureReason": "exchange_settlement",
+                "reconciledAt": reconciled_at,
+                "exchangeSettlementFillIds": [str(fill.get("id") or fill.get("order_id")) for fill, _, _ in valid],
+            }
+        )
+        risk_state = {
+            **(row.get("risk_state") or {}),
+            "exposureStatus": "flat",
+            "closureReason": "exchange_settlement",
+            "reconciledAt": reconciled_at,
+        }
+        updated = await self.db.update(
+            "strategies",
+            {
+                "status": "completed",
+                "exit_execution_at": completed,
+                "last_error": None,
+                "risk_state": risk_state,
+                "result_json": summary,
+                "realized_pnl": summary["realizedPnl"],
+            },
+            {"id": f"eq.{strategy_id}"},
+        )
+        if not updated:
+            raise AppError(500, "Could not finalize the Delta settlement", "settlement_finalize_failed")
+        await self.release_capital_slot(str(row["user_id"]), strategy_id)
+        logger.info("Reconciled Delta settlement strategy_id=%s user_id=%s", strategy_id, row["user_id"])
+        return summary
+
+    async def reconcile_run_if_flat(
+        self,
+        row: dict[str, Any],
+        client: DeltaClient,
+        snapshot: AccountExposure | None = None,
+    ) -> dict[str, Any] | None:
+        entry_orders = await self.entry_orders(str(row["id"]))
+        if not entry_orders:
+            return None
+        product_ids = {int(order["product_id"]) for order in entry_orders}
+        snapshot = snapshot or await self.account_exposure(client)
+        positions = dict(snapshot.positions)
+        for product_id in product_ids:
+            if positions.get(product_id, Decimal("0")) != 0:
+                continue
+            try:
+                positions[product_id] = await self.live_position_size(client, product_id)
+            except AppError as error:
+                if error.code != "invalid_contract":
+                    raise
+        current = AccountExposure(positions=positions, open_orders=snapshot.open_orders)
+        risk_state = dict(row.get("risk_state") or {})
+        if has_exchange_exposure(product_ids, current):
+            if risk_state.get("exposureStatus") != "open":
+                risk_state.update({"exposureStatus": "open", "reconciledAt": iso_now()})
+                await self.db.update(
+                    "strategies",
+                    {"risk_state": risk_state},
+                    {"id": f"eq.{row['id']}"},
+                )
+            return None
+
+        created = [datetime.fromisoformat(str(order["created_at"]).replace("Z", "+00:00")) for order in entry_orders]
+        start_time = int((min(created).timestamp() - 5) * 1_000_000)
+        fills = await self.fills_since(client, product_ids, start_time)
+        settlements = [fill for fill in fills if str(fill.get("fill_type")) == "settlement"]
+        if settlements:
+            summary = await self.finalize_exchange_settlement(client, row, entry_orders, settlements)
+            if summary is not None:
+                return {
+                    "verified": True,
+                    "ordersSubmitted": 0,
+                    "positionsVerified": len(product_ids),
+                    "closureReason": "exchange_settlement",
+                    "settlement": summary,
+                }
+
+        reconciled_at = iso_now()
+        risk_state.update(
+            {"exposureStatus": "flat", "closureReason": "exchange_flat", "reconciledAt": reconciled_at}
+        )
+        message = "Delta confirms this strategy has no open position or order; settlement P&L is unavailable"
+        await self.db.update(
+            "strategies",
+            {"status": "attention", "last_error": message, "risk_state": risk_state},
+            {"id": f"eq.{row['id']}"},
+        )
+        await self.release_capital_slot(str(row["user_id"]), str(row["id"]))
+        logger.warning("Released flat unresolved strategy_id=%s user_id=%s", row["id"], row["user_id"])
+        return {
+            "verified": True,
+            "ordersSubmitted": 0,
+            "positionsVerified": len(product_ids),
+            "closureReason": "exchange_flat",
+            "settlement": None,
+        }
+
+    async def reconcile_attention_runs(
+        self,
+        user_id: str | None = None,
+        client: DeltaClient | None = None,
+    ) -> None:
+        params = {
+            "select": "*",
+            "status": "eq.attention",
+            "entry_execution_at": "not.is.null",
+            "limit": "100",
+        }
+        if user_id is not None:
+            params["user_id"] = f"eq.{user_id}"
+        rows = await self.db.select("strategies", params)
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if (row.get("risk_state") or {}).get("exposureStatus") == "flat":
+                continue
+            groups.setdefault(str(row["user_id"]), []).append(row)
+        for owner, owned_rows in groups.items():
+            owned_client = client if client is not None and owner == user_id else await self.client_for_user(owner)
+            try:
+                snapshot = await self.account_exposure(owned_client)
+                for row in owned_rows:
+                    try:
+                        await self.reconcile_run_if_flat(row, owned_client, snapshot)
+                    except Exception:
+                        logger.exception("Could not reconcile attention strategy %s", row["id"])
+            finally:
+                if owned_client is not client:
+                    await owned_client.close()
+
     async def run_detail(self, strategy_id: str, user_id: str) -> dict[str, Any]:
         """
         Everything recorded about a single run: schedule, criteria, per-leg
@@ -972,8 +1251,7 @@ class TradingEngine:
 
         stored = row.get("result_json") or {}
         settlement = settlement_summary(orders) if orders else {}
-        if stored.get("settledAt"):
-            settlement["settledAt"] = stored["settledAt"]
+        settlement.update(stored)
         return {
             "id": row["id"],
             "name": row["name"],
@@ -1042,7 +1320,7 @@ class TradingEngine:
         rows = await self.db.select(
             "strategies",
             {
-                "select": "id,status,entry_execution_at,exit_execution_at",
+                "select": "id,status,entry_execution_at,exit_execution_at,risk_state",
                 "id": f"eq.{strategy_id}",
                 "user_id": f"eq.{user_id}",
                 "limit": "1",
@@ -1056,7 +1334,13 @@ class TradingEngine:
             raise AppError(409, "This run is executing right now. Wait for it to finish", "cannot_delete_running")
         if status == "active":
             raise AppError(409, "Exit this live run before deleting it from history", "cannot_delete_live")
-        if status == "attention" and row.get("entry_execution_at") and not row.get("exit_execution_at"):
+        exposure_status = (row.get("risk_state") or {}).get("exposureStatus")
+        if (
+            status == "attention"
+            and row.get("entry_execution_at")
+            and not row.get("exit_execution_at")
+            and exposure_status != "flat"
+        ):
             raise AppError(
                 409,
                 "This run entered but never confirmed an exit, so it may still hold a position. "
@@ -1223,6 +1507,9 @@ class TradingEngine:
         client = await self.client_for_user(str(row["user_id"]))
         try:
             recorded_orders = await self.entry_orders(strategy_id)
+            reconciled = await self.reconcile_run_if_flat(row, client)
+            if reconciled is not None:
+                return reconciled
             if not preclaimed:
                 await self.claim_exit(strategy_id)
             elif row.get("status") != "executing_exit":
@@ -1291,6 +1578,7 @@ class TradingEngine:
                         "product_id": product_id,
                         "product_symbol": item["product_symbol"],
                         "signed_size": Decimal("0"),
+                        "contract_value": item.get("contract_value"),
                     },
                 )
                 product["signed_size"] += signed_size
@@ -1346,6 +1634,7 @@ class TradingEngine:
                             "state": str(result.get("state") or "submitted"),
                             "order_type": "market_order",
                             "reference_price": reference_price,
+                            "contract_value": product.get("contract_value"),
                             "response_json": order,
                             **slippage_fields(close_side, reference_price, result.get("average_fill_price")),
                         }
@@ -1380,6 +1669,8 @@ class TradingEngine:
             failure = failures[0] if failures else None
             completed = iso_now()
             risk_state = dict(row.get("risk_state") or {})
+            risk_state["exposureStatus"] = "unknown" if failure else "flat"
+            risk_state["reconciledAt"] = completed
             if row.get("combined_stop_triggered_at"):
                 risk_state["status"] = "attention" if failure else "exit_verified"
                 risk_state["exitVerifiedAt" if not failure else "exitFailedAt"] = completed
@@ -1419,7 +1710,7 @@ class TradingEngine:
             await client.close()
 
     async def process_due_strategies(self) -> None:
-        await self.process_active_risks()
+        await self.reconcile_attention_runs()
         now = utc_now()
         now_iso = now.isoformat().replace("+00:00", "Z")
         due_entries, due_exits = await asyncio.gather(
@@ -1477,6 +1768,7 @@ class TradingEngine:
                 await self.execute_exit(str(row["id"]))
             except Exception:
                 logger.exception("Scheduled exit failed for strategy %s", row["id"])
+        await self.process_active_risks()
 
     async def reject_scheduled_entry(self, strategy_id: str, error: AppError) -> None:
         reason = f"Entry not placed: {error.message}"
