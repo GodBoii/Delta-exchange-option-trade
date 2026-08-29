@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider, THEME_BOOT_SCRIPT } from "@/app/components/theme";
 import PwaRuntime from "@/app/components/PwaRuntime";
+import { RealtimeSignalsProvider } from "@/app/components/RealtimeSignals";
 import "./globals.css";
 
 /**
@@ -77,7 +78,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body>
         <ThemeProvider>
-          {children}
+          <RealtimeSignalsProvider>{children}</RealtimeSignalsProvider>
           {/* Registers the service worker and owns the home-screen install
               offer. Mounted here rather than in a page because Chrome fires
               `beforeinstallprompt` once per load, and a listener attached after
