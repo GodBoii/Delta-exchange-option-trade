@@ -253,7 +253,7 @@ class ExpiredDeltaClient:
         return {"success": True, "result": []}
 
     async def position(self, product_id: int) -> dict:
-        raise AppError(400, "Invalid contract", "invalid_contract")
+        raise AppError(400, "expired contract", "expired_contract")
 
     async def fills(
         self,
@@ -262,7 +262,7 @@ class ExpiredDeltaClient:
         after: str | None = None,
     ) -> dict:
         if product_ids:
-            raise AppError(400, "Invalid contract", "invalid_contract")
+            raise AppError(400, "expired contract", "expired_contract")
         result = [
             {
                 "id": 1,
@@ -514,7 +514,7 @@ async def test_expired_product_catalogue_recovers_historical_contract_value() ->
         product_list_calls = 0
 
         async def product(self, symbol: str) -> dict:
-            raise AppError(400, "Invalid contract", "invalid_contract")
+            raise AppError(400, "expired contract", "expired_contract")
 
         async def products(self, query: dict) -> dict:
             self.product_list_calls += 1
