@@ -15,11 +15,11 @@ CapitalAllocationMode = Literal[
 DEFAULT_ALLOCATION_MODE: CapitalAllocationMode = "half_balance"
 MAX_FIXED_AMOUNT_SLOTS = 100
 
-ALLOCATION_FRACTIONS: dict[str, Decimal] = {
-    "full_balance": Decimal("1"),
-    "half_balance": Decimal("0.5"),
-    "one_third_balance": Decimal("1") / Decimal("3"),
-    "one_quarter_balance": Decimal("0.25"),
+ALLOCATION_DIVISORS = {
+    "full_balance": 1,
+    "half_balance": 2,
+    "one_third_balance": 3,
+    "one_quarter_balance": 4,
 }
 
 
@@ -71,10 +71,10 @@ def capital_budget(
         if requested <= 0:
             raise AppError(409, "The custom capital budget is invalid", "capital_cap_invalid")
         return min(available, requested)
-    fraction = ALLOCATION_FRACTIONS.get(allocation_mode)
-    if fraction is None:
+    divisor = ALLOCATION_DIVISORS.get(allocation_mode)
+    if divisor is None:
         raise AppError(409, "The capital allocation mode is invalid", "capital_mode_invalid")
-    return min(available, total_balance * fraction)
+    return min(available, total_balance / divisor)
 
 
 def maximum_concurrent_strategies(
@@ -82,9 +82,9 @@ def maximum_concurrent_strategies(
     allocation_mode: str,
     fixed_amount: Any = None,
 ) -> int:
-    fraction = ALLOCATION_FRACTIONS.get(allocation_mode)
-    if fraction is not None:
-        return int(Decimal("1") // fraction)
+    divisor = ALLOCATION_DIVISORS.get(allocation_mode)
+    if divisor is not None:
+        return divisor
     if allocation_mode != "fixed_amount":
         raise AppError(409, "The capital allocation mode is invalid", "capital_mode_invalid")
     requested = decimal_value(fixed_amount)
@@ -96,5 +96,4 @@ def maximum_concurrent_strategies(
 
 
 def percentage_concurrency_limit(allocation_mode: str) -> int | None:
-    fraction = ALLOCATION_FRACTIONS.get(allocation_mode)
-    return int(Decimal("1") // fraction) if fraction is not None else None
+    return ALLOCATION_DIVISORS.get(allocation_mode)
