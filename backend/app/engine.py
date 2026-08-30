@@ -24,6 +24,7 @@ from .supabase import SupabaseAdmin
 logger = logging.getLogger(__name__)
 ATTENTION_RECONCILE_SECONDS = 30.0
 FLAT_REPORT_RECONCILE_SECONDS = 300.0
+UNAVAILABLE_CONTRACT_CODES = {"invalid_contract", "expired_contract"}
 
 # Columns added by migration 004. Execution must never fail because an audit
 # field is missing, so writes degrade to the pre-migration column set instead.
@@ -420,7 +421,7 @@ class TradingEngine:
             batches = [sorted(product_ids)[index : index + 10] for index in range(0, len(product_ids), 10)]
             return [fill for batch in await asyncio.gather(*(pages(ids) for ids in batches)) for fill in batch]
         except AppError as error:
-            if error.code != "invalid_contract":
+            if error.code not in UNAVAILABLE_CONTRACT_CODES:
                 raise
             logger.info("Falling back to account fills because a recorded contract has expired")
             return [
@@ -959,7 +960,7 @@ class TradingEngine:
                 response = await client.product(symbol)
                 product = response.get("result") or {}
             except AppError as error:
-                if error.code != "invalid_contract" and error.status != 404:
+                if error.code not in UNAVAILABLE_CONTRACT_CODES and error.status != 404:
                     raise
                 product = {}
             if not product:
@@ -1211,7 +1212,7 @@ class TradingEngine:
             try:
                 positions[product_id] = await self.live_position_size(client, product_id)
             except AppError as error:
-                if error.code != "invalid_contract":
+                if error.code not in UNAVAILABLE_CONTRACT_CODES:
                     raise
         current = AccountExposure(positions=positions, open_orders=snapshot.open_orders)
         risk_state = dict(row.get("risk_state") or {})
