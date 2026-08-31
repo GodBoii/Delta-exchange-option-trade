@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from app.automation import build_account_context
+from app.automation import automation_overview, build_account_context
+from app.automation_schedule import next_fixed_run
 from app.capital import CapitalPolicy
 from app.default_strategies import default_strategy_definitions
 from app.engine import TradingEngine, capital_budget
@@ -22,7 +23,7 @@ from automation_agent.charts import (
 )
 from automation_agent.market import compact_btc_market_packet, compact_delta_option_context
 from automation_agent.storage import ChartArtifact, SupabaseChartStorage
-from automation_agent.tools import materialize_live_definition
+from automation_agent.tools import AutomationStrategyTools, materialize_live_definition
 from news_agent.config import NewsAgentSettings
 
 
@@ -45,6 +46,75 @@ def test_materializes_same_day_hold_to_expiry_schedule() -> None:
     assert exit_at == expiry - timedelta(minutes=5)
     assert {leg["expiry"] for leg in live["legs"]} == {expiry.astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat()}
     assert "selectionCriteria" not in live
+
+
+def test_strategy_activation_rejects_a_fixed_session_minute() -> None:
+    fixed = next_fixed_run(datetime.now(UTC))
+    activation = fixed.scheduled_for + timedelta(seconds=30)
+    tool = object.__new__(AutomationStrategyTools)
+
+    with pytest.raises(ValueError, match="cannot be during the fixed"):
+        tool.select_strategy_and_time(
+            saved_strategy_id="11111111-1111-4111-8111-111111111111",
+            saved_strategy_version=1,
+            activation_time=activation.isoformat(),
+            proposal_expiry=(activation + timedelta(hours=1)).isoformat(),
+            ai_confidence=0.8,
+            reasoning_summary="Confirmed setup",
+            supporting_signals=["price"],
+            invalidation_signals=["volume"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_automation_overview_separates_history_from_upcoming_runs() -> None:
+    class Database:
+        run_queries: list[dict] = []
+
+        async def select(self, table: str, params: dict) -> list[dict]:
+            if table == "automation_settings":
+                return [{"enabled": True, "model_id": "model"}]
+            if table == "saved_strategies":
+                return []
+            if table == "strategy_proposals":
+                return []
+            if table == "automation_agent_runs":
+                self.run_queries.append(params)
+                if params["status"] == "eq.scheduled":
+                    return [
+                        {
+                            "id": "upcoming",
+                            "trigger": "london_session",
+                            "scheduled_for": "2026-08-31T07:00:00Z",
+                        }
+                    ]
+                return [
+                    {
+                        "id": "completed",
+                        "trigger": "manual",
+                        "status": "completed",
+                        "outcome": "strategy_selected",
+                        "scheduled_for": "2026-08-30T09:00:00Z",
+                        "started_at": "2026-08-30T09:00:01Z",
+                        "completed_at": "2026-08-30T09:01:00Z",
+                        "model_id": "model",
+                        "report_markdown": "Decision",
+                    }
+                ]
+
+    class Engine:
+        async def capital_policy(self, _user_id: str) -> CapitalPolicy:
+            return CapitalPolicy()
+
+    database = Database()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=database, engine=Engine())))
+
+    overview = await automation_overview(request, {"id": "user-1"})  # type: ignore[arg-type]
+
+    assert [run["id"] for run in overview["runs"]] == ["completed"]
+    assert [run["id"] for run in overview["upcomingRuns"]] == ["upcoming"]
+    assert any(query.get("status") == "in.(running,completed,failed)" for query in database.run_queries)
+    assert any(query.get("order") == "scheduled_for.asc" for query in database.run_queries)
 
 
 def test_resolves_seven_day_policy_to_first_later_listed_expiry() -> None:
