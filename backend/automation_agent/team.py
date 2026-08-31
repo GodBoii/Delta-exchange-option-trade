@@ -131,8 +131,9 @@ def run_automation_team(
                     "the minimum contract cannot fit."
                 ),
                 (
-                    "If the market is unclear, use scheduled_next_agent_run for the exact time when you need fresh "
-                    "evidence. Do not force a trade."
+                    "If the market is unclear, record no trade. Use scheduled_next_agent_run only when a specific, "
+                    "time-bound catalyst or confirmation is due before the next fixed session and fresh evidence at "
+                    "that exact time could change the decision. Do not schedule routine or speculative rechecks."
                 ),
                 (
                     "Use upcomingAgentRuns in the supplied account context as the authoritative schedule. Do not "
@@ -140,7 +141,12 @@ def run_automation_team(
                 ),
                 (
                     "Use those known future runs when deciding whether another agent run is needed. Schedule an "
-                    "extra run only before the next fixed review. A follow-up run cannot schedule another follow-up."
+                    "extra run only before the next fixed review. Only one follow-up is allowed between fixed reviews, "
+                    "and a follow-up run cannot schedule another follow-up."
+                ),
+                (
+                    "Never schedule a strategy activation during the exact minute of an Asia, London, or New York "
+                    "fixed review."
                 ),
                 "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
                 (
