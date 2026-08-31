@@ -217,5 +217,6 @@ export type AutomationOverview = {
   enabledStrategies: number;
   totalStrategies: number;
   runs: AutomationRun[];
+  upcomingRuns: Pick<AutomationRun, "id" | "trigger" | "scheduledFor">[];
   proposals: StrategyProposal[];
 };
