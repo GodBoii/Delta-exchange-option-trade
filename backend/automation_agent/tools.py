@@ -14,10 +14,12 @@ from psycopg.types.json import Jsonb
 
 from app.automation_schedule import (
     IST,
+    fixed_session_during_minute,
     ist_day_bounds,
     next_fixed_run,
     normalize_run_time,
     parse_aware_datetime,
+    previous_fixed_run,
     utc_text,
 )
 from app.capital import percentage_concurrency_limit
@@ -127,6 +129,12 @@ class AutomationStrategyTools(Toolkit):
         saved_id = str(UUID(saved_strategy_id))
         activation = _future_datetime(activation_time, "activation_time")
         expiry = _future_datetime(proposal_expiry, "proposal_expiry")
+        fixed_session = fixed_session_during_minute(activation)
+        if fixed_session:
+            raise ValueError(
+                f"activation_time cannot be during the fixed {fixed_session.trigger.replace('_', ' ')} review at "
+                f"{utc_text(fixed_session.scheduled_for)}"
+            )
         if expiry <= activation:
             raise ValueError("proposal_expiry must be after activation_time")
         if not 0 <= ai_confidence <= 1:
@@ -328,6 +336,21 @@ class AutomationStrategyTools(Toolkit):
                     f"{utc_text(fixed.scheduled_for)}; do not schedule another run at or after it"
                 )
 
+            previous_fixed = previous_fixed_run(now)
+            cursor.execute(
+                """
+                select count(*)::int as count
+                from public.automation_agent_runs
+                where user_id = %s
+                  and trigger = 'agent_follow_up'
+                  and status <> 'cancelled'
+                  and scheduled_for > %s
+                  and scheduled_for < %s
+                """,
+                (self.user_id, previous_fixed.scheduled_for, fixed.scheduled_for),
+            )
+            interval_follow_up_count = int(cursor.fetchone()["count"])
+
             cursor.execute(
                 """
                 select id::text
@@ -368,6 +391,11 @@ class AutomationStrategyTools(Toolkit):
                         "nextRunTime": utc_text(next_run),
                         "rescheduledExistingFollowUp": True,
                     }
+                )
+
+            if interval_follow_up_count:
+                raise ValueError(
+                    "A follow-up has already been used between the previous and next fixed session reviews"
                 )
 
             day_start, day_end = ist_day_bounds(next_run)
