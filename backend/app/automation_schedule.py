@@ -84,6 +84,20 @@ def next_fixed_run(after: datetime) -> FixedRun:
     return runs[0]
 
 
+def previous_fixed_run(before: datetime) -> FixedRun:
+    before = before.astimezone(UTC)
+    runs = fixed_runs_between(before - timedelta(days=2), before - timedelta(microseconds=1))
+    if not runs:
+        raise RuntimeError("No previous fixed automation session could be calculated")
+    return runs[-1]
+
+
+def fixed_session_during_minute(value: datetime) -> FixedRun | None:
+    minute_start = value.astimezone(UTC).replace(second=0, microsecond=0)
+    runs = fixed_runs_between(minute_start, minute_start + timedelta(seconds=59, microseconds=999999))
+    return runs[0] if runs else None
+
+
 def utc_text(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
