@@ -7,10 +7,12 @@ from app import automation
 from app.automation import AutomationScheduler
 from app.automation_schedule import (
     fixed_runs_between,
+    fixed_session_during_minute,
     ist_day_bounds,
     next_fixed_run,
     normalize_run_time,
     parse_aware_datetime,
+    previous_fixed_run,
     utc_text,
 )
 
@@ -79,6 +81,25 @@ def test_next_fixed_run_excludes_the_current_instant() -> None:
 
     assert fixed.trigger == "london_session"
     assert fixed.scheduled_for == datetime(2026, 8, 29, 7, 0, tzinfo=UTC)
+
+
+def test_previous_fixed_run_excludes_the_current_instant() -> None:
+    current_london_run = datetime(2026, 8, 29, 7, 0, tzinfo=UTC)
+
+    fixed = previous_fixed_run(current_london_run)
+
+    assert fixed.trigger == "asia_session"
+    assert fixed.scheduled_for == datetime(2026, 8, 29, 0, 0, tzinfo=UTC)
+
+
+def test_fixed_session_detection_covers_the_session_minute_only() -> None:
+    during_london_open = datetime(2026, 8, 29, 7, 0, 45, tzinfo=UTC)
+
+    fixed = fixed_session_during_minute(during_london_open)
+
+    assert fixed is not None
+    assert fixed.trigger == "london_session"
+    assert fixed_session_during_minute(datetime(2026, 8, 29, 7, 1, tzinfo=UTC)) is None
 
 
 def test_daily_limit_uses_ist_calendar_boundaries() -> None:
