@@ -266,7 +266,7 @@ async def _signed_chart(db: SupabaseAdmin, chart: dict[str, Any]) -> dict[str, s
 async def automation_overview(request: Request, user: RequiredUser) -> dict[str, Any]:
     db: SupabaseAdmin = request.app.state.db
     user_id = str(user["id"])
-    settings, capital_policy, strategies, runs, proposals = await asyncio.gather(
+    settings, capital_policy, strategies, runs, upcoming_runs, proposals = await asyncio.gather(
         ensure_settings(db, user_id),
         request.app.state.engine.capital_policy(user_id),
         db.select(
@@ -285,8 +285,20 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
                     "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error"
                 ),
                 "user_id": f"eq.{user_id}",
-                "order": "created_at.desc",
+                "status": "in.(running,completed,failed)",
+                "order": "started_at.desc",
                 "limit": "20",
+            },
+        ),
+        db.select(
+            "automation_agent_runs",
+            {
+                "select": "id,trigger,scheduled_for",
+                "user_id": f"eq.{user_id}",
+                "status": "eq.scheduled",
+                "scheduled_for": f"gt.{iso_now()}",
+                "order": "scheduled_for.asc",
+                "limit": "6",
             },
         ),
         db.select(
@@ -349,6 +361,14 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
                 "error": row.get("error"),
             }
             for row in runs
+        ],
+        "upcomingRuns": [
+            {
+                "id": row["id"],
+                "trigger": row["trigger"],
+                "scheduledFor": row["scheduled_for"],
+            }
+            for row in upcoming_runs
         ],
         "proposals": [
             {
