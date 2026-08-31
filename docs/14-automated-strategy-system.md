@@ -815,10 +815,13 @@ Rules:
 - Accept timezone-aware ISO-8601 in UTC or with an explicit offset such as `+05:30`, then store UTC.
 - Display automation timestamps in Asia/Kolkata with the `IST` timezone label.
 - Enforce a minimum delay to prevent rapid loops.
+- Use a follow-up only for a specific time-bound catalyst or confirmation; otherwise record no trade.
 - Reuse an earlier pending review instead of creating another.
 - A follow-up must occur before the next fixed review.
 - A follow-up run cannot schedule another follow-up.
+- Only one follow-up may run between two fixed reviews.
 - Limit agent follow-ups to three per Asia/Kolkata calendar day.
+- A strategy activation cannot use the exact minute of an Asia, London, or New York fixed review.
 - A scheduled run cannot bypass the normal session and account controls.
 
 The more conventional tool name would be `schedule_next_agent_run`, but this draft retains the requested name until the API naming is finalized.
@@ -924,7 +927,7 @@ Execute and monitor
 3. One agent run can select at most one strategy.
 4. The default 50% account policy supports two reserved or active allocations. Other percentages derive their limit from the same rule.
 5. Every hold-to-expiry strategy starts with a five-minute buffer.
-6. Agent follow-ups require at least five minutes, must occur before the next fixed review, cannot chain, and are limited to three per day.
+6. Agent follow-ups require at least five minutes, must occur before the next fixed review, cannot chain, are limited to one between fixed reviews, and are limited to three per day.
 7. The first fixed reviews are Asia, London, and New York. No extra India-time review is enabled initially.
 8. The AI chooses the strategy without user-configured signal thresholds.
 
