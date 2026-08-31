@@ -74,7 +74,8 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
     }
   }
 
-  const latest = overview?.runs[0];
+  const latestDecision = overview?.runs.find(run => run.outcome || run.report);
+  const upcomingRuns = overview?.upcomingRuns ?? [];
 
   return (
     <div className="automation-page">
@@ -112,12 +113,20 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
         </Panel>
 
         <Panel>
-          <PanelHeader icon={<CalendarClock />} title="Automatic run times" meta="Timezone-aware market sessions" />
-          <ul className="automation-sessions">
-            <li><span>Asia</span><strong>09:00 Tokyo</strong><small>05:30 IST</small></li>
-            <li><span>London</span><strong>08:00 London</strong><small>12:30 or 13:30 IST</small></li>
-            <li><span>New York</span><strong>09:30 New York</strong><small>19:00 or 20:00 IST</small></li>
-          </ul>
+          <PanelHeader icon={<CalendarClock />} title="Upcoming runs" meta="Earliest first · IST" />
+          {upcomingRuns.length ? (
+            <ol className="automation-sessions">
+              {upcomingRuns.map((run, index) => (
+                <li key={run.id}>
+                  <span>{index ? "Then" : "Next"}</span>
+                  <strong>{titleCase(run.trigger)}</strong>
+                  <small>{formatDateTime(run.scheduledFor)}</small>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <EmptyState compact icon={<CalendarClock />} title="No upcoming runs" description="The next session will appear after the schedule syncs." />
+          )}
         </Panel>
       </div>
 
@@ -125,17 +134,19 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
         <PanelHeader
           icon={<Workflow />}
           title="Latest decision"
-          meta={latest ? `${titleCase(latest.status)} · ${formatDateTime(latest.scheduledFor)}` : "No run saved"}
+          meta={latestDecision
+            ? `${titleCase(latestDecision.outcome ?? latestDecision.status)} · ${formatDateTime(latestDecision.completedAt ?? latestDecision.startedAt)}`
+            : "No completed decision"}
         />
-        {latest?.report ? (
+        {latestDecision?.report ? (
           <div className="automation-run-output">
-            <RunCharts charts={latest.charts} />
+            <RunCharts charts={latestDecision.charts} />
             <article className="automation-report news-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(latest.report)}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(latestDecision.report)}</ReactMarkdown>
             </article>
           </div>
-        ) : latest?.error ? (
-          <InlineMessage tone="error">{latest.error}</InlineMessage>
+        ) : latestDecision?.error ? (
+          <InlineMessage tone="error">{latestDecision.error}</InlineMessage>
         ) : (
           <EmptyState
             compact
@@ -143,13 +154,13 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
             title={running ? "Analysis is running" : "No automation decision yet"}
             description={running
               ? "The main agent is reading five BTC charts and delegating current-news research to its news agent."
-              : "Run the first analysis after saving at least one strategy for automation."}
+              : "A completed agent outcome will appear here."}
           />
         )}
       </Panel>
 
       <Panel>
-        <PanelHeader icon={<Activity />} title="Main agent run history" meta={`${overview?.runs.length ?? 0} saved runs`} />
+        <PanelHeader icon={<Activity />} title="Main agent run history" meta={`${overview?.runs.length ?? 0} actual runs`} />
         {overview?.runs.length ? (
           <div className="automation-run-list">
             {overview.runs.map(run => (
