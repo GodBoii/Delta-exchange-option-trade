@@ -13,8 +13,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from automation_agent.team import run_automation_team
-from automation_agent.tools import read_automation_state
+from automation_agent.team import run_activation_recheck, run_automation_team
+from automation_agent.tools import confirm_activation_recheck, read_automation_state
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
 from news_agent.pipeline import run_news_pipeline
@@ -362,16 +362,36 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
         settings.automation_model_id,
     )
     try:
-        result = run_automation_team(
-            settings=settings,
-            user_id=body.userId,
-            agent_run_id=body.agentRunId,
-            session_id=body.sessionId,
-            account_context=body.accountContext,
-            trigger=body.trigger,
-            trigger_reason=body.triggerReason,
-            signals_to_inspect=body.signalsToInspect,
-        )
+        if body.trigger == "activation_recheck":
+            result = run_activation_recheck(
+                settings=settings,
+                user_id=body.userId,
+                agent_run_id=body.agentRunId,
+                session_id=body.sessionId,
+                recheck_context=body.accountContext,
+            )
+            if result.tool_calls:
+                recorded = read_automation_state(settings, user_id=body.userId, agent_run_id=body.agentRunId)
+                if not recorded or recorded.get("outcome") != "strategy_dropped":
+                    raise RuntimeError("Activation recheck attempted a drop but cancellation was not recorded")
+            else:
+                confirm_activation_recheck(
+                    settings,
+                    user_id=body.userId,
+                    agent_run_id=body.agentRunId,
+                    proposal_id=str(body.accountContext["proposalId"]),
+                )
+        else:
+            result = run_automation_team(
+                settings=settings,
+                user_id=body.userId,
+                agent_run_id=body.agentRunId,
+                session_id=body.sessionId,
+                account_context=body.accountContext,
+                trigger=body.trigger,
+                trigger_reason=body.triggerReason,
+                signals_to_inspect=body.signalsToInspect,
+            )
         state = read_automation_state(
             settings,
             user_id=body.userId,
