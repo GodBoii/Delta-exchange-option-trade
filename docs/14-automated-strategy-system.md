@@ -54,16 +54,6 @@ stop liquidation value = 200 - 200 = 0
 
 The long strategy cannot lose more than the debit paid, before fees. A 100% debit stop therefore represents the full premium at risk. A take profit, invalidation exit, or mandatory time exit will normally close it earlier.
 
-### Defined-risk credit strategy
-
-Iron condors and iron butterflies collect a net credit but also own protective wings. Their effective loss limit is:
-
-```text
-effective loss limit = minimum of:
-  configured combined-credit stop loss
-  structural maximum loss from the wings
-```
-
 ## 3. Expiry policy and holding period are separate
 
 The expiry selector chooses the option contract. It does not decide how long the system holds the trade.
@@ -498,112 +488,6 @@ lower expiry breakeven = put strike - entry credit
 100% stop close cost = 2 × entry credit
 ```
 
-### 6.7 Iron condor
-
-#### What it does
-
-An iron condor sells an OTM put and OTM call, then buys a further OTM put and call as protective wings. It benefits when BTC remains between the short strikes. Its profit and maximum loss are structurally limited.
-
-#### Suitable market
-
-- Range-bound market expected.
-- Forecast range is wider than a butterfly range.
-- Defined loss is preferred over uncovered short options.
-- Volatility is expected to stay stable or fall.
-
-#### Builder definition
-
-Use four ordered strikes:
-
-```text
-lowest strike     long put
-lower middle      short put
-upper middle      short call
-highest strike    long call
-```
-
-```text
-name: Iron condor
-category: defined_risk_premium_selling
-market outlook: wide_sideways
-price source: cash
-holding mode: user selected
-expiry policy: user selected
-risk basis: defined_max_loss
-combined stop loss: 100% of net entry credit
-take profit: percentage of net entry credit
-allocation: account capital policy
-lots: auto and equal for all legs
-square-off: complete
-
-legs:
-  1. Buy OTM put at outer strike steps
-  2. Sell OTM put at inner strike steps
-  3. Sell OTM call at inner strike steps
-  4. Buy OTM call at outer strike steps
-
-outer strike steps must be greater than inner strike steps
-same expiry for all legs
-```
-
-#### Profit and loss
-
-```text
-net credit = short premiums - long premiums
-maximum profit = net credit
-maximum structural loss = wing width value - net credit
-lower expiry breakeven = short put strike - net credit
-upper expiry breakeven = short call strike + net credit
-```
-
-### 6.8 Iron butterfly
-
-#### What it does
-
-An iron butterfly sells an ATM call and ATM put, then buys an OTM call and put as protective wings. It resembles a short straddle with capped structural loss. It collects more credit than an iron condor but needs BTC to remain closer to ATM for the best outcome.
-
-#### Suitable market
-
-- Very tight range or ATM pinning expected.
-- Stronger sideways confidence than an iron condor requires.
-- Defined loss is preferred over an uncovered short straddle.
-- ATM premium is attractive.
-
-#### Builder definition
-
-```text
-name: Iron butterfly
-category: defined_risk_premium_selling
-market outlook: tight_sideways
-price source: cash
-holding mode: user selected
-expiry policy: user selected
-risk basis: defined_max_loss
-combined stop loss: 100% of net entry credit
-take profit: percentage of net entry credit
-allocation: account capital policy
-lots: auto and equal for all legs
-square-off: complete
-
-legs:
-  1. Sell ATM call
-  2. Sell ATM put
-  3. Buy OTM call at configured wing steps
-  4. Buy OTM put at the same wing steps
-
-same expiry for all legs
-```
-
-#### Profit and loss
-
-```text
-net credit = ATM premiums sold - wing premiums bought
-maximum profit = net credit
-maximum structural loss = wing width value - net credit
-upper expiry breakeven = ATM strike + net credit
-lower expiry breakeven = ATM strike - net credit
-```
-
 ## 7. Strategy Builder contract
 
 Strategy Builder should save a complete, versioned strategy definition. The AI sees the saved definition but cannot change it.
@@ -680,7 +564,6 @@ The AI receives analysis data and saved strategies. It does not receive authorit
 15-minute spot-volume chart
 rolling realized-volatility chart
 Binance Spot order-book depth chart
-Delta BTCUSD open-interest chart
 returns and market structure
 VWAP and distance from VWAP
 ATR and realized volatility
@@ -702,17 +585,6 @@ contradictions
 analysis expiry
 ```
 
-### Option context
-
-```text
-available expiry dates
-available strikes
-call and put premiums
-implied volatility
-delta, gamma, theta, and vega
-option open interest
-```
-
 Slippage handling, order recovery, actual margin checks, fill reconciliation, and execution fallbacks remain deterministic execution responsibilities. They are not part of the AI decision.
 
 ### Read-only market tools
@@ -725,20 +597,9 @@ ATR, historical volatility, VWAP, CVD, market structure, and sideways score
 1-minute, 15-minute, and daily OHLC, return, range, and volume summaries
 top-of-book price, cumulative depth, and imbalance
 recent aggressive buy and sell flow
-Delta BTCUSD mark, index, basis, OI, funding, and execution quotes
 ```
 
-`get_delta_option_context` returns:
-
-```text
-every exact listed settlement time
-ATM call and put for each expiry
-expiry-level OI, volume, spot, and listed-contract count
-five strikes nearest spot for the selected expiry
-bid, ask, mark, IV, delta, gamma, theta, vega, OI, volume, and contract value
-```
-
-The complete candles and all Delta option rows stay in the database snapshot. They are not copied into model context.
+Delta market and option data is not included in model context. The scheduling tool privately resolves a listed Delta option expiry before it creates the live strategy record.
 
 ### Chart storage
 
@@ -793,7 +654,8 @@ Server behavior:
 5. Materialize entry and exit timestamps without changing the saved risk rules.
 6. Create the same `scheduled` strategy record used by manual Strategy Builder scheduling.
 7. Store the AI decision and evidence for audit.
-8. Leave order submission to the existing strategy scheduler at the activation time.
+8. In the same transaction, schedule an activation recheck five minutes before entry.
+9. Leave order submission to the existing strategy scheduler at the activation time.
 
 ### 9.3 `scheduled_next_agent_run`
 
@@ -825,6 +687,14 @@ Rules:
 - A scheduled run cannot bypass the normal session and account controls.
 
 The more conventional tool name would be `schedule_next_agent_run`, but this draft retains the requested name until the API naming is finalized.
+
+### 9.4 Activation recheck
+
+The recheck receives only its assigned strategy, activation time, the selecting run's final report and decision time, and fresh Binance Spot data with 1-minute and 15-minute charts. It has no team members, news research, or strategy-selection tools.
+
+If the setup is still valid, it returns a report without calling a tool. The service records `strategy_reconfirmed`. Otherwise it calls `drop_strategy` with the assigned name, activation time, and reason. The tool validates those fields against the bound proposal ID and atomically cancels that proposal and its still-scheduled strategy. A failed drop cannot become a reconfirmation.
+
+Rechecks are separate from optional follow-ups and do not consume their quota. New selections must leave more than five minutes before activation. The backend request timeout is 120 seconds. Entry waits for a completed reconfirmation within the existing entry-lateness window; a failed, cancelled, or overdue recheck prevents entry. Manual and older schedules without a linked recheck keep their existing behavior. Turning off automation still cancels pending work.
 
 ## 10. Agent run schedule
 
@@ -866,6 +736,8 @@ Every run ends in exactly one state:
 strategy_selected
 wait_and_run_again
 no_trade_for_current_window
+strategy_reconfirmed
+strategy_dropped
 ```
 
 Silence, malformed output, or a tool failure must not create a trade.
@@ -879,7 +751,7 @@ User creates and saves complete strategies
 Fixed session or scheduled agent run starts
                     |
                     v
-AI receives BTC, news, options, and saved-strategy context
+AI receives Binance Spot, news, and saved-strategy context
                     |
           +---------+---------+
           |                   |
@@ -891,10 +763,10 @@ and activation time      and schedule next run
 Proposal saved with evidence and expiry
           |
           v
-Activation time arrives
+Five-minute recheck evaluates fresh Binance charts
           |
           v
-Latest conditions and saved version revalidated
+Activation time arrives; recheck outcome verified
           |
     +-----+-----+
     |           |
@@ -912,11 +784,12 @@ Execute and monitor
 
 - Strategy Builder stores risk basis, holding mode, expiry policy, take profit, auto-lot intent, and the enabled-for-AI flag.
 - Capital allocation is stored once per account and defaults to 50% per strategy.
-- Saved strategies have a database version. Proposals bind to that version and fail if it changes.
+- Saved strategies have a database version. Selection rejects a version that changed before scheduling, then stores a copy of the selected definition for execution.
 - The database stores agent runs, market snapshots, proposals, and policy-derived execution allocations.
 - The strategy-level controller monitors combined credit and combined debit take profit and stop loss.
-- The eight approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
-- The DeepSeek vision team receives BTC price, volume, volatility, order-book, and Delta open-interest charts, Delta option context, account context, and one news sub-agent.
+- The six approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
+- The main vision team receives Binance Spot price, volume, volatility, and order-book charts plus one news sub-agent. Delta market data is excluded from model input.
+- Every AI-selected strategy receives a separate Binance-only activation recheck five minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy.
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
 - Asia, London, and New York triggers use their local timezones, so daylight-saving changes convert correctly.
 
@@ -944,4 +817,3 @@ Execute and monitor
 - [Options Industry Council strategy library](https://www.optionseducation.org/strategies/all-strategies-en)
 - [Long straddle explanation](https://www.optionseducation.org/strategies/all-strategies/long-straddle)
 - [Short straddles and strangles](https://www.optionseducation.org/videolibrary/volatility-strategies-ii-short-straddles-and-stran)
-- [Iron condor and iron butterfly overview](https://www.optionseducation.org/news/october-webinar-key-takeaways)
