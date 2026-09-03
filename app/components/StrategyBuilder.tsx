@@ -31,8 +31,9 @@ const DRAFT_ID_STORAGE_KEY = "delta-strategy-draft-id-v1";
 const MAX_LEGS = 12;
 const DEFAULT_STRATEGY_NAMES = [
   "Long call", "Long put", "Long ATM straddle", "Long strangle",
-  "Short ATM straddle", "Short strangle", "Iron condor", "Iron butterfly"
+  "Short ATM straddle", "Short strangle"
 ] as const;
+const RETIRED_DEFAULT_STRATEGY_NAMES = new Set(["Iron condor", "Iron butterfly"]);
 
 const tomorrow = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
@@ -535,7 +536,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
 
         const parsed = rows
           .map(savedStrategyFromRow)
-          .filter((item): item is SavedStrategy => item !== null);
+          .filter((item): item is SavedStrategy =>
+            item !== null && !(item.isDefault && RETIRED_DEFAULT_STRATEGY_NAMES.has(item.name))
+          );
         const library = markLegacyDefaultCopies(parsed).sort(sortSavedStrategies);
         setSavedStrategies(library);
 
