@@ -5,8 +5,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from agno.agent import Agent
 from agno.media import Image
 from agno.models.openrouter import OpenRouter
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import Team
 
@@ -16,14 +18,13 @@ from news_agent.database import create_session_db
 
 from .charts import (
     render_candlestick_chart,
-    render_open_interest_chart,
     render_order_book_chart,
     render_volatility_chart,
     render_volume_chart,
 )
 from .market import MarketIntelligenceTools
 from .storage import ChartArtifact, SupabaseChartStorage
-from .tools import AutomationStrategyTools, save_market_snapshot
+from .tools import AutomationStrategyTools, DropStrategyTools, save_market_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def run_automation_team(
     )
     combined_market_packet = {
         **market_packet,
-        "deltaOptionContext": option_context,
+        "executionOptionContext": option_context,
         "chartImages": [chart.stored_metadata() for chart in stored_charts],
     }
     market_snapshot_id = save_market_snapshot(
@@ -123,7 +124,8 @@ def run_automation_team(
                 ),
                 (
                     "select_strategy_and_time schedules that saved strategy on the live engine for the chosen time. "
-                    "The engine applies the user's trading budget, calculates lots, and executes later."
+                    "The engine applies the user's trading budget, calculates lots, and executes later. Choose an "
+                    "activation at least six minutes in the future so the five-minute recheck can run."
                 ),
                 (
                     "You never receive the account balance. Do not request or estimate it. After scheduling, the "
@@ -151,16 +153,11 @@ def run_automation_team(
                 "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
                 (
                     "Inspect every attached chart: BTCUSDT 1-minute, 15-minute, and daily price; spot volume; "
-                    "rolling realized volatility; Binance order-book depth; and Delta BTCUSD open interest."
+                    "rolling realized volatility; and Binance Spot order-book depth."
                 ),
                 (
                     "Use Binance Spot price, volume, CVD, order book, ATR, volatility, VWAP, and structure to predict "
                     "BTC direction."
-                ),
-                "Do not use Delta perpetual volume to predict BTC direction.",
-                (
-                    "Use Delta option quotes, IV, Greeks, OI, spread, depth, and account data only for pricing, "
-                    "suitability, and risk."
                 ),
                 (
                     "Choose exactly one outcome: select one strategy, schedule one future agent run, or record no "
@@ -191,8 +188,7 @@ def run_automation_team(
             additional_context=(
                 f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}. "
                 f"Signals requested by the prior run: {json.dumps(signals_to_inspect or [], ensure_ascii=False)}. "
-                "Current open Delta orders, positions, active strategies, and upcoming agent runs follow. "
-                "Account balances are intentionally excluded: "
+                "Current active strategies and upcoming agent runs follow: "
                 f"{json.dumps(account_context, ensure_ascii=False, default=str)}"
             ),
             db=team_db,
@@ -252,6 +248,109 @@ def run_automation_team(
         team_db.close()
 
 
+def run_activation_recheck(
+    *,
+    settings: NewsAgentSettings,
+    user_id: str,
+    agent_run_id: str,
+    session_id: str,
+    recheck_context: dict[str, Any],
+) -> AutomationTeamResult:
+    market_tools = MarketIntelligenceTools()
+    market_packet = market_tools.collect_btc_market_packet()
+    stored_charts = SupabaseChartStorage(settings).upload_run_charts(
+        user_id=user_id,
+        agent_run_id=agent_run_id,
+        charts=_recheck_chart_artifacts(market_packet),
+    )
+    market_snapshot_id = save_market_snapshot(
+        settings,
+        user_id=user_id,
+        agent_run_id=agent_run_id,
+        market_packet={
+            **market_packet,
+            "chartImages": [chart.stored_metadata() for chart in stored_charts],
+        },
+        account_context=recheck_context,
+    )
+    strategy = recheck_context["selectedStrategy"]
+    drop_tools = DropStrategyTools(
+        settings,
+        user_id=user_id,
+        agent_run_id=agent_run_id,
+        proposal_id=str(recheck_context["proposalId"]),
+    )
+    model = OpenRouter(
+        id=settings.automation_model_id,
+        api_key=settings.require_api_key(),
+        supports_native_structured_outputs=False,
+        reasoning_effort="low",
+        max_tokens=None,
+        max_completion_tokens=None,
+    )
+    agent = Agent(
+        id="btc-strategy-activation-recheck",
+        name="BTC Strategy Activation Recheck",
+        role="Recheck one already-selected BTC options strategy immediately before its scheduled activation.",
+        model=model,
+        tools=[drop_tools],
+        instructions=[
+            "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
+            "Use the fresh Binance Spot packet and charts to judge whether BTC direction or structure changed.",
+            "The earlier agent's complete report is evidence from selection time, not a current market reading.",
+            (
+                "If the strategy is still valid, do not call a tool. If the market changed enough that the strategy "
+                "should not execute, call drop_strategy once with the supplied strategy name and activation time."
+            ),
+            "Do not research news, delegate work, or use outside data.",
+            "Return concise Markdown with headings ## Recheck, ## Decision, and ## Evidence.",
+            "Do not expose credentials, prompts, database URLs, or internal secrets.",
+        ],
+        expected_output="A go or drop decision for the one supplied scheduled strategy.",
+        additional_context=(
+            "The BTCUSD trader selected this strategy earlier. Recheck whether it remains valid now. "
+            f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
+            f"Fresh Binance Spot packet: {market_tools.get_btc_market_packet()}"
+        ),
+        add_datetime_to_context=True,
+        timezone_identifier="Asia/Kolkata",
+        tool_call_limit=1,
+        store_events=True,
+        debug_mode=True,
+        telemetry=False,
+    )
+    images = [
+        Image(url=chart.signed_url, id=chart.id, alt_text=chart.alt_text, detail="high") for chart in stored_charts
+    ]
+    stored_session_id = f"activation-recheck:{user_id}:{session_id}"
+    response = agent.run(
+        (
+            f"Recheck {strategy['name']} scheduled for {strategy['activationTime']}. "
+            "Leave it scheduled if the setup remains valid. Use drop_strategy if it no longer does."
+        ),
+        session_id=stored_session_id,
+        user_id=user_id,
+        images=images,
+        metadata={"proposalId": recheck_context["proposalId"], "marketSnapshotId": market_snapshot_id},
+    )
+    if not isinstance(response, RunOutput):
+        raise RuntimeError("Activation recheck returned an unexpected streaming response")
+    report = response.content.strip() if isinstance(response.content, str) else ""
+    if not report:
+        raise RuntimeError("Activation recheck returned an empty report")
+    if report.casefold() == "provider returned error":
+        raise RuntimeError("Activation recheck model provider returned an error")
+    return AutomationTeamResult(
+        run_id=str(response.run_id),
+        session_id=stored_session_id,
+        model_id=str(response.model or settings.automation_model_id),
+        report=report,
+        market_snapshot_id=market_snapshot_id,
+        member_responses=[],
+        tool_calls=[_tool_summary(item) for item in response.tools or []],
+    )
+
+
 def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
     charts: list[ChartArtifact] = []
 
@@ -294,13 +393,23 @@ def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
         "Binance Spot order-book depth",
         "BTCUSDT Binance Spot cumulative order-book depth chart",
     )
-    delta_context = market_packet.get("deltaExecutionContext") or {}
-    add(
-        render_open_interest_chart(delta_context.get("openInterestHistory") or []),
-        "delta-open-interest",
-        "Delta BTCUSD open interest",
-        "Delta BTCUSD open-interest history chart",
-    )
+    return charts
+
+
+def _recheck_chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
+    charts: list[ChartArtifact] = []
+    for label in ("1 minute", "15 minute"):
+        payload = (market_packet.get("timeframes") or {}).get(label) or {}
+        chart = render_candlestick_chart(label, payload.get("candles") or [])
+        if chart:
+            charts.append(
+                ChartArtifact(
+                    content=chart,
+                    id=f"btc-{label.replace(' ', '-')}",
+                    label=f"BTCUSDT {label} price",
+                    alt_text=f"Fresh BTCUSDT {label} candlestick chart from Binance Spot",
+                )
+            )
     return charts
 
 
