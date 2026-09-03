@@ -1,0 +1,15 @@
+services:
+  redis:
+    restart: unless-stopped
+
+  web:
+    restart: unless-stopped
+
+  flower:
+    restart: unless-stopped
+
+  sandbox-manager:
+    ports: !reset []
+
+  cloudflared:
+    restart: unless-stopped
