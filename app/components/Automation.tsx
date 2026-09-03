@@ -81,7 +81,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
     <div className="automation-page">
       <SectionHeading
         title="Automation"
-        description="Analyze BTC charts, news, options, account risk, and schedule saved strategies live."
+        description="Analyze Binance Spot charts and news, then schedule and recheck saved strategies live."
         actions={
           <>
             <button type="button" className="button secondary" onClick={() => void load()} disabled={loading || running}>
@@ -101,7 +101,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
           <PanelHeader icon={<Bot />} title="Agent status" meta={overview?.settings.model ?? "Loading model"} />
           <Toggle
             label="Automation"
-            description="Runs at the listed market sessions and at follow-up times selected by the agent."
+            description="Runs at market sessions, approved follow-up times, and before selected strategies enter."
             checked={overview?.settings.enabled ?? false}
             onChange={enabled => { if (!loading && !saving) void updateEnabled(enabled); }}
           />
@@ -153,14 +153,14 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
             icon={<Bot />}
             title={running ? "Analysis is running" : "No automation decision yet"}
             description={running
-              ? "The main agent is reading five BTC charts and delegating current-news research to its news agent."
+              ? "Market analysis or a scheduled strategy recheck is running."
               : "A completed agent outcome will appear here."}
           />
         )}
       </Panel>
 
       <Panel>
-        <PanelHeader icon={<Activity />} title="Main agent run history" meta={`${overview?.runs.length ?? 0} actual runs`} />
+        <PanelHeader icon={<Activity />} title="Agent run history" meta={`${overview?.runs.length ?? 0} actual runs`} />
         {overview?.runs.length ? (
           <div className="automation-run-list">
             {overview.runs.map(run => (
