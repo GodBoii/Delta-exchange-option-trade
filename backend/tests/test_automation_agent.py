@@ -16,12 +16,11 @@ from app.engine import TradingEngine, capital_budget
 from app.errors import AppError
 from automation_agent.charts import (
     render_candlestick_chart,
-    render_open_interest_chart,
     render_order_book_chart,
     render_volatility_chart,
     render_volume_chart,
 )
-from automation_agent.market import compact_btc_market_packet, compact_delta_option_context
+from automation_agent.market import compact_btc_market_packet
 from automation_agent.storage import ChartArtifact, SupabaseChartStorage
 from automation_agent.tools import AutomationStrategyTools, materialize_live_definition
 from news_agent.config import NewsAgentSettings
@@ -78,6 +77,9 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
                 return []
             if table == "strategy_proposals":
                 return []
+            if table == "automation_market_snapshots":
+                assert params["select"] == "id,chart_images:market_json->chartImages"
+                return [{"id": "snapshot-1", "chart_images": []}]
             if table == "automation_agent_runs":
                 self.run_queries.append(params)
                 if params["status"] == "eq.scheduled":
@@ -99,6 +101,7 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
                         "completed_at": "2026-08-30T09:01:00Z",
                         "model_id": "model",
                         "report_markdown": "Decision",
+                        "market_snapshot_id": "snapshot-1",
                     }
                 ]
 
@@ -294,13 +297,12 @@ def test_all_agent_chart_types_render_non_empty_pngs() -> None:
                 "asks": [[80_001 + index, 1 + index] for index in range(10)],
             }
         ),
-        render_open_interest_chart([{"close": 1_000 + index * 5} for index in range(40)]),
     ]
 
     assert all(chart.startswith(b"\x89PNG") and len(chart) > 1_000 for chart in charts)
 
 
-def test_agent_tools_return_summaries_instead_of_raw_candles_and_full_chain() -> None:
+def test_agent_market_packet_excludes_raw_candles_and_delta_data() -> None:
     candles = [{"open": 100, "high": 110, "low": 90, "close": 105, "baseVolume": 12} for _ in range(100)]
     market = {
         "source": "Binance Spot",
@@ -313,28 +315,10 @@ def test_agent_tools_return_summaries_instead_of_raw_candles_and_full_chain() ->
         "deltaExecutionContext": {"openInterestUsd": 5_000_000},
         "timeframes": {"15 minute": {"candles": candles, "summary": {"returnPercent": 1.2}}},
     }
-    options = [
-        {
-            "symbol": f"{kind}-BTC-{strike}-250826",
-            "type": "call_options" if kind == "C" else "put_options",
-            "expiry": "2026-08-25T12:00:00Z",
-            "strike": strike,
-            "spot": 100,
-            "mark": 5,
-            "openInterest": 10,
-        }
-        for strike in range(50, 151, 5)
-        for kind in ("C", "P")
-    ]
-
     compact_market = compact_btc_market_packet(market)
-    compact_options = compact_delta_option_context(
-        {"source": "Delta Exchange", "underlying": "BTC", "options": options}
-    )
 
     assert "candles" not in json.dumps(compact_market)
-    assert len(compact_options["nearbyOptions"]) == 10
-    assert len(json.dumps(compact_options)) < len(json.dumps(options)) / 2
+    assert "delta" not in json.dumps(compact_market).casefold()
 
 
 def test_private_chart_upload_returns_signed_url() -> None:
@@ -368,20 +352,7 @@ def test_private_chart_upload_returns_signed_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_account_context_excludes_balances() -> None:
-    class Client:
-        async def open_orders(self) -> dict:
-            return {"result": [{"product_symbol": "BTCUSD", "side": "buy", "size": 1}]}
-
-        async def positions(self) -> dict:
-            return {"result": [{"product_symbol": "BTCUSD", "size": 1}]}
-
-        async def balances(self) -> dict:
-            raise AssertionError("balances must never be requested for model context")
-
-        async def close(self) -> None:
-            return None
-
+async def test_agent_account_context_excludes_exchange_account_data() -> None:
     class Database:
         async def select(self, _table: str, _query: dict) -> list[dict]:
             return []
@@ -392,11 +363,11 @@ async def test_agent_account_context_excludes_balances() -> None:
         async def capital_policy(self, _user_id: str) -> CapitalPolicy:
             return CapitalPolicy()
 
-        async def client_for_user(self, _user_id: str) -> Client:
-            return Client()
+        async def client_for_user(self, _user_id: str):
+            raise AssertionError("exchange account data must not be requested for model context")
 
     context = await build_account_context(Engine(), "user-1")  # type: ignore[arg-type]
 
     assert "balances" not in context
-    assert context["openOrders"][0]["product_symbol"] == "BTCUSD"
-    assert context["positions"][0]["product_symbol"] == "BTCUSD"
+    assert "openOrders" not in context
+    assert "positions" not in context
