@@ -26,6 +26,8 @@ from app.capital import percentage_concurrency_limit
 from app.models import StrategyDefinition
 from news_agent.config import NewsAgentSettings
 
+RECHECK_LEAD_TIME = timedelta(minutes=5)
+
 
 class AutomationStrategyTools(Toolkit):
     """Tools that schedule saved strategies through the existing live strategy engine."""
@@ -129,6 +131,9 @@ class AutomationStrategyTools(Toolkit):
         saved_id = str(UUID(saved_strategy_id))
         activation = _future_datetime(activation_time, "activation_time")
         expiry = _future_datetime(proposal_expiry, "proposal_expiry")
+        recheck_at = activation - RECHECK_LEAD_TIME
+        if recheck_at <= datetime.now(UTC):
+            raise ValueError("activation_time must leave at least five minutes for the activation recheck")
         fixed_session = fixed_session_during_minute(activation)
         if fixed_session:
             raise ValueError(
@@ -195,7 +200,8 @@ class AutomationStrategyTools(Toolkit):
             snapshot = cursor.fetchone()
             if not snapshot:
                 raise ValueError("The current market snapshot is unavailable")
-            option_context = (snapshot["market_json"] or {}).get("deltaOptionContext") or {}
+            market_json = snapshot["market_json"] or {}
+            option_context = market_json.get("executionOptionContext") or market_json.get("deltaOptionContext") or {}
             live_definition, exit_at = materialize_live_definition(
                 strategy["definition_json"],
                 activation=activation,
@@ -246,6 +252,22 @@ class AutomationStrategyTools(Toolkit):
                 ),
             )
             proposal_id = cursor.fetchone()["id"]
+            cursor.execute(
+                """
+                insert into public.automation_agent_runs (
+                  user_id, run_key, trigger, status, scheduled_for, reason, strategy_proposal_id
+                ) values (%s,%s,'activation_recheck','scheduled',%s,%s,%s)
+                returning id::text
+                """,
+                (
+                    self.user_id,
+                    f"activation-recheck:{proposal_id}",
+                    recheck_at,
+                    f"Recheck {strategy['name']} before its scheduled activation",
+                    proposal_id,
+                ),
+            )
+            recheck_run_id = cursor.fetchone()["id"]
             connection.commit()
 
         return json.dumps(
@@ -257,6 +279,8 @@ class AutomationStrategyTools(Toolkit):
                 "activationTime": activation.isoformat(),
                 "proposalExpiry": expiry.isoformat(),
                 "scheduledStrategyId": scheduled_strategy_id,
+                "activationRecheckRunId": recheck_run_id,
+                "activationRecheckTime": recheck_at.isoformat(),
                 "exitTime": exit_at.isoformat(),
                 "execution": "live_strategy_scheduler",
             }
@@ -310,6 +334,7 @@ class AutomationStrategyTools(Toolkit):
                 select id::text, trigger, scheduled_for
                 from public.automation_agent_runs
                 where user_id = %s and id <> %s and status = 'scheduled' and scheduled_for > %s
+                  and trigger <> 'activation_recheck'
                 order by scheduled_for
                 limit 1
                 """,
@@ -470,6 +495,89 @@ class AutomationStrategyTools(Toolkit):
         return psycopg.connect(self.database_url, row_factory=dict_row)
 
 
+class DropStrategyTools(Toolkit):
+    """Allow a recheck agent to cancel only the proposal assigned to its run."""
+
+    def __init__(
+        self,
+        settings: NewsAgentSettings,
+        *,
+        user_id: str,
+        agent_run_id: str,
+        proposal_id: str,
+        **kwargs: Any,
+    ) -> None:
+        self.database_url = _psycopg_url(settings.require_database_url())
+        self.user_id = str(UUID(user_id))
+        self.agent_run_id = str(UUID(agent_run_id))
+        self.proposal_id = str(UUID(proposal_id))
+        super().__init__(
+            name="activation_recheck_tools",
+            tools=[self.drop_strategy],
+            instructions="drop_strategy can cancel only the scheduled strategy bound to this activation recheck.",
+            add_instructions=True,
+            **kwargs,
+        )
+
+    def drop_strategy(self, strategy_name: str, activation_time: str, reason: str) -> str:
+        """Cancel the supplied scheduled strategy because its original market setup is no longer valid."""
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("reason is required")
+        requested_activation = _aware_datetime(activation_time, "activation_time")
+        with psycopg.connect(self.database_url, row_factory=dict_row) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select proposals.status as proposal_status, proposals.activation_time,
+                       strategies.id::text as strategy_id, strategies.name, strategies.status as strategy_status
+                from public.strategy_proposals proposals
+                join public.strategies strategies on strategies.id = proposals.strategy_id
+                where proposals.id = %s and proposals.user_id = %s
+                for update of proposals, strategies
+                """,
+                (self.proposal_id, self.user_id),
+            )
+            assigned = cursor.fetchone()
+            if not assigned:
+                raise ValueError("The strategy assigned to this recheck is unavailable")
+            if assigned["name"].casefold() != strategy_name.strip().casefold():
+                raise ValueError("strategy_name does not match the strategy assigned to this recheck")
+            if requested_activation != assigned["activation_time"].astimezone(UTC):
+                raise ValueError("activation_time does not match the strategy assigned to this recheck")
+            if assigned["proposal_status"] != "scheduled" or assigned["strategy_status"] != "scheduled":
+                raise ValueError("The assigned strategy is no longer awaiting activation")
+            cursor.execute(
+                """
+                update public.automation_agent_runs
+                set outcome = 'strategy_dropped'
+                where id = %s and user_id = %s and status = 'running' and outcome is null
+                  and trigger = 'activation_recheck' and strategy_proposal_id = %s
+                returning id
+                """,
+                (self.agent_run_id, self.user_id, self.proposal_id),
+            )
+            if not cursor.fetchone():
+                raise ValueError("This activation recheck has already chosen its outcome")
+            message = f"Dropped by activation recheck: {reason}"
+            cursor.execute(
+                "update public.strategies set status = 'cancelled', last_error = %s where id = %s",
+                (message, assigned["strategy_id"]),
+            )
+            cursor.execute(
+                "update public.strategy_proposals set status = 'cancelled', rejection_reason = %s where id = %s",
+                (message, self.proposal_id),
+            )
+            connection.commit()
+        return json.dumps(
+            {
+                "outcome": "strategy_dropped",
+                "strategy": assigned["name"],
+                "activationTime": requested_activation.isoformat(),
+                "reason": reason,
+            }
+        )
+
+
 def save_market_snapshot(
     settings: NewsAgentSettings,
     *,
@@ -509,6 +617,42 @@ def read_automation_state(settings: NewsAgentSettings, *, user_id: str, agent_ru
     return dict(row) if row else None
 
 
+def confirm_activation_recheck(
+    settings: NewsAgentSettings,
+    *,
+    user_id: str,
+    agent_run_id: str,
+    proposal_id: str,
+) -> str:
+    """Record the no-tool recheck outcome without reopening or changing the strategy."""
+    with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
+        row = connection.execute(
+            """
+            update public.automation_agent_runs runs
+            set outcome = case
+              when proposals.status = 'scheduled' and strategies.status = 'scheduled'
+                then 'strategy_reconfirmed'
+              else 'strategy_dropped'
+            end
+            from public.strategy_proposals proposals
+            left join public.strategies strategies on strategies.id = proposals.strategy_id
+            where runs.id = %s and runs.user_id = %s and runs.status = 'running' and runs.outcome is null
+              and runs.strategy_proposal_id = proposals.id and proposals.id = %s
+            returning runs.outcome
+            """,
+            (str(UUID(agent_run_id)), str(UUID(user_id)), str(UUID(proposal_id))),
+        ).fetchone()
+        if not row:
+            row = connection.execute(
+                "select outcome from public.automation_agent_runs where id = %s and user_id = %s",
+                (str(UUID(agent_run_id)), str(UUID(user_id))),
+            ).fetchone()
+        connection.commit()
+    if not row or not row["outcome"]:
+        raise RuntimeError("The activation recheck outcome could not be recorded")
+    return str(row["outcome"])
+
+
 def _psycopg_url(url: str) -> str:
     normalized = url.replace("postgresql+psycopg://", "postgresql://", 1)
     parts = urlsplit(normalized)
@@ -517,6 +661,17 @@ def _psycopg_url(url: str) -> str:
 
 def _future_datetime(value: str, field: str) -> datetime:
     return parse_aware_datetime(value, field)
+
+
+def _aware_datetime(value: str, field: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"{field} must be a timezone-aware ISO-8601 timestamp") from error
+    if parsed.utcoffset() is None:
+        raise ValueError(f"{field} must include a timezone")
+    return parsed.astimezone(UTC)
 
 
 def materialize_live_definition(
