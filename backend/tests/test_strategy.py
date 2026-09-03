@@ -162,7 +162,7 @@ def test_combined_premium_100_percent_triggers_at_twice_entry_credit():
     assert metrics["trigger_close_cost"] == Decimal("400")
 
 
-def test_default_library_contains_the_eight_approved_strategies():
+def test_default_library_contains_the_six_approved_strategies():
     definitions = default_strategy_definitions(datetime(2026, 8, 25, 8, tzinfo=UTC))
 
     assert [definition.name for definition in definitions] == [
@@ -172,8 +172,6 @@ def test_default_library_contains_the_eight_approved_strategies():
         "Long strangle",
         "Short ATM straddle",
         "Short strangle",
-        "Iron condor",
-        "Iron butterfly",
     ]
     assert all(definition.schemaVersion == 2 for definition in definitions)
     assert all(definition.enabledForAi for definition in definitions)
