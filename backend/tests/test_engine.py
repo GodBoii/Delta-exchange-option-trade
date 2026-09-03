@@ -618,6 +618,8 @@ async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> 
             self.proposal_status: dict = {}
 
         async def select(self, table: str, query: dict) -> list[dict]:
+            if table == "strategy_proposals":
+                return []
             assert table == "strategies"
             if query.get("status") == "eq.scheduled" and self.strategy["status"] == "scheduled":
                 return [{"id": self.strategy["id"], "entry_at": self.strategy["entry_at"]}]
@@ -656,3 +658,43 @@ async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> 
     assert db.strategy["status"] == "attention"
     assert db.strategy["last_error"] == "Entry not placed: One lot does not fit inside the account capital budget"
     assert db.proposal_status["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_activation_recheck_states_are_bound_to_their_proposals() -> None:
+    class Database:
+        async def select(self, table: str, _query: dict) -> list[dict]:
+            if table == "strategy_proposals":
+                return [
+                    {"id": "proposal-go", "strategy_id": "strategy-go"},
+                    {"id": "proposal-drop", "strategy_id": "strategy-drop"},
+                    {"id": "proposal-pending", "strategy_id": "strategy-pending"},
+                ]
+            if table == "automation_agent_runs":
+                return [
+                    {
+                        "strategy_proposal_id": "proposal-go",
+                        "status": "completed",
+                        "outcome": "strategy_reconfirmed",
+                    },
+                    {
+                        "strategy_proposal_id": "proposal-drop",
+                        "status": "completed",
+                        "outcome": "strategy_dropped",
+                    },
+                    {"strategy_proposal_id": "proposal-pending", "status": "running", "outcome": None},
+                ]
+            raise AssertionError(f"Unexpected select: {table}")
+
+    engine = TradingEngine(Database(), settings())  # type: ignore[arg-type]
+
+    states = await engine.activation_recheck_states(
+        ["strategy-go", "strategy-drop", "strategy-pending", "manual-strategy"]
+    )
+
+    assert states == {
+        "strategy-go": "ready",
+        "strategy-drop": "dropped",
+        "strategy-pending": "pending",
+        "manual-strategy": "ready",
+    }
