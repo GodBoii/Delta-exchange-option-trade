@@ -1814,9 +1814,23 @@ class TradingEngine:
                 },
             ),
         )
+        recheck_states = await self.activation_recheck_states([str(row["id"]) for row in due_entries])
         for row in due_entries:
             entry_at = datetime.fromisoformat(str(row["entry_at"]).replace("Z", "+00:00"))
             lateness = (now - entry_at).total_seconds()
+            recheck_state = recheck_states[str(row["id"])]
+            if recheck_state == "pending" and lateness <= self.settings.max_entry_lateness_seconds:
+                continue
+            if recheck_state in {"failed", "dropped"}:
+                await self.reject_scheduled_entry(
+                    str(row["id"]),
+                    AppError(
+                        409,
+                        "the activation recheck did not reconfirm this strategy",
+                        "activation_recheck_failed",
+                    ),
+                )
+                continue
             if lateness > self.settings.max_entry_lateness_seconds:
                 await self.reject_scheduled_entry(
                     str(row["id"]),
@@ -1850,6 +1864,39 @@ class TradingEngine:
         if reconcile_attention:
             await self.reconcile_attention_runs()
         await self.process_active_risks()
+
+    async def activation_recheck_states(self, strategy_ids: list[str]) -> dict[str, str]:
+        states = dict.fromkeys(strategy_ids, "ready")
+        if not strategy_ids:
+            return states
+        proposals = await self.db.select(
+            "strategy_proposals",
+            {"select": "id,strategy_id", "strategy_id": f"in.({','.join(strategy_ids)})"},
+        )
+        if not proposals:
+            return states
+        proposal_by_id = {str(row["id"]): str(row["strategy_id"]) for row in proposals}
+        rechecks = await self.db.select(
+            "automation_agent_runs",
+            {
+                "select": "strategy_proposal_id,status,outcome",
+                "strategy_proposal_id": f"in.({','.join(proposal_by_id)})",
+                "trigger": "eq.activation_recheck",
+            },
+        )
+        for recheck in rechecks:
+            strategy_id = proposal_by_id.get(str(recheck.get("strategy_proposal_id")))
+            if not strategy_id:
+                continue
+            if recheck.get("outcome") == "strategy_reconfirmed" and recheck.get("status") == "completed":
+                states[strategy_id] = "ready"
+            elif recheck.get("outcome") == "strategy_dropped":
+                states[strategy_id] = "dropped"
+            elif recheck.get("status") in {"failed", "cancelled"}:
+                states[strategy_id] = "failed"
+            else:
+                states[strategy_id] = "pending"
+        return states
 
     async def reject_scheduled_entry(self, strategy_id: str, error: AppError) -> None:
         reason = f"Entry not placed: {error.message}"
