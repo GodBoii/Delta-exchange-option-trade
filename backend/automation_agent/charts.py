@@ -94,11 +94,6 @@ def render_order_book_chart(order_book: dict[str, Any]) -> bytes:
     return _render_two_lines("BTCUSDT Binance Spot cumulative order-book depth", bid_depth, ask_depth)
 
 
-def render_open_interest_chart(history: list[dict[str, Any]]) -> bytes:
-    values = [_number(point.get("close")) for point in history[-160:]]
-    return _render_line("Delta BTCUSD open interest history", values, ACCENT)
-
-
 def _render_line(label: str, values: list[float], color: str, *, suffix: str = "") -> bytes:
     if len(values) < 2:
         return b""
