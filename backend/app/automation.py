@@ -61,64 +61,30 @@ async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
 async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str, Any]:
     policy = await engine.capital_policy(user_id)
     fixed = next_fixed_run(datetime.now(UTC))
-    client = await engine.client_for_user(user_id)
-    try:
-        orders, positions, active, upcoming_runs = await asyncio.gather(
-            client.open_orders(),
-            client.positions(),
-            engine.db.select(
-                "strategies",
-                {
-                    "select": "id,name,status,saved_strategy_id,risk_state,entry_at,exit_at",
-                    "user_id": f"eq.{user_id}",
-                    "status": "in.(scheduled,executing_entry,active,executing_exit,attention)",
-                    "limit": "25",
-                },
-            ),
-            engine.db.select(
-                "automation_agent_runs",
-                {
-                    "select": "id,trigger,scheduled_for,reason,signals_to_inspect",
-                    "user_id": f"eq.{user_id}",
-                    "status": "eq.scheduled",
-                    "scheduled_for": f"gt.{iso_now()}",
-                    "order": "scheduled_for.asc",
-                    "limit": "5",
-                },
-            ),
-        )
-    finally:
-        await client.close()
+    active, upcoming_runs = await asyncio.gather(
+        engine.db.select(
+            "strategies",
+            {
+                "select": "id,name,status,saved_strategy_id,entry_at,exit_at",
+                "user_id": f"eq.{user_id}",
+                "status": "in.(scheduled,executing_entry,active,executing_exit,attention)",
+                "limit": "25",
+            },
+        ),
+        engine.db.select(
+            "automation_agent_runs",
+            {
+                "select": "id,trigger,scheduled_for,reason,signals_to_inspect",
+                "user_id": f"eq.{user_id}",
+                "status": "eq.scheduled",
+                "trigger": "neq.activation_recheck",
+                "scheduled_for": f"gt.{iso_now()}",
+                "order": "scheduled_for.asc",
+                "limit": "5",
+            },
+        ),
+    )
     return {
-        "openOrders": [
-            _pick(
-                row,
-                "id",
-                "product_id",
-                "product_symbol",
-                "side",
-                "size",
-                "unfilled_size",
-                "order_type",
-                "limit_price",
-                "state",
-                "created_at",
-            )
-            for row in orders.get("result") or []
-        ],
-        "positions": [
-            _pick(
-                row,
-                "product_id",
-                "product_symbol",
-                "size",
-                "entry_price",
-                "margin",
-                "liquidation_price",
-                "realized_pnl",
-            )
-            for row in positions.get("result") or []
-        ],
         "activeStrategies": active,
         "nextFixedAgentRun": {
             "trigger": fixed.trigger,
@@ -137,6 +103,77 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
     }
 
 
+async def build_activation_recheck_context(
+    db: SupabaseAdmin,
+    user_id: str,
+    proposal_id: str,
+) -> dict[str, Any]:
+    proposals = await db.select(
+        "strategy_proposals",
+        {
+            "select": (
+                "id,agent_run_id,strategy_id,status,activation_time,proposal_expiry,ai_confidence,"
+                "reasoning_summary,supporting_signals,invalidation_signals"
+            ),
+            "id": f"eq.{proposal_id}",
+            "user_id": f"eq.{user_id}",
+            "limit": "1",
+        },
+    )
+    if not proposals:
+        raise AppError(404, "The strategy proposal for this activation recheck is unavailable", "proposal_not_found")
+    proposal = proposals[0]
+    strategies, parent_runs = await asyncio.gather(
+        db.select(
+            "strategies",
+            {
+                "select": "id,name,status,definition_json,entry_at,exit_at",
+                "id": f"eq.{proposal['strategy_id']}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        ),
+        db.select(
+            "automation_agent_runs",
+            {
+                "select": "id,scheduled_for,completed_at,report_markdown",
+                "id": f"eq.{proposal['agent_run_id']}",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        ),
+    )
+    if not strategies:
+        raise AppError(404, "The scheduled strategy for this activation recheck is unavailable", "strategy_not_found")
+    strategy = strategies[0]
+    if proposal["status"] != "scheduled" or strategy["status"] != "scheduled":
+        raise AppError(409, "The strategy is no longer awaiting activation", "strategy_not_scheduled")
+    parent = parent_runs[0] if parent_runs else {}
+    if not str(parent.get("report_markdown") or "").strip():
+        raise AppError(409, "The selecting agent's final report is unavailable", "selection_report_missing")
+    return {
+        "proposalId": proposal["id"],
+        "selectedStrategy": {
+            "id": strategy["id"],
+            "name": strategy["name"],
+            "activationTime": proposal["activation_time"],
+            "exitTime": strategy["exit_at"],
+            "proposalExpiry": proposal["proposal_expiry"],
+            "definition": strategy["definition_json"],
+        },
+        "originalSelection": {
+            "runId": parent.get("id"),
+            "runTime": parent.get("scheduled_for"),
+            "completedAt": parent.get("completed_at"),
+            "confidence": float(proposal["ai_confidence"]),
+            "reasoning": proposal["reasoning_summary"],
+            "supportingSignals": proposal.get("supporting_signals") or [],
+            "invalidationSignals": proposal.get("invalidation_signals") or [],
+            "finalResponse": parent.get("report_markdown"),
+        },
+    }
+
+
 async def execute_automation_run(
     *,
     db: SupabaseAdmin,
@@ -147,11 +184,18 @@ async def execute_automation_run(
     trigger: str,
     reason: str | None,
     signals_to_inspect: list[str] | None = None,
+    strategy_proposal_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
-        account_context = await build_account_context(engine, user_id)
-        async with httpx.AsyncClient(timeout=httpx.Timeout(900, connect=5)) as client:
+        if trigger == "activation_recheck":
+            if not strategy_proposal_id:
+                raise AppError(500, "Activation recheck is missing its strategy proposal", "recheck_proposal_missing")
+            account_context = await build_activation_recheck_context(db, user_id, strategy_proposal_id)
+        else:
+            account_context = await build_account_context(engine, user_id)
+        timeout_seconds = 120 if trigger == "activation_recheck" else 900
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=5)) as client:
             response = await client.post(
                 f"{news_analyzer_url}/v1/automation/analyze",
                 json={
@@ -272,7 +316,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         db.select(
             "saved_strategies",
             {
-                "select": "id,name,version,enabled_for_ai",
+                "select": "id,user_id,name,version,enabled_for_ai",
                 "or": f"(user_id.eq.{user_id},user_id.is.null)",
                 "order": "name.asc",
             },
@@ -315,12 +359,17 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         ),
     )
     names = {row["id"]: row["name"] for row in strategies}
+    strategies = [
+        row
+        for row in strategies
+        if not (row.get("user_id") is None and row["name"] in {"Iron condor", "Iron butterfly"})
+    ]
     snapshot_ids = [str(row["market_snapshot_id"]) for row in runs if row.get("market_snapshot_id")]
     snapshots = (
         await db.select(
             "automation_market_snapshots",
             {
-                "select": "id,market_json",
+                "select": "id,chart_images:market_json->chartImages",
                 "id": f"in.({','.join(snapshot_ids)})",
                 "user_id": f"eq.{user_id}",
             },
@@ -329,7 +378,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         else []
     )
     stored_charts = {
-        str(snapshot["id"]): (snapshot.get("market_json") or {}).get("chartImages") or [] for snapshot in snapshots
+        str(snapshot["id"]): snapshot.get("chart_images") or [] for snapshot in snapshots
     }
     charts_by_snapshot: dict[str, list[dict[str, str]]] = {}
     for snapshot_id, chart_rows in stored_charts.items():
@@ -563,7 +612,7 @@ class AutomationScheduler:
         due = await self.db.select(
             "automation_agent_runs",
             {
-                "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for",
+                "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id",
                 "status": "eq.scheduled",
                 "scheduled_for": f"lte.{iso_now()}",
                 "order": "scheduled_for.asc",
@@ -606,6 +655,7 @@ class AutomationScheduler:
                 trigger=str(row["trigger"]),
                 reason=row.get("reason"),
                 signals_to_inspect=row.get("signals_to_inspect") or [],
+                strategy_proposal_id=row.get("strategy_proposal_id"),
             )
         except Exception:
             logger.exception("Scheduled automation run failed run_id=%s", row["id"])
