@@ -744,7 +744,9 @@ class TradingEngine:
                     direction = 1 if leg["position"] == "buy" else -1
                     bracket: dict[str, Any] = {}
                     if mark > 0:
-                        if definition.riskMode == "combined_premium":
+                        if definition.riskMode == "combined_premium" or (
+                            definition.riskMode == "strategy_level" and leg["position"] == "sell"
+                        ):
                             if leg["position"] == "sell" and definition.emergencyStopLossPercent:
                                 emergency_multiplier = 1 + float(definition.emergencyStopLossPercent) / 100
                                 bracket["bracket_stop_loss_price"] = str(max(0.00000001, mark * emergency_multiplier))
