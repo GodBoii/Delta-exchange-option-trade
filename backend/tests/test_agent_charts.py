@@ -69,6 +69,8 @@ def test_chart_text_is_in_bounds_and_never_overlaps(monkeypatch, kind, case):
             as_of_ms=now,
         )
     assert Image.open(BytesIO(png)).size == (1600, 900)
+    assert charts.RIGHT - charts.LEFT >= 1400
+    assert not {"CHART CONTEXT", "Latest bar", "Interpretation"}.intersection(text for text, _ in labels)
     assert len(png) < 1_000_000
     for text, box in labels:
         assert 0 <= box[0] <= box[2] <= charts.WIDTH, (text, box)
@@ -91,25 +93,18 @@ def test_volatility_formula_and_gap_reset():
     assert result[45] is not None
 
 
-def test_volume_and_volatility_do_not_treat_live_bar_as_completed(monkeypatch):
+def test_volume_and_volatility_do_not_treat_live_bar_as_completed():
     rows = candles(22)
     for row in rows:
         row["baseVolume"] = 10
     rows[-1]["baseVolume"] = 10000
     rows[-1]["closed"] = False
-    panels = []
-    original = charts._Chart.panel
-
-    def record(self, fields):
-        panels.append(dict(fields))
-        original(self, fields)
-
-    monkeypatch.setattr(charts._Chart, "panel", record)
-    charts.render_volume_chart("15 minute", rows, as_of_ms=NOW)
-    assert panels[-1]["Relative volume | completed / mean"] == "1.00x"
-    assert "LIVE / incomplete" in panels[-1]["Latest shown bar"]
-    charts.render_volatility_chart("15 minute", rows, 35040, as_of_ms=NOW)
-    assert panels[-1]["Last estimate's bar opens"] == charts._time(rows[-2]["openTime"])
+    context = {}
+    charts.render_volume_chart("15 minute", rows, as_of_ms=NOW, context=context)
+    assert context["values"]["Relative volume | completed / mean"] == "1.00x"
+    assert "LIVE / incomplete" in context["values"]["Latest shown bar"]
+    charts.render_volatility_chart("15 minute", rows, 35040, as_of_ms=NOW, context=context)
+    assert context["values"]["Last estimate's bar opens"] == charts._time(rows[-2]["openTime"])
 
 
 def test_missing_and_invalid_inputs_remain_explicit():
@@ -129,3 +124,23 @@ def test_depth_sorts_aggregates_and_preserves_price_distance():
     chart = charts._Chart("Test", NOW)
     chart.axes([90, 110], 0, 10, "BTC", [], "USDT")
     assert chart.x(99) - chart.x(90) == pytest.approx(9 * (chart.x(100) - chart.x(99)))
+
+
+def test_chart_details_travel_with_main_and_recheck_images():
+    from automation_agent.team import _chart_artifacts, _recheck_chart_artifacts
+
+    packet = {
+        "capturedAt": NOW,
+        "timeframes": {label: {"candles": candles()} for label in ("1 minute", "15 minute", "1 day")},
+        "orderBook": {"bids": [[79999, 1]], "asks": [[80001, 2]], "eventTime": NOW},
+    }
+    main, recheck = _chart_artifacts(packet), _recheck_chart_artifacts(packet)
+    assert len(main) == 6
+    assert len(recheck) == 2
+    for chart in main + recheck:
+        assert chart.context["capturedAt"] == NOW
+        assert chart.context["xAxis"]
+        assert chart.context["yAxis"]
+        assert chart.context["legend"]
+        assert chart.context["values"]
+        assert chart.context["readingNotes"]
