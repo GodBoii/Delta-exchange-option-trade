@@ -1,6 +1,6 @@
 # This repository's Delta integration
 
-This file documents observed behavior in the current codebase, not intended future behavior.
+Historical integration notes from the initial implementation. For the current strategy-level monitor, built-in library, and activation rechecks, see [Automated strategy system](14-automated-strategy-system.md). The limitations below describe that older implementation.
 
 ## Architecture
 
