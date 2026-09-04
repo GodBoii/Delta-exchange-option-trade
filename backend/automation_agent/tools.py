@@ -343,6 +343,14 @@ class AutomationStrategyTools(Toolkit):
             existing = cursor.fetchone()
             if existing and existing["scheduled_for"] <= next_run:
                 self._claim_terminal_outcome(cursor, "wait_and_run_again")
+                cursor.execute(
+                    """
+                    update public.automation_agent_runs
+                    set parent_agent_run_id = %s
+                    where id = %s and user_id = %s and status = 'scheduled' and parent_agent_run_id is null
+                    """,
+                    (self.agent_run_id, existing["id"], self.user_id),
+                )
                 connection.commit()
                 return json.dumps(
                     {
@@ -395,7 +403,7 @@ class AutomationStrategyTools(Toolkit):
                     """
                     update public.automation_agent_runs
                     set run_key = %s, scheduled_for = %s, reason = %s, signals_to_inspect = %s,
-                        market_snapshot_id = %s, news_analysis_id = %s
+                        market_snapshot_id = %s, news_analysis_id = %s, parent_agent_run_id = %s
                     where id = %s
                     """,
                     (
@@ -405,6 +413,7 @@ class AutomationStrategyTools(Toolkit):
                         Jsonb(signals),
                         self.market_snapshot_id,
                         self.news_analysis_id,
+                        self.agent_run_id,
                         pending_follow_up["id"],
                     ),
                 )
@@ -441,8 +450,8 @@ class AutomationStrategyTools(Toolkit):
                 """
                 insert into public.automation_agent_runs (
                   user_id, run_key, trigger, status, scheduled_for, reason,
-                  signals_to_inspect, market_snapshot_id, news_analysis_id
-                ) values (%s,%s,'agent_follow_up','scheduled',%s,%s,%s,%s,%s)
+                  signals_to_inspect, market_snapshot_id, news_analysis_id, parent_agent_run_id
+                ) values (%s,%s,'agent_follow_up','scheduled',%s,%s,%s,%s,%s,%s)
                 on conflict (user_id, run_key) do update
                   set status = 'scheduled',
                       scheduled_for = excluded.scheduled_for,
@@ -451,7 +460,8 @@ class AutomationStrategyTools(Toolkit):
                       reason = excluded.reason,
                       signals_to_inspect = excluded.signals_to_inspect,
                       market_snapshot_id = excluded.market_snapshot_id,
-                      news_analysis_id = excluded.news_analysis_id
+                      news_analysis_id = excluded.news_analysis_id,
+                      parent_agent_run_id = excluded.parent_agent_run_id
                   where public.automation_agent_runs.status = 'cancelled'
                 returning id::text
                 """,
@@ -463,6 +473,7 @@ class AutomationStrategyTools(Toolkit):
                     Jsonb(signals),
                     self.market_snapshot_id,
                     self.news_analysis_id,
+                    self.agent_run_id,
                 ),
             )
             scheduled = cursor.fetchone()
@@ -606,6 +617,24 @@ def save_market_snapshot(
             )
         connection.commit()
     return snapshot_id
+
+
+def read_parent_run_context(settings: NewsAgentSettings, *, user_id: str, agent_run_id: str) -> dict[str, Any] | None:
+    """Read only the scheduling parent's report, never unrelated recent decisions."""
+    with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
+        row = connection.execute(
+            """
+            select parent.id::text as "runId", parent.scheduled_for as "scheduledFor",
+                   parent.started_at as "startedAt", parent.completed_at as "completedAt",
+                   parent.trigger, parent.outcome, parent.report_markdown as "finalResponse"
+            from public.automation_agent_runs child
+            join public.automation_agent_runs parent on parent.id = child.parent_agent_run_id
+              and parent.user_id = child.user_id
+            where child.id = %s and child.user_id = %s
+            """,
+            (str(UUID(agent_run_id)), str(UUID(user_id))),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def read_automation_state(settings: NewsAgentSettings, *, user_id: str, agent_run_id: str) -> dict[str, Any] | None:
