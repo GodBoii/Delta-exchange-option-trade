@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
@@ -15,6 +15,7 @@ class ChartArtifact:
     label: str
     alt_text: str
     content: bytes
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
