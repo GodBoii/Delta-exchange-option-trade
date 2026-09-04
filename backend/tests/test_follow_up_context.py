@@ -84,6 +84,9 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         collect_btc_market_packet=lambda: {"source": "Binance Spot"}, collect_delta_option_context=lambda: {},
     ))
     monkeypatch.setattr(team, "SupabaseChartStorage", lambda _: SimpleNamespace(upload_run_charts=lambda **_: []))
+    monkeypatch.setattr(team, "_chart_artifacts", lambda _: [
+        SimpleNamespace(id="btc-test", context={"readingNotes": ["Main chart instructions"]})
+    ])
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: SNAPSHOT)
     monkeypatch.setattr(team, "AutomationStrategyTools", lambda *_, **__: object())
     monkeypatch.setattr(team, "create_session_db", lambda *_, **__: SimpleNamespace(close=lambda: None))
@@ -105,6 +108,7 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         trigger="agent_follow_up", trigger_reason="Wait for confirmation", signals_to_inspect=["breakout"],
     )
     assert "Wait for confirmation" in captured["additional_context"]
+    assert "Main chart instructions" in captured["additional_context"]
     assert "breakout" in captured["additional_context"]
     assert ("Earlier complete assessment" in captured["additional_context"]) == bool(previous)
     assert account == {"activeStrategies": []}
