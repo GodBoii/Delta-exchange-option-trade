@@ -625,14 +625,16 @@ Delta market and option data is not included in model context. The scheduling to
 
 ### Chart storage
 
-Agent PNGs use a 1600 x 900 layout with separate plot, axis, and context-panel regions. Both main runs and activation rechecks use the same candlestick renderer. Each image identifies Binance Spot BTCUSDT, USDT price units, its UTC capture time, and the source bar or feed timestamps.
+Agent PNGs use a 1600 x 900 full-width plot with labeled axes and a compact boxed legend in the upper-right margin. There is no side panel or prose footer. Both main runs and activation rechecks use the same candlestick renderer. Images identify Binance Spot BTCUSDT, price/volume units, and UTC capture time.
+
+Detailed values, source timestamps, formulas, and reading instructions are sent as text keyed by image ID and persisted under `market_json.chartContext`. Main agents and activation rechecks receive this alongside the images, generated from the same snapshot. The items below describe the combined image and text context, not a statistics panel within the PNG.
 
 - Candlesticks show time ticks, OHLC, live/completed status, shown high/low and close-to-close return, EMA20/50, and a labeled window VWAP. EMA periods refer to that chart's bars; VWAP is HLC3 weighted by traded BTC from the left edge, not session VWAP.
 - Volume uses a zero-based BTC-per-bar axis, candle-direction colors, a previous-20-completed-bar mean, and a completed-bar relative-volume comparison. Partial volume is marked, not compared as a finished bar.
 - Realized volatility shows annualized percent, a 20-log-return lookback, the annualization factor, change in percentage points, and shown extrema. Live bars are excluded; windows restart after timestamp gaps. It is explicitly historical variability, not IV or a forecast.
 - Depth uses actual limit prices, cumulative BTC, separate bid/ask curves, midpoint, spread in USDT/bps, displayed-depth imbalance, and the supplied level count. Missing/invalid levels are rejected and crossed/locked books are labeled unreliable. This is a limited resting-order snapshot, not executed flow or full-market depth.
 
-To inspect the exact renderer output without running an agent, use `python -m scripts.render_agent_charts --binance-url http://127.0.0.1:8001 --output-dir <review-directory>` from `backend`. Reuse its `market.json` with `--packet <path>` for a same-snapshot comparison. These review files stay separate from trade history.
+To inspect the exact renderer output without running an agent, use `python -m scripts.render_agent_charts --binance-url http://127.0.0.1:8001 --output-dir <review-directory>` from `backend`. The output includes `chart-context.json` for the companion text. Reuse its `market.json` with `--packet <path>` for a same-snapshot comparison. These review files stay separate from trade history.
 
 Each chart is uploaded to the private Supabase `automation-charts` bucket. The model and Automation UI receive time-limited signed URLs for the same stored PNG objects. Account balances are never added to model context.
 
