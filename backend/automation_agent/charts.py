@@ -10,7 +10,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 WIDTH, HEIGHT = 1600, 900
-LEFT, RIGHT, TOP, BOTTOM = 120, 1120, 180, 704
+LEFT, RIGHT, TOP, BOTTOM = 120, 1560, 180, 780
 BACKGROUND, GRID, TEXT, MUTED = "#071018", "#203746", "#e5edf4", "#9db2c2"
 UP, DOWN, ACCENT, BLUE, PURPLE = "#39d98a", "#ff6b73", "#f2b84b", "#55a7ff", "#c49bff"
 INTERVAL_MS = {"1 minute": 60_000, "15 minute": 900_000, "1 day": 86_400_000}
@@ -51,28 +51,15 @@ def _text(draw, xy, text: str, size: int = 18, color: str = TEXT, anchor: str = 
     draw.text(xy, text, font=_font(size), fill=color, anchor=anchor)
 
 
-def _wrap(draw, text: str, width: int, size: int) -> list[str]:
-    lines: list[str] = []
-    for paragraph in text.split("\n"):
-        line = ""
-        for word in paragraph.split():
-            candidate = f"{line} {word}".strip()
-            if line and draw.textlength(candidate, font=_font(size)) > width:
-                lines.append(line)
-                line = word
-            else:
-                line = candidate
-        lines.append(line)
-    return lines
-
-
 class _Chart:
-    """Fixed plot and annotation regions keep labels outside the data area."""
+    """Full-width plot with a compact legend; detailed context travels as text."""
 
-    def __init__(self, title: str, as_of_ms: int | None):
+    def __init__(self, title: str, as_of_ms: int | None, context: dict[str, Any] | None = None):
         self.image = Image.new("RGB", (WIDTH, HEIGHT), BACKGROUND)
         self.draw = ImageDraw.Draw(self.image)
+        self.context = context if context is not None else {}
         self.now = as_of_ms if as_of_ms is not None else int(datetime.now(UTC).timestamp() * 1000)
+        self.context.update(title=title, capturedAt=self.now, source="Binance Spot")
         _text(self.draw, (40, 26), title, 30)
         _text(
             self.draw, (40, 76), f"Source: Binance Spot | Captured {_time(self.now)} | Quote currency: USDT", 18, MUTED
@@ -86,6 +73,7 @@ class _Chart:
             self.xmax += 0.5
         self.low, self.high = low, high if high > low else low + 1
         _text(self.draw, (LEFT, 145), unit, 18, MUTED)
+        self.context.update(xAxis=title, yAxis=unit)
         for index in range(6):
             value = self.low + (self.high - self.low) * index / 5
             y = self.y(value)
@@ -97,7 +85,7 @@ class _Chart:
             anchor = "lt" if x == LEFT else "rt" if x == RIGHT else "mt"
             for index, line in enumerate(label.split("\n")):
                 _text(self.draw, (x, BOTTOM + 16 + index * 23), line, 17, MUTED, anchor)
-        _text(self.draw, ((LEFT + RIGHT) / 2, 775), title, 18, MUTED, "mt")
+        _text(self.draw, ((LEFT + RIGHT) / 2, 855), title, 18, MUTED, "mt")
 
     def x(self, value: float) -> float:
         return LEFT + (value - self.xmin) / (self.xmax - self.xmin) * (RIGHT - LEFT)
@@ -124,24 +112,30 @@ class _Chart:
             x, y = points[0]
             self.draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=color)
 
-    def panel(self, fields: list[tuple[str, str]]):
-        self.draw.rounded_rectangle((1170, 130, 1560, 860), radius=12, fill="#10212e", outline=GRID)
-        _text(self.draw, (1192, 151), "CHART CONTEXT", 18, ACCENT)
-        y = 188
-        for label, value in fields:
-            lines = _wrap(self.draw, value, 344, 19)
-            if y + 22 + len(lines) * 25 > 843:
-                raise ValueError(f"Chart context exceeds its panel: {label}")
-            _text(self.draw, (1192, y), label, 15, MUTED)
-            for index, line in enumerate(lines):
-                _text(self.draw, (1192, y + 22 + index * 25), line, 19)
-            y += 34 + len(lines) * 25
+    def legend(self, entries: list[tuple[str, str, str]]):
+        widths = [self.draw.textlength(label, font=_font(16)) + 48 for label, _, _ in entries]
+        x = RIGHT - sum(widths) - 12
+        self.draw.rounded_rectangle((x, 129, RIGHT, 169), radius=6, fill="#10212e", outline=GRID)
+        x += 12
+        for (label, color, style), width in zip(entries, widths, strict=True):
+            if style == "outline":
+                self.draw.rectangle((x, 141, x + 18, 155), outline=color, width=2)
+            elif style == "bar":
+                self.draw.rectangle((x, 141, x + 18, 155), fill=color)
+            elif style == "dashed":
+                for offset in (0, 9, 18):
+                    self.draw.line((x + offset, 148, x + offset + 5, 148), fill=color, width=2)
+            else:
+                self.draw.line((x, 148, x + 23, 148), fill=color, width=3)
+            _text(self.draw, (x + 30, 140), label, 16)
+            x += width
+        self.context["legend"] = [{"label": label, "color": color, "style": style} for label, color, style in entries]
+
+    def describe(self, fields: list[tuple[str, str]]):
+        self.context["values"] = dict(fields)
 
     def notes(self, first: str, second: str):
-        for index, line in enumerate(_wrap(self.draw, first + "\n" + second, RIGHT - 40, 17)):
-            if index >= 3:
-                raise ValueError("Chart notes exceed their reserved area")
-            _text(self.draw, (40, 810 + index * 25), line, 17, MUTED)
+        self.context["readingNotes"] = [first, second]
 
     def save(self) -> bytes:
         output = BytesIO()
@@ -196,11 +190,13 @@ def _ema(values: list[float], period: int) -> list[float]:
     return result
 
 
-def render_candlestick_chart(label: str, candles: list[dict[str, Any]], *, as_of_ms: int | None = None) -> bytes:
+def render_candlestick_chart(
+    label: str, candles: list[dict[str, Any]], *, as_of_ms: int | None = None, context: dict[str, Any] | None = None
+) -> bytes:
     usable = _candles(candles)
     if not usable:
         return b""
-    chart = _Chart(f"BTCUSDT | Candlesticks | {label}", as_of_ms)
+    chart = _Chart(f"BTCUSDT | Candlesticks | {label}", as_of_ms, context)
     xs, ticks, title = _timeline(usable)
     high, low = max(float(c["high"]) for c in usable), min(float(c["low"]) for c in usable)
     pad = max((high - low) * 0.06, high * 0.0001)
@@ -234,10 +230,18 @@ def render_candlestick_chart(label: str, candles: list[dict[str, Any]], *, as_of
         vwap_values.append(notional / volume if volume and complete_volume else None)
     for values, color in ((ema20, BLUE), (ema50, PURPLE), (vwap_values, ACCENT)):
         chart.line(xs, values, color, INTERVAL_MS.get(label) if "UTC" in title else None)
-    for x, text, color in ((460, "EMA 20", BLUE), (600, "EMA 50", PURPLE), (740, "Window VWAP", ACCENT)):
-        _text(chart.draw, (x, 145), text, 18, color)
+    chart.legend(
+        [
+            ("Up", UP, "bar"),
+            ("Down", DOWN, "bar"),
+            ("Live bar", ACCENT, "outline"),
+            ("EMA 20", BLUE, "line"),
+            ("EMA 50", PURPLE, "line"),
+            ("Window VWAP", ACCENT, "line"),
+        ]
+    )
     latest = usable[-1]
-    chart.panel(
+    chart.describe(
         [
             ("Latest bar", _status(latest, chart.now)),
             (
@@ -260,12 +264,14 @@ def render_candlestick_chart(label: str, candles: list[dict[str, Any]], *, as_of
     return chart.save()
 
 
-def render_volume_chart(label: str, candles: list[dict[str, Any]], *, as_of_ms: int | None = None) -> bytes:
+def render_volume_chart(
+    label: str, candles: list[dict[str, Any]], *, as_of_ms: int | None = None, context: dict[str, Any] | None = None
+) -> bytes:
     usable = _candles(candles)
     volumes = [_volume(c) for c in usable]
     if not usable or all(v is None for v in volumes):
         return b""
-    chart = _Chart(f"BTCUSDT | Traded volume | {label}", as_of_ms)
+    chart = _Chart(f"BTCUSDT | Traded volume | {label}", as_of_ms, context)
     xs, ticks, title = _timeline(usable)
     maximum = max(v or 0 for v in volumes)
     chart.axes(xs, 0, maximum * 1.12 if maximum else 1, "Volume | BTC per bar", ticks, title)
@@ -287,11 +293,18 @@ def render_volume_chart(label: str, candles: list[dict[str, Any]], *, as_of_ms: 
         if _status(c, chart.now) == "Completed":
             completed.append(volume)
     chart.line(xs, baseline, BLUE, INTERVAL_MS.get(label) if "UTC" in title else None)
-    _text(chart.draw, (530, 145), "Blue: previous 20 completed bars' mean", 18, BLUE)
+    chart.legend(
+        [
+            ("Up bar", UP, "bar"),
+            ("Down bar", DOWN, "bar"),
+            ("Live bar", ACCENT, "outline"),
+            ("Prior 20-bar mean", BLUE, "line"),
+        ]
+    )
     last_closed = completed[-1] if completed else None
     comparison = mean(completed[-21:-1]) if len(completed) >= 21 else None
     ratio = last_closed / comparison if last_closed is not None and comparison else None
-    chart.panel(
+    chart.describe(
         [
             ("Latest completed volume | BTC", _fmt(last_closed)),
             ("Previous 20 completed bars | mean BTC", _fmt(comparison)),
@@ -334,10 +347,11 @@ def render_volatility_chart(
     periods_per_year: int,
     *,
     as_of_ms: int | None = None,
+    context: dict[str, Any] | None = None,
 ) -> bytes:
     if periods_per_year <= 0:
         raise ValueError("periods_per_year must be positive")
-    chart = _Chart(f"BTCUSDT | Rolling realized volatility | {label}", as_of_ms)
+    chart = _Chart(f"BTCUSDT | Rolling realized volatility | {label}", as_of_ms, context)
     usable = [c for c in _candles(candles) if _status(c, chart.now) != "LIVE / incomplete"]
     if len(usable) < 21:
         return b""
@@ -348,8 +362,9 @@ def render_volatility_chart(
     xs, ticks, title = _timeline(usable)
     chart.axes(xs, 0, max(max(available) * 1.12, 1), "Annualized realized volatility | %", ticks, title)
     chart.line(xs, values, BLUE, INTERVAL_MS.get(label) if "UTC" in title else None)
+    chart.legend([("20-return realized volatility", BLUE, "line")])
     hours = 20 * 365 * 24 / periods_per_year
-    chart.panel(
+    chart.describe(
         [
             ("Latest valid estimate | annualized", f"{_fmt(available[-1])}%"),
             (
@@ -391,11 +406,13 @@ def _book_levels(raw: list[Any], reverse: bool) -> list[tuple[float, float]]:
     return sorted(quantities.items(), reverse=reverse)[:100]
 
 
-def render_order_book_chart(order_book: dict[str, Any], *, as_of_ms: int | None = None) -> bytes:
+def render_order_book_chart(
+    order_book: dict[str, Any], *, as_of_ms: int | None = None, context: dict[str, Any] | None = None
+) -> bytes:
     bids, asks = _book_levels(order_book.get("bids") or [], True), _book_levels(order_book.get("asks") or [], False)
     if not bids or not asks:
         return b""
-    chart = _Chart("BTCUSDT | Cumulative order-book depth", as_of_ms)
+    chart = _Chart("BTCUSDT | Cumulative order-book depth", as_of_ms, context)
     bid, ask = bids[0][0], asks[0][0]
     mid = (bid + ask) / 2
     bid_total, ask_total = sum(q for _, q in bids), sum(q for _, q in asks)
@@ -421,10 +438,8 @@ def render_order_book_chart(order_book: dict[str, Any], *, as_of_ms: int | None 
         chart.draw.line(points, fill=color, width=3)
     for y in range(TOP, BOTTOM, 12):
         chart.draw.line((chart.x(mid), y, chart.x(mid), min(y + 6, BOTTOM)), fill=ACCENT, width=2)
-    _text(chart.draw, (640, 145), "Bids", 18, UP)
-    _text(chart.draw, (730, 145), "Asks", 18, DOWN)
-    _text(chart.draw, (820, 145), "Dashed: midpoint", 18, ACCENT)
-    chart.panel(
+    chart.legend([("Bids", UP, "line"), ("Asks", DOWN, "line"), ("Midpoint", ACCENT, "dashed")])
+    chart.describe(
         [
             ("Best bid / best ask | USDT", f"{_fmt(bid)} / {_fmt(ask)}"),
             ("Spread | USDT and basis points", f"{_fmt(ask - bid)} USDT | {(ask - bid) / mid * 10000:.4f} bps"),
