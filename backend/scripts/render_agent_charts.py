@@ -23,7 +23,12 @@ def main() -> None:
     packet.setdefault("capturedAt", int(datetime.now(UTC).timestamp() * 1000))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "market.json").write_text(json.dumps(packet), encoding="utf-8")
-    for chart in _chart_artifacts(packet):
+    artifacts = _chart_artifacts(packet)
+    (args.output_dir / "chart-context.json").write_text(
+        json.dumps({chart.id: chart.context for chart in artifacts}, indent=2),
+        encoding="utf-8",
+    )
+    for chart in artifacts:
         path = args.output_dir / f"{chart.id}.png"
         path.write_bytes(chart.content)
         print(path.resolve())
