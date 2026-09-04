@@ -661,6 +661,8 @@ Server behavior:
 
 Purpose: let the AI wait for more evidence instead of forcing a strategy choice.
 
+Each scheduled follow-up stores its scheduling run's ID. When the follow-up starts, it receives that run's full final response and timestamps alongside the waiting reason, requested signals, and fresh market input. Rescheduling updates the parent to the rescheduling run. Reusing an existing review preserves any parent already attached. No unrelated recent report is substituted when the parent report is unavailable. This link survives restarts and does not change follow-up limits or strategy activation rechecks.
+
 Input:
 
 ```text
