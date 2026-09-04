@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,6 +59,7 @@ def run_automation_team(
     market_packet = market_tools.collect_btc_market_packet()
     option_context = market_tools.collect_delta_option_context()
     chart_artifacts = _chart_artifacts(market_packet)
+    chart_context = {chart.id: chart.context for chart in chart_artifacts}
     stored_charts = SupabaseChartStorage(settings).upload_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
@@ -67,6 +69,7 @@ def run_automation_team(
         **market_packet,
         "executionOptionContext": option_context,
         "chartImages": [chart.stored_metadata() for chart in stored_charts],
+        "chartContext": chart_context,
     }
     market_snapshot_id = save_market_snapshot(
         settings,
@@ -197,6 +200,8 @@ def run_automation_team(
             additional_context=(
                 f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}. "
                 f"Signals requested by the prior run: {json.dumps(signals_to_inspect or [], ensure_ascii=False)}. "
+                "Chart reading instructions and exact values are keyed by the attached image IDs. "
+                f"Use these with the plots: {json.dumps(chart_context, ensure_ascii=False)}. "
                 "Current active strategies and upcoming agent runs follow: "
                 f"{json.dumps(account_context, ensure_ascii=False, default=str)}"
             ),
@@ -267,10 +272,12 @@ def run_activation_recheck(
 ) -> AutomationTeamResult:
     market_tools = MarketIntelligenceTools()
     market_packet = market_tools.collect_btc_market_packet()
+    chart_artifacts = _recheck_chart_artifacts(market_packet)
+    chart_context = {chart.id: chart.context for chart in chart_artifacts}
     stored_charts = SupabaseChartStorage(settings).upload_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
-        charts=_recheck_chart_artifacts(market_packet),
+        charts=chart_artifacts,
     )
     market_snapshot_id = save_market_snapshot(
         settings,
@@ -279,6 +286,7 @@ def run_activation_recheck(
         market_packet={
             **market_packet,
             "chartImages": [chart.stored_metadata() for chart in stored_charts],
+            "chartContext": chart_context,
         },
         account_context=recheck_context,
     )
@@ -319,6 +327,8 @@ def run_activation_recheck(
         additional_context=(
             "The BTCUSD trader selected this strategy earlier. Recheck whether it remains valid now. "
             f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
+            "Chart reading instructions and exact values are keyed by the attached image IDs: "
+            f"{json.dumps(chart_context, ensure_ascii=False)}. "
             f"Fresh Binance Spot packet: {market_tools.get_btc_market_packet()}"
         ),
         add_datetime_to_context=True,
@@ -363,7 +373,9 @@ def run_activation_recheck(
 def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
     charts: list[ChartArtifact] = []
 
-    def add(chart: bytes, image_id: str, label: str, alt_text: str) -> None:
+    def add(renderer: Callable[..., bytes], args: tuple, image_id: str, label: str, alt_text: str) -> None:
+        context: dict[str, Any] = {}
+        chart = renderer(*args, as_of_ms=market_packet.get("capturedAt"), context=context)
         if chart:
             charts.append(
                 ChartArtifact(
@@ -371,13 +383,14 @@ def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
                     id=image_id,
                     label=label,
                     alt_text=alt_text,
+                    context=context,
                 )
             )
 
     for label, payload in (market_packet.get("timeframes") or {}).items():
-        chart = render_candlestick_chart(label, payload.get("candles") or [], as_of_ms=market_packet.get("capturedAt"))
         add(
-            chart,
+            render_candlestick_chart,
+            (label, payload.get("candles") or []),
             f"btc-{str(label).replace(' ', '-')}",
             f"BTCUSDT {label} price",
             f"BTCUSDT {label} candlestick chart from Binance Spot",
@@ -385,19 +398,22 @@ def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
     fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
     candles = fifteen_minute.get("candles") or []
     add(
-        render_volume_chart("15 minute", candles, as_of_ms=market_packet.get("capturedAt")),
+        render_volume_chart,
+        ("15 minute", candles),
         "btc-volume",
         "BTCUSDT 15-minute volume",
         "BTCUSDT 15-minute spot volume chart",
     )
     add(
-        render_volatility_chart("15 minute", candles, 365 * 24 * 4, as_of_ms=market_packet.get("capturedAt")),
+        render_volatility_chart,
+        ("15 minute", candles, 365 * 24 * 4),
         "btc-volatility",
         "BTCUSDT realized volatility",
         "BTCUSDT rolling realized volatility chart",
     )
     add(
-        render_order_book_chart(market_packet.get("orderBook") or {}, as_of_ms=market_packet.get("capturedAt")),
+        render_order_book_chart,
+        (market_packet.get("orderBook") or {},),
         "btc-order-book",
         "Binance Spot order-book depth",
         "BTCUSDT Binance Spot cumulative order-book depth chart",
@@ -409,7 +425,13 @@ def _recheck_chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifac
     charts: list[ChartArtifact] = []
     for label in ("1 minute", "15 minute"):
         payload = (market_packet.get("timeframes") or {}).get(label) or {}
-        chart = render_candlestick_chart(label, payload.get("candles") or [], as_of_ms=market_packet.get("capturedAt"))
+        context: dict[str, Any] = {}
+        chart = render_candlestick_chart(
+            label,
+            payload.get("candles") or [],
+            as_of_ms=market_packet.get("capturedAt"),
+            context=context,
+        )
         if chart:
             charts.append(
                 ChartArtifact(
@@ -417,6 +439,7 @@ def _recheck_chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifac
                     id=f"btc-{label.replace(' ', '-')}",
                     label=f"BTCUSDT {label} price",
                     alt_text=f"Fresh BTCUSDT {label} candlestick chart from Binance Spot",
+                    context=context,
                 )
             )
     return charts
