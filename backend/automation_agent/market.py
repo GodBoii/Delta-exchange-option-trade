@@ -54,6 +54,7 @@ class MarketIntelligenceTools(Toolkit):
 
         primary = loaded["15 minute"]
         packet = {
+            "capturedAt": int(datetime.now(UTC).timestamp() * 1000),
             "source": "Binance Spot",
             "symbol": primary.get("symbol"),
             "ticker": primary.get("ticker"),
@@ -156,6 +157,7 @@ def compact_btc_market_packet(packet: dict[str, Any]) -> dict[str, Any]:
         if isinstance(trade, dict) and trade.get("side") == "sell"
     )
     return {
+        "capturedAt": packet.get("capturedAt"),
         "source": packet.get("source"),
         "symbol": packet.get("symbol"),
         "realtime": packet.get("realtime"),
