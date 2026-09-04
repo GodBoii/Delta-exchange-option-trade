@@ -490,6 +490,28 @@ lower expiry breakeven = put strike - entry credit
 
 ## 7. Strategy Builder contract
 
+### Additional built-in market choices
+
+The built-in library has thirteen active templates. The original six remain unchanged; seven additions cover directional drift and sessions beyond today's settlement.
+
+| Added template | Intended setup | Contract / holding window |
+|---|---|---|
+| Short OTM put | Neutral-to-bullish drift or a range with intact support | Two listed steps OTM; next-day expiry; up to seven hours |
+| Short OTM call | Neutral-to-bearish drift or a range with intact resistance | Two listed steps OTM; next-day expiry; up to seven hours |
+| Long ITM call | Established bullish trend or steady upward grind | Two listed steps ITM; seven-day-or-later expiry; up to seven hours |
+| Long ITM put | Established bearish trend or steady downward grind | Two listed steps ITM; seven-day-or-later expiry; up to seven hours |
+| Long ATM straddle - next-day expiry | Large uncertain-direction move whose event window extends beyond today's expiry | ATM call and put; next-day expiry; up to seven hours |
+| Short ATM straddle - next-day expiry | Tight centered range when today's expiry cannot cover the hold | ATM call and put; next-day expiry; up to seven hours |
+| Short strangle - next-day expiry | Wider range when today's expiry cannot cover the hold | Both legs two listed steps OTM; next-day expiry; up to seven hours |
+
+These are unhedged positions: no protective wings, vertical spreads, calendars, or mixed long/short structures. Moneyness and expiry variants are deliberate alternatives, not claims of independent trading edges. "Next-day" means the next listed expiry after the activation date in IST; the engine always resolves the actual listed contracts.
+
+All additions retain the existing 100% configured stop, 50% profit target, capital policy, and activation recheck. Single shorts use `strategy_level` risk rather than `combined_premium`, which requires two short legs. Their configured emergency bracket is sent on entry just as it is for the existing short-premium templates. No protective option leg is added. Software stops and exchange stop orders do not guarantee exit prices or cap uncovered-option losses.
+
+The long-option 100% debit stop still represents the whole premium at risk. A steady trend does not guarantee that an ITM option will profit after time decay and costs. The library deliberately retains no-trade for uncertain or untradeable conditions; adding templates does not establish profitability in every regime.
+
+Run `python -m scripts.seed_default_strategies` from `backend` after deploying the engine update. Seeding adds missing shared templates without editing existing defaults, private strategies, or execution history. It is safe to rerun.
+
 Strategy Builder should save a complete, versioned strategy definition. The AI sees the saved definition but cannot change it.
 
 ### Identity and availability
@@ -789,7 +811,7 @@ Execute and monitor
 - Saved strategies have a database version. Selection rejects a version that changed before scheduling, then stores a copy of the selected definition for execution.
 - The database stores agent runs, market snapshots, proposals, and policy-derived execution allocations.
 - The strategy-level controller monitors combined credit and combined debit take profit and stop loss.
-- The six approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
+- The thirteen approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
 - The main vision team receives Binance Spot price, volume, volatility, and order-book charts plus one news sub-agent. Delta market data is excluded from model input.
 - Every AI-selected strategy receives a separate Binance-only activation recheck five minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy.
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
