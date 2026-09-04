@@ -375,7 +375,7 @@ def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
             )
 
     for label, payload in (market_packet.get("timeframes") or {}).items():
-        chart = render_candlestick_chart(label, payload.get("candles") or [])
+        chart = render_candlestick_chart(label, payload.get("candles") or [], as_of_ms=market_packet.get("capturedAt"))
         add(
             chart,
             f"btc-{str(label).replace(' ', '-')}",
@@ -385,19 +385,19 @@ def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
     fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
     candles = fifteen_minute.get("candles") or []
     add(
-        render_volume_chart("15 minute", candles),
+        render_volume_chart("15 minute", candles, as_of_ms=market_packet.get("capturedAt")),
         "btc-volume",
         "BTCUSDT 15-minute volume",
         "BTCUSDT 15-minute spot volume chart",
     )
     add(
-        render_volatility_chart("15 minute", candles, 365 * 24 * 4),
+        render_volatility_chart("15 minute", candles, 365 * 24 * 4, as_of_ms=market_packet.get("capturedAt")),
         "btc-volatility",
         "BTCUSDT realized volatility",
         "BTCUSDT rolling realized volatility chart",
     )
     add(
-        render_order_book_chart(market_packet.get("orderBook") or {}),
+        render_order_book_chart(market_packet.get("orderBook") or {}, as_of_ms=market_packet.get("capturedAt")),
         "btc-order-book",
         "Binance Spot order-book depth",
         "BTCUSDT Binance Spot cumulative order-book depth chart",
@@ -409,7 +409,7 @@ def _recheck_chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifac
     charts: list[ChartArtifact] = []
     for label in ("1 minute", "15 minute"):
         payload = (market_packet.get("timeframes") or {}).get(label) or {}
-        chart = render_candlestick_chart(label, payload.get("candles") or [])
+        chart = render_candlestick_chart(label, payload.get("candles") or [], as_of_ms=market_packet.get("capturedAt"))
         if chart:
             charts.append(
                 ChartArtifact(
