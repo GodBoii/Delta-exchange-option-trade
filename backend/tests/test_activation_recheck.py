@@ -142,6 +142,9 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
     ))
     charts = [StoredChart("btc-1-minute", "Fresh price", "Fresh Binance chart", "charts", "test.png",
                           "https://example.com/test.png")]
+    monkeypatch.setattr(team, "_recheck_chart_artifacts", lambda _: [
+        SimpleNamespace(id="btc-1-minute", context={"readingNotes": ["Recheck chart instructions"]})
+    ])
     monkeypatch.setattr(team, "SupabaseChartStorage", lambda _: SimpleNamespace(upload_run_charts=lambda **_: charts))
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: "snapshot")
     monkeypatch.setattr(team, "create_news_agent", lambda **_: pytest.fail("Recheck created a news agent"))
@@ -165,6 +168,7 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
                          "originalSelection": {"finalResponse": "Exact original report"}},
     )
     assert "Exact original report" in captured["additional_context"]
+    assert "Recheck chart instructions" in captured["additional_context"]
     assert len(captured["tools"]) == 1
     assert set(captured["tools"][0].functions) == {"drop_strategy"}
     assert captured["input"]["images"][0].url == charts[0].signed_url
