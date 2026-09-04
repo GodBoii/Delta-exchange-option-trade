@@ -32,23 +32,15 @@ def seed() -> int:
                 payload = definition.model_dump(mode="json", exclude_none=True)
                 cursor.execute(
                     """
-                    select 1 from public.saved_strategies
-                    where is_default = true and name = %s
-                    limit 1
-                    """,
-                    (definition.name,),
-                )
-                if cursor.fetchone():
-                    continue
-                cursor.execute(
-                    """
                     insert into public.saved_strategies
                       (user_id, name, definition_json, enabled_for_ai, is_default)
                     values (null, %s, %s, true, true)
+                    on conflict (lower(name)) where is_default = true do nothing
+                    returning id
                     """,
                     (definition.name, Jsonb(payload)),
                 )
-                inserted += 1
+                inserted += int(cursor.fetchone() is not None)
         connection.commit()
     return inserted
 
