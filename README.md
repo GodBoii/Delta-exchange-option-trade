@@ -75,7 +75,7 @@ supabase/migrations/009_shared_default_strategies.sql
 
 Migration `009` replaces the original per-account built-in strategies with one shared, read-only set. Migration `015` retires Iron condor and Iron butterfly, leaving six active shared strategies while preserving historical runs. New user-created strategies remain private to their account.
 
-Then apply migrations `010` through `015` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, and `015` adds the five-minute activation recheck and retires the two iron strategies.
+Then apply migrations `010` through `016` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, and `016` links follow-ups to the run that requested them so they receive its full final response.
 
 ### Apply the account phone-number migration
 
