@@ -25,7 +25,7 @@ services:
       retries: 3
 
   news-analyzer:
-    container_name: news-analyzer
+    container_name: bitcoin-agent
     build:
       context: ./backend
       dockerfile: Dockerfile.news-analyzer
