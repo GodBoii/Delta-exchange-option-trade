@@ -372,6 +372,36 @@ function pnlTone(value: number | null): StatusTone {
   return value > 0 ? "positive" : "negative";
 }
 
+function cashClass(value: unknown, cost = false): string | undefined {
+  const number = toNumber(value);
+  if (number === null || number === 0) return undefined;
+  return (cost ? -number : number) > 0 ? "up" : "down";
+}
+
+function riskDetail(key: string, value: unknown, flat: boolean): DetailItem {
+  const labels: Record<string, string> = {
+    profit: "Estimated gross P&L at last check",
+    returnPercent: "Estimated gross return on entry premium",
+    entryValue: "Entry premium", currentValue: "Marked position value",
+    stopValue: "Stop threshold", targetValue: "Take-profit threshold",
+    stopPercent: "Stop loss", takeProfitPercent: "Take profit",
+  };
+  const label = labels[key] ?? titleCase(key.replace(/([a-z])([A-Z])/g, "$1 $2"));
+  if (key === "status" && flat) return { label, value: "Closed" };
+  const signed = key === "profit" || key === "returnPercent";
+  const percent = key === "returnPercent" || key === "stopPercent" || key === "takeProfitPercent";
+  const money = ["profit", "entryValue", "currentValue", "stopValue", "targetValue"].includes(key);
+  if (percent || money) {
+    const number = toNumber(value);
+    return { label, value: number === null ? EM_DASH : (
+      <span className={signed ? cashClass(number) : undefined}>
+        {signed ? signedDecimal(number, 4) : decimal(number, 4)}{percent ? "%" : " USD"}
+      </span>
+    ) };
+  }
+  return { label, value: readable(value) };
+}
+
 /**
  * Everything Supabase recorded for one run, in the order an operator reviews it:
  * what happened and when, what it settled for, what was asked for, and then the
@@ -439,8 +469,12 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
     { label: "Underlying", value: readable(definition.instrument?.underlying) },
     { label: "Underlying price from", value: readable(definition.instrument?.underlyingFrom) },
     { label: "Strategy type", value: readable(definition.entry?.strategyType) },
+    { label: "Holding mode", value: readable(definition.holdingMode) },
+    { label: "Expiry selection", value: definition.expiryPolicy === "next_day" ? "Next listed expiry after entry date" : readable(definition.expiryPolicy) },
+    { label: "Lot sizing", value: definition.lotsMode === "auto" ? "Automatic, see filled lots below" : "Manual" },
     { label: "Square off", value: readable(definition.squareOff) },
     { label: "Risk mode", value: readable(definition.riskMode) },
+    { label: "Take profit", value: definition.takeProfitPercent != null ? `${definition.takeProfitPercent}% of ${readable(definition.riskBasis).toLowerCase().replaceAll("_", " ")}` : EM_DASH },
     { label: "Combined stop loss", value: definition.combinedStopLossPercent ? `${definition.combinedStopLossPercent}% of credit` : EM_DASH },
     { label: "Emergency stop loss", value: definition.emergencyStopLossPercent ? `${definition.emergencyStopLossPercent}% per leg` : EM_DASH },
     { label: "Overall target", value: definition.overallTarget ? decimal(definition.overallTarget) : EM_DASH },
@@ -459,7 +493,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
   const riskState = record?.riskState ?? {};
   const riskItems: DetailItem[] = Object.entries(riskState)
     .filter(([key]) => key !== "legs")
-    .map(([key, value]) => ({ label: titleCase(key), value: readable(value) }));
+    .map(([key, value]) => riskDetail(key, value, exposureStatus === "flat"));
 
   return (
     <Dialog
@@ -501,6 +535,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
 
           <DetailSection title="Timing" meta={relativeTime(record?.createdAt ?? run.createdAt)}>
             <DetailList items={timing} />
+            <p className="detail-note">Contract expiry and scheduled exit are separate. The strategy closes at its scheduled exit or an earlier risk trigger, even when its options expire the next day.</p>
           </DetailSection>
 
           <DetailSection title="Capital allocation" meta="Account policy captured at entry">
@@ -514,11 +549,12 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
             {orders.length ? (
               <>
                 <div className="detail-tiles">
-                  <Tile label="Realized P&L" value={signedDecimal(settlement.realizedPnl)} tone={pnlTone(realized)} suffix="USD" />
-                  <Tile label="Entry premium" value={signedDecimal(settlement.entryPremium)} suffix="USD" />
-                  <Tile label="Exit premium" value={signedDecimal(settlement.exitPremium)} suffix="USD" />
-                  <Tile label="Commissions" value={decimal(settlement.commission)} suffix="USD" />
-                  <Tile label="Slippage cost" value={signedDecimal(settlement.slippageCost)} tone={pnlTone(-(toNumber(settlement.slippageCost) ?? 0))} suffix="USD" />
+                  <Tile label={settlement.fullyClosed ? "Realized P&L" : "Net cash flow so far"} value={signedDecimal(settlement.realizedPnl, 4)} tone={settlement.fullyClosed ? pnlTone(realized) : "neutral"} suffix="USD" />
+                  <Tile label={settlement.fullyClosed ? "Gross P&L" : "Gross cash flow so far"} value={signedDecimal(settlement.grossPnl, 4)} tone={settlement.fullyClosed ? pnlTone(toNumber(settlement.grossPnl)) : "neutral"} suffix="USD" />
+                  <Tile label="Entry premium" value={signedDecimal(settlement.entryPremium, 4)} tone={pnlTone(toNumber(settlement.entryPremium))} suffix="USD" />
+                  <Tile label="Exit premium" value={signedDecimal(settlement.exitPremium, 4)} tone={pnlTone(toNumber(settlement.exitPremium))} suffix="USD" />
+                  <Tile label="Commissions" value={decimal(settlement.commission, 4)} tone={pnlTone(-(toNumber(settlement.commission) ?? 0))} suffix="USD" />
+                  <Tile label="Slippage cost" value={signedDecimal(settlement.slippageCost, 4)} tone={pnlTone(-(toNumber(settlement.slippageCost) ?? 0))} suffix="USD" />
                   <Tile label="Lots filled" value={`${decimal(settlement.filledLots, 0)} / ${decimal(settlement.requestedLots, 0)}`} />
                   <Tile label="Lots closed" value={decimal(settlement.closedLots, 0)} />
                 </div>
@@ -532,22 +568,22 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                           <th scope="col">Exit premium</th>
                           <th scope="col">Commission</th>
                           <th scope="col">Lots in / out</th>
-                          <th scope="col">Realized</th>
+                          <th scope="col">{settlement.fullyClosed ? "Realized" : "Net cash flow"}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {settlement.bySymbol?.map(item => (
                           <tr key={item.symbol}>
                             <th scope="row" className="mono">{item.symbol}</th>
-                            <td data-label="Entry premium">{signedDecimal(item.entryPremium)}</td>
-                            <td data-label="Exit premium">{signedDecimal(item.exitPremium)}</td>
-                            <td data-label="Commission">{decimal(item.commission)}</td>
+                            <td data-label="Entry premium" className={cashClass(item.entryPremium)}>{signedDecimal(item.entryPremium, 4)}</td>
+                            <td data-label="Exit premium" className={cashClass(item.exitPremium)}>{signedDecimal(item.exitPremium, 4)}</td>
+                            <td data-label="Commission" className={cashClass(item.commission, true)}>{decimal(item.commission, 4)}</td>
                             <td data-label="Lots in / out">{decimal(item.entryLots, 0)} / {decimal(item.exitLots, 0)}</td>
                             <td
-                              data-label="Realized"
-                              className={pnlTone(toNumber(item.realizedPnl)) === "positive" ? "up" : pnlTone(toNumber(item.realizedPnl)) === "negative" ? "down" : undefined}
+                              data-label={settlement.fullyClosed ? "Realized" : "Net cash flow"}
+                              className={settlement.fullyClosed ? cashClass(item.realizedPnl) : undefined}
                             >
-                              {signedDecimal(item.realizedPnl)}
+                              {signedDecimal(item.realizedPnl, 4)}
                             </td>
                           </tr>
                         ))}
@@ -556,8 +592,9 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                   </div>
                 )}
                 <p className="detail-note">
-                  Premium is signed cash flow in quote currency: selling collects, buying pays. Realized P&L subtracts
-                  commissions and is only complete once every lot is closed.
+                  Premium is signed cash flow in USD: green collects, red pays. Premium received is not profit.
+                  Net P&L equals entry premium plus exit premium minus commissions once every contract is closed.
+                  Slippage is already included in fill prices and is not deducted again. Values are rounded to four decimals.
                 </p>
               </>
             ) : (
@@ -595,7 +632,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                             : `${leg.strikeMode.toUpperCase()}${leg.strikeSteps ? ` +${leg.strikeSteps}` : ""}`}
                         </td>
                         <td data-label="Expiry">{leg.expiry}</td>
-                        <td data-label="Lots">{leg.lots}</td>
+                        <td data-label="Lots">{definition.lotsMode === "auto" ? "Auto" : leg.lots}</td>
                         <td data-label="Order">
                           {titleCase(leg.orderType.replace("_order", ""))}
                           {leg.limitPrice ? ` @ ${decimal(leg.limitPrice)}` : ""}
@@ -614,6 +651,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
 
           {Boolean(orders.length) && (
             <DetailSection title="Fills and execution quality" meta="Positive slippage is adverse">
+              <p className="detail-note">Fill, reference and slippage prices are USD per underlying unit. Fees and notional are USD for the filled quantity. Red slippage is adverse; green is favorable.</p>
               <div className="table-scroll mobile-card-list">
                 <table className="data-table detail-table mobile-card-table">
                   <thead>
@@ -658,13 +696,13 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                           >
                             <span className="cell-stack">
                               <span>{signedDecimal(order.slippage)}</span>
-                              <small>{order.slippagePercent ? `${signedDecimal(order.slippagePercent, 3)}%` : EM_DASH}</small>
+                              <small className={cashClass(order.slippage, true)}>{toNumber(order.slippagePercent) !== null ? `${signedDecimal(order.slippagePercent, 3)}%` : EM_DASH}</small>
                             </span>
                           </td>
-                          <td data-label="Fees">{decimal(order.commission)}</td>
+                          <td data-label="Fees" className={cashClass(order.commission, true)}>{decimal(order.commission, 4)}</td>
                           <td data-label="Notional">
                             <span className="cell-stack">
-                              <span>{value === null ? EM_DASH : decimal(value)}</span>
+                              <span>{value === null ? EM_DASH : decimal(value, 4)}</span>
                               <small>lot {decimal(order.contractValue, 4)}</small>
                             </span>
                           </td>
@@ -708,6 +746,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
               title="Risk monitor"
               meta={record?.riskMonitoredAt ? `Checked ${relativeTime(record.riskMonitoredAt)}` : undefined}
             >
+              <p className="detail-note">{exposureStatus === "flat" ? "Last pre-exit mark-price snapshot." : "Latest recorded mark-price snapshot."} Estimated gross P&L and return exclude commissions and subsequent execution prices. Final net P&L is shown in Settlement.</p>
               <DetailList items={[
                 ...riskItems,
                 { label: "Last checked", value: formatTimestamp(record?.riskMonitoredAt) },
