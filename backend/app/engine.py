@@ -184,7 +184,10 @@ def settlement_summary(orders: list[dict[str, Any]]) -> dict[str, Any]:
         "requestedLots": str(requested_lots),
         "filledLots": str(filled_lots),
         "closedLots": str(closed_lots),
-        "fullyClosed": bool(filled_lots > 0 and closed_lots >= filled_lots),
+        "fullyClosed": bool(
+            filled_lots > 0
+            and all(bucket["entryLots"] == bucket["exitLots"] for bucket in symbols.values())
+        ),
         "bySymbol": [
             {
                 "symbol": symbol,
@@ -1328,8 +1331,9 @@ class TradingEngine:
                 await client.close()
 
         stored = row.get("result_json") or {}
-        settlement = settlement_summary(orders) if orders else {}
-        settlement.update(stored)
+        settlement = dict(stored)
+        if orders:
+            settlement.update(settlement_summary(orders))
         return {
             "id": row["id"],
             "name": row["name"],
