@@ -1,0 +1,605 @@
+{
+  "access_utc": "2026-09-05T03:47:47.408665+00:00",
+  "sources": [
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1782864000&end=1782971999",
+      "rows": 1797
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1782972000&end=1783079999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783080000&end=1783187999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783188000&end=1783295999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783296000&end=1783403999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783404000&end=1783511999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783512000&end=1783619999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783620000&end=1783727999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783728000&end=1783835999",
+      "rows": 1793
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783836000&end=1783943999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1783944000&end=1784051999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784052000&end=1784159999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784160000&end=1784267999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784268000&end=1784375999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784376000&end=1784483999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784484000&end=1784591999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784592000&end=1784699999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784700000&end=1784807999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784808000&end=1784915999",
+      "rows": 1797
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1784916000&end=1785023999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1785024000&end=1785131999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1785132000&end=1785239999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1785240000&end=1785347999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1785348000&end=1785455999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=DOGEUSD&start=1785456000&end=1785542399",
+      "rows": 1435
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1782864000&end=1782971999",
+      "rows": 1786
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1782972000&end=1783079999",
+      "rows": 1797
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783080000&end=1783187999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783188000&end=1783295999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783296000&end=1783403999",
+      "rows": 1778
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783404000&end=1783511999",
+      "rows": 1785
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783512000&end=1783619999",
+      "rows": 1795
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783620000&end=1783727999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783728000&end=1783835999",
+      "rows": 1796
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783836000&end=1783943999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1783944000&end=1784051999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784052000&end=1784159999",
+      "rows": 1797
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784160000&end=1784267999",
+      "rows": 1795
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784268000&end=1784375999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784376000&end=1784483999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784484000&end=1784591999",
+      "rows": 1795
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784592000&end=1784699999",
+      "rows": 1778
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784700000&end=1784807999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784808000&end=1784915999",
+      "rows": 1788
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1784916000&end=1785023999",
+      "rows": 1784
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1785024000&end=1785131999",
+      "rows": 1720
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1785132000&end=1785239999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1785240000&end=1785347999",
+      "rows": 1770
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1785348000&end=1785455999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000PEPEUSD&start=1785456000&end=1785542399",
+      "rows": 1374
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1782864000&end=1782971999",
+      "rows": 1735
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1782972000&end=1783079999",
+      "rows": 1796
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783080000&end=1783187999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783188000&end=1783295999",
+      "rows": 1796
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783296000&end=1783403999",
+      "rows": 1797
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783404000&end=1783511999",
+      "rows": 1781
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783512000&end=1783619999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783620000&end=1783727999",
+      "rows": 1773
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783728000&end=1783835999",
+      "rows": 1716
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783836000&end=1783943999",
+      "rows": 1793
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1783944000&end=1784051999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784052000&end=1784159999",
+      "rows": 1780
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784160000&end=1784267999",
+      "rows": 1786
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784268000&end=1784375999",
+      "rows": 1775
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784376000&end=1784483999",
+      "rows": 1784
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784484000&end=1784591999",
+      "rows": 1794
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784592000&end=1784699999",
+      "rows": 1718
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784700000&end=1784807999",
+      "rows": 1778
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784808000&end=1784915999",
+      "rows": 1788
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1784916000&end=1785023999",
+      "rows": 1792
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1785024000&end=1785131999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1785132000&end=1785239999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1785240000&end=1785347999",
+      "rows": 1792
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1785348000&end=1785455999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000SHIBUSD&start=1785456000&end=1785542399",
+      "rows": 1428
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1782864000&end=1782971999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1782972000&end=1783079999",
+      "rows": 1795
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783080000&end=1783187999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783188000&end=1783295999",
+      "rows": 1781
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783296000&end=1783403999",
+      "rows": 1714
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783404000&end=1783511999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783512000&end=1783619999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783620000&end=1783727999",
+      "rows": 1791
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783728000&end=1783835999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783836000&end=1783943999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1783944000&end=1784051999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784052000&end=1784159999",
+      "rows": 1778
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784160000&end=1784267999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784268000&end=1784375999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784376000&end=1784483999",
+      "rows": 1796
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784484000&end=1784591999",
+      "rows": 1730
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784592000&end=1784699999",
+      "rows": 1720
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784700000&end=1784807999",
+      "rows": 1794
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784808000&end=1784915999",
+      "rows": 1764
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1784916000&end=1785023999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1785024000&end=1785131999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1785132000&end=1785239999",
+      "rows": 1788
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1785240000&end=1785347999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1785348000&end=1785455999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=WIFUSD&start=1785456000&end=1785542399",
+      "rows": 1357
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1782864000&end=1782971999",
+      "rows": 1778
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1782972000&end=1783079999",
+      "rows": 1773
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783080000&end=1783187999",
+      "rows": 1727
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783188000&end=1783295999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783296000&end=1783403999",
+      "rows": 1796
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783404000&end=1783511999",
+      "rows": 1762
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783512000&end=1783619999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783620000&end=1783727999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783728000&end=1783835999",
+      "rows": 1786
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783836000&end=1783943999",
+      "rows": 1797
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1783944000&end=1784051999",
+      "rows": 1757
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784052000&end=1784159999",
+      "rows": 1786
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784160000&end=1784267999",
+      "rows": 1786
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784268000&end=1784375999",
+      "rows": 1796
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784376000&end=1784483999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784484000&end=1784591999",
+      "rows": 1794
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784592000&end=1784699999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784700000&end=1784807999",
+      "rows": 1798
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784808000&end=1784915999",
+      "rows": 1744
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1784916000&end=1785023999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1785024000&end=1785131999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1785132000&end=1785239999",
+      "rows": 1800
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1785240000&end=1785347999",
+      "rows": 1708
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1785348000&end=1785455999",
+      "rows": 1799
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000BONKUSD&start=1785456000&end=1785542399",
+      "rows": 1376
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1782864000&end=1782971999",
+      "rows": 1727
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1782972000&end=1783079999",
+      "rows": 1604
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783080000&end=1783187999",
+      "rows": 1686
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783188000&end=1783295999",
+      "rows": 1753
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783296000&end=1783403999",
+      "rows": 1590
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783404000&end=1783511999",
+      "rows": 1788
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783512000&end=1783619999",
+      "rows": 1561
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783620000&end=1783727999",
+      "rows": 1441
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783728000&end=1783835999",
+      "rows": 1753
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783836000&end=1783943999",
+      "rows": 1788
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1783944000&end=1784051999",
+      "rows": 1709
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784052000&end=1784159999",
+      "rows": 1294
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784160000&end=1784267999",
+      "rows": 1671
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784268000&end=1784375999",
+      "rows": 1373
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784376000&end=1784483999",
+      "rows": 1793
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784484000&end=1784591999",
+      "rows": 1789
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784592000&end=1784699999",
+      "rows": 1610
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784700000&end=1784807999",
+      "rows": 1538
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784808000&end=1784915999",
+      "rows": 1716
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1784916000&end=1785023999",
+      "rows": 1765
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1785024000&end=1785131999",
+      "rows": 1559
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1785132000&end=1785239999",
+      "rows": 1763
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1785240000&end=1785347999",
+      "rows": 1722
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1785348000&end=1785455999",
+      "rows": 1762
+    },
+    {
+      "url": "https://api.india.delta.exchange/v2/history/candles?resolution=1m&symbol=1000FLOKIUSD&start=1785456000&end=1785542399",
+      "rows": 1437
+    }
+  ]
+}

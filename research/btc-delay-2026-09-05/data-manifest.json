@@ -1,0 +1,137 @@
+{
+  "access_utc": "2026-09-05T03:45:37.597291+00:00",
+  "train": "June 2026",
+  "diagnostic_forward_period": "July 2026",
+  "btc_abs_1m_threshold_bps": 26.405781723867563,
+  "holding_minutes": 5,
+  "cooldown_signal_minutes": 8,
+  "qualification": "Exploratory Binance USD-M minute bars; not Delta executable backtest; no inference adjusted for multiple testing",
+  "archives": [
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1m/BTCUSDT-1m-2026-06.zip",
+      "sha256": "9b214199eb5063585c7ed0f59ba19323326d68ac024b85106713989399204490",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/BTCUSDT/1m/BTCUSDT-1m-2026-07.zip",
+      "sha256": "f18440bb58f0c7e1ff63cbb906132002877c4914540c8aebab920da6937cff73",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2026-06.zip",
+      "sha256": "3b771e114b494805ac4cc677b34befb7e5f332bf5bd3a8a368cd21d65cd99cba",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/ETHUSDT/1m/ETHUSDT-1m-2026-07.zip",
+      "sha256": "5c98ad0cfa152fbe08df59838ead7c8bbfa433af943bbfb4d082626ebee2d83e",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-06.zip",
+      "sha256": "dcd12574ab820047a10c3e6977b69251b7285fe7998fa7aff6d73470c6637ecd",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/SOLUSDT/1m/SOLUSDT-1m-2026-07.zip",
+      "sha256": "10b4d10f286b8cc658af3e441dbd0369b7b5e727626049cab59545f0c00062c0",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/DOGEUSDT/1m/DOGEUSDT-1m-2026-06.zip",
+      "sha256": "90b1a9a55146505876a5b0469b69e8606194b018beec06094be8b4babd37c8b4",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/DOGEUSDT/1m/DOGEUSDT-1m-2026-07.zip",
+      "sha256": "17c5085d1f95d7b4c50d5d4e5dc7cdafb0fbe61664d66c4a711a03289ede4d0d",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/WIFUSDT/1m/WIFUSDT-1m-2026-06.zip",
+      "sha256": "c49ae88c7e7dd7b2253fd85758df83229ffa07e3109d58cd656bdc4e98047db1",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/WIFUSDT/1m/WIFUSDT-1m-2026-07.zip",
+      "sha256": "08ef5ecbdb5151076dd3e063a096b6044b230fb9eb8f1df49871212bcd990da4",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000PEPEUSDT/1m/1000PEPEUSDT-1m-2026-06.zip",
+      "sha256": "7e864b261ad28e21d866a48199ec5330dac370b02d3e91dec3701add9046a2e0",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000PEPEUSDT/1m/1000PEPEUSDT-1m-2026-07.zip",
+      "sha256": "85fdfdac2864d787d5e7aee73e1be6428c92047e25d7b9a88ba400db79ed271f",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000BONKUSDT/1m/1000BONKUSDT-1m-2026-06.zip",
+      "sha256": "ab38cae1dbe61eca7f7f4aacbe032e4360915500e8ea165bdf78d4a59f5c04ef",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000BONKUSDT/1m/1000BONKUSDT-1m-2026-07.zip",
+      "sha256": "db5012e5abbe877b20b00813e756d6c61c081a8ecec86f43bb12c9cc84e89a8f",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000SHIBUSDT/1m/1000SHIBUSDT-1m-2026-06.zip",
+      "sha256": "435fad1310d665db1bd0d1df116cef9e3035e1e84e6cf0187c25d1a4703aae03",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000SHIBUSDT/1m/1000SHIBUSDT-1m-2026-07.zip",
+      "sha256": "f8c98e72d8c660fc3f97f011d2b5a86e678d1494bf9d0c91b51dae9267dbd4e9",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000FLOKIUSDT/1m/1000FLOKIUSDT-1m-2026-06.zip",
+      "sha256": "6487d98e6ca8ab39ad08d2d91705c9051c63ef196deb5c3fddaf2b064565629a",
+      "rows": 43200,
+      "first": "2026-06-01 00:00:00+00:00",
+      "last": "2026-06-30 23:59:00+00:00"
+    },
+    {
+      "url": "https://data.binance.vision/data/futures/um/monthly/klines/1000FLOKIUSDT/1m/1000FLOKIUSDT-1m-2026-07.zip",
+      "sha256": "467bb0f4abe09dc6d37ed38a9265f5a2ecc6f28627e0c16eff7540e102932dfd",
+      "rows": 44640,
+      "first": "2026-07-01 00:00:00+00:00",
+      "last": "2026-07-31 23:59:00+00:00"
+    }
+  ]
+}
