@@ -47,6 +47,8 @@ services:
 
   binace:
     container_name: Binace
+    volumes:
+      - market-history:/app/data
     build:
       context: ./binance_backend
       dockerfile: Dockerfile
@@ -74,3 +76,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+volumes:
+  market-history:
