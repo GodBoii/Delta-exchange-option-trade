@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +12,8 @@ from urllib.parse import quote
 import httpx
 from agno.tools import Toolkit
 
+from .history import session_history
+
 TIMEFRAMES: tuple[tuple[str, str, int], ...] = (
     ("1 minute", "1m", 160),
     ("15 minute", "15m", 160),
@@ -19,7 +22,15 @@ TIMEFRAMES: tuple[tuple[str, str, int], ...] = (
 
 
 class MarketIntelligenceTools(Toolkit):
-    def __init__(self, *, binance_url: str | None = None, delta_url: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        binance_url: str | None = None,
+        delta_url: str | None = None,
+        session_trigger: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.session_trigger = session_trigger
         self.binance_url = (binance_url or os.getenv("BINANCE_INTERNAL_URL") or "http://binace:8001").rstrip("/")
         self.delta_url = (delta_url or os.getenv("DELTA_PUBLIC_BASE_URL") or "https://api.india.delta.exchange").rstrip(
             "/"
@@ -39,6 +50,44 @@ class MarketIntelligenceTools(Toolkit):
         return json.dumps(compact_btc_market_packet(packet), ensure_ascii=False, default=str)
 
     def collect_btc_market_packet(self) -> dict[str, Any]:
+        def load_history() -> dict[str, Any]:
+            try:
+                with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
+                    response = client.get(f"{self.binance_url}/api/market/btcusd/history")
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, dict) or not isinstance(payload.get("observations"), list):
+                        raise ValueError("Invalid market history response")
+                    rows = payload["observations"]
+                    if (
+                        len(rows) > 301
+                        or any(
+                            not isinstance(row, dict)
+                            or any(
+                                not isinstance(row.get(key), (int, float))
+                                or isinstance(row.get(key), bool)
+                                or not math.isfinite(row[key])
+                                or row[key] < 0
+                                for key in (
+                                    "end",
+                                    "sidewaysScore",
+                                    "volatilityAnnualizedPercent",
+                                    "volumeBtc",
+                                    "volumeUsdt",
+                                )
+                            )
+                            or row["end"] % 600_000 != 0
+                            or row["end"] > int(datetime.now(UTC).timestamp() * 1000)
+                            or row["sidewaysScore"] > 100
+                            for row in rows
+                        )
+                        or len({row["end"] for row in rows}) != len(rows)
+                    ):
+                        raise ValueError("Invalid market history observations")
+                    return payload
+            except (httpx.HTTPError, ValueError):
+                return {"available": False, "observations": [], "error": "Market history is unavailable"}
+
         def load(spec: tuple[str, str, int]) -> tuple[str, dict[str, Any]]:
             label, interval, limit = spec
             with httpx.Client(timeout=httpx.Timeout(20, connect=5)) as client:
@@ -49,8 +98,10 @@ class MarketIntelligenceTools(Toolkit):
                 response.raise_for_status()
                 return label, response.json()
 
-        with ThreadPoolExecutor(max_workers=len(TIMEFRAMES)) as executor:
+        with ThreadPoolExecutor(max_workers=len(TIMEFRAMES) + 1) as executor:
+            history = executor.submit(load_history)
             loaded = dict(executor.map(load, TIMEFRAMES))
+            history_payload = history.result()
 
         primary = loaded["15 minute"]
         packet = {
@@ -62,6 +113,7 @@ class MarketIntelligenceTools(Toolkit):
             "orderBook": primary.get("orderBook"),
             "recentTrades": primary.get("recentTrades"),
             "realtime": primary.get("realtime"),
+            "sessionHistory": session_history(history_payload, datetime.now(UTC), self.session_trigger),
             "timeframes": {
                 label: {
                     "interval": payload.get("interval"),
@@ -138,6 +190,11 @@ def summarize_candles(candles: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def compact_btc_market_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    analysis = dict(packet.get("analysis") or {})
+    # Keep numerical evidence; the EMA fallback label is not an independent signal.
+    structure = analysis.pop("marketStructure", {})
+    if structure:
+        analysis["emaIndicators"] = _pick(structure, "ema20", "ema50")
     ticker = packet.get("ticker") or {}
     order_book = packet.get("orderBook") or {}
     bids = order_book.get("bids") or []
@@ -173,7 +230,8 @@ def compact_btc_market_packet(packet: dict[str, Any]) -> dict[str, Any]:
             "bestBid",
             "bestAsk",
         ),
-        "computedAnalysis": packet.get("analysis"),
+        "computedAnalysis": analysis,
+        "sessionHistory": packet.get("sessionHistory"),
         "timeframes": {label: payload.get("summary") for label, payload in (packet.get("timeframes") or {}).items()},
         "spotOrderBook": {
             "bestBid": bids[0][0] if bids else None,
