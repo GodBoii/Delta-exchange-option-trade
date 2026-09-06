@@ -55,7 +55,7 @@ def run_automation_team(
     previous_run = read_parent_run_context(settings, user_id=user_id, agent_run_id=agent_run_id)
     if previous_run:
         account_context = {**account_context, "previousRun": previous_run}
-    market_tools = MarketIntelligenceTools()
+    market_tools = MarketIntelligenceTools(session_trigger=trigger)
     market_packet = market_tools.collect_btc_market_packet()
     option_context = market_tools.collect_delta_option_context()
     chart_artifacts = _chart_artifacts(market_packet)
@@ -157,6 +157,14 @@ def run_automation_team(
                     "fixed review."
                 ),
                 "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
+                (
+                    "Use sessionHistory alongside the current 60-minute sideways score. Compare the last one and two "
+                    "hours with each dated session back to the previous matching session opening. Report session "
+                    "averages for sideways score and realized volatility, traded BTC volume and average ten-minute "
+                    "volume. Show the supplied coverage; missing history is unknown, never zero. These averages "
+                    "provide historical context, not independent forecasts. Use numerical EMA evidence and charts "
+                    "to assess direction; no categorical EMA market-state label is supplied."
+                ),
                 (
                     "If previousRun is supplied, it is the exact earlier run that scheduled or requested this review. "
                     "Read its finalResponse and the supplied reason and signals to inspect, then compare that earlier "
@@ -314,6 +322,7 @@ def run_activation_recheck(
         instructions=[
             "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
             "Use the fresh Binance Spot packet and charts to judge whether BTC direction or structure changed.",
+            "Compare the supplied dated sessionHistory and recent averages; do not treat missing observations as zero.",
             "The earlier agent's complete report is evidence from selection time, not a current market reading.",
             (
                 "If the strategy is still valid, do not call a tool. If the market changed enough that the strategy "
