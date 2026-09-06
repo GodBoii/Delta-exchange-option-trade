@@ -591,7 +591,8 @@ VWAP and distance from VWAP
 ATR and realized volatility
 CVD and aggressive trade flow
 bid, ask, spread, and order-book imbalance
-market structure and sideways score
+numerical EMA indicators and current 60-minute sideways score
+ten-minute local observations summarized over the last one/two hours and the previous session cycle
 ```
 
 ### News context
@@ -615,13 +616,46 @@ Slippage handling, order recovery, actual margin checks, fill reconciliation, an
 
 ```text
 last price, 24-hour change, high, low, bid, ask, and volume
-ATR, historical volatility, VWAP, CVD, market structure, and sideways score
+ATR, historical volatility, VWAP, CVD, numerical EMA indicators, and sideways score
 1-minute, 15-minute, and daily OHLC, return, range, and volume summaries
 top-of-book price, cumulative depth, and imbalance
 recent aggressive buy and sell flow
 ```
 
 Delta market and option data is not included in model context. The scheduling tool privately resolves a listed Delta option expiry before it creates the live strategy record.
+
+### Local session history
+
+The market service records one observation at each UTC ten-minute boundary using completed one-minute
+candles. SQLite stores the observations in `data/market-history.sqlite`; Compose mounts a persistent
+`market-history` volume at `/app/data`. `MARKET_HISTORY_PATH` overrides the path for non-Compose installations.
+Recording runs in a background task without LLM calls, Supabase writes, or additional market subscriptions.
+
+Each observation contains the existing 60-close sideways score, the existing annualized volatility over
+120 one-minute returns, and BTC/USDT volume for the preceding ten minutes. The score formula is unchanged,
+including its up-to-240-minute VWAP reference. Observations require 240 contiguous completed minute bars.
+Incomplete bars, gaps, invalid numbers, and a disconnected or stale feed prevent recording. Collection
+starts at the next boundary after startup; downtime is not backfilled or represented as zero activity.
+The latest 50 hours are available through `GET /api/market/btcusd/history`; older observations remain local.
+
+The automation service reuses `fixed_runs_between` to group observations into intervals from one scheduled
+session opening to the next. Asia uses 09:00 Tokyo, London 08:00 London, and New York 09:30 New York, with
+their existing daylight-saving rules and weekend scheduling. These are review intervals, not overlapping
+exchange trading hours. Each fixed run receives the cycle beginning at the previous matching session
+opening through the current capture time. Manual, follow-up, and activation runs use the latest session
+opening to identify that cycle. A current interval is marked partial.
+
+`sessionHistory` includes dated IST interval boundaries, recent one/two-hour summaries, session averages,
+sample counts, time coverage, and the latest observation timestamp. Sideways and volatility are arithmetic
+means of ten-minute observations. Volume is summed from disjoint ten-minute buckets; average volume is
+BTC per observed ten-minute bucket. Buckets crossing a requested interval boundary are excluded. Missing
+coverage stays explicit, and empty averages/totals are null. The current live score remains separate.
+History is a description of recorded conditions, not a calibrated probability of a future outcome.
+
+The compact agent packet removes the categorical EMA state and strength fields, including the old
+`ranging` fallback, while retaining EMA20 and EMA50. Public chart/API fields remain compatible. Main and
+activation-recheck runs receive the summaries, and existing decision snapshots persist the same context.
+History failure is reported in the packet without breaking the existing market tools or order execution.
 
 ### Chart storage
 
