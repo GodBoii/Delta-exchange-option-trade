@@ -80,7 +80,7 @@ def test_parent_lookup_is_exact_user_scoped_and_does_not_truncate(monkeypatch, r
 def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, previous):
     captured = {}
     monkeypatch.setattr(team, "read_parent_run_context", lambda *_, **__: previous)
-    monkeypatch.setattr(team, "MarketIntelligenceTools", lambda: SimpleNamespace(
+    monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
         collect_btc_market_packet=lambda: {"source": "Binance Spot"}, collect_delta_option_context=lambda: {},
     ))
     monkeypatch.setattr(team, "SupabaseChartStorage", lambda _: SimpleNamespace(upload_run_charts=lambda **_: []))
