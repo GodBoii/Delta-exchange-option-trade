@@ -12,6 +12,7 @@ from .analysis import calculate_analysis
 from .client import BinanceMarketClient, normalize_stream_candle, normalize_ticker, number
 from .config import Settings
 from .delta_context import DeltaMarketContextClient
+from .history import STEP_MS, MarketHistory, observation
 
 logger = logging.getLogger(__name__)
 STREAM_INTERVALS = ("1m", "5m", "15m", "1h", "4h", "1d")
@@ -59,9 +60,13 @@ class BinanceSpotFeed:
         self._delta_runner: asyncio.Task[None] | None = None
         self._analysis: dict[str, Any] = {}
         self._analysis_at = 0.0
+        self.history = MarketHistory(settings.market_history_path, settings.binance_symbol)
+        self.history_error: str | None = None
+        self._history_runner: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         await self._seed()
+        self._history_runner = asyncio.create_task(self._record_history(), name="market-history")
         self._runner = asyncio.create_task(self._run_forever(), name="binance-spot-stream")
         self._publisher = asyncio.create_task(self._publish_forever(), name="binance-market-publisher")
         if self.delta:
@@ -69,12 +74,36 @@ class BinanceSpotFeed:
 
     async def stop(self) -> None:
         self._stopping.set()
-        tasks = [task for task in (self._runner, self._publisher, self._delta_runner) if task]
+        tasks = [task for task in (self._runner, self._publisher, self._delta_runner, self._history_runner) if task]
         for task in tasks:
             task.cancel()
         for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
+
+    async def _record_history(self) -> None:
+        last_end = int(time.time() * 1000) // STEP_MS * STEP_MS
+        initialized = False
+        while not self._stopping.is_set():
+            try:
+                if not initialized:
+                    await asyncio.to_thread(self.history.initialize)
+                    initialized = True
+                now = int(time.time() * 1000)
+                end = now // STEP_MS * STEP_MS
+                if end > last_end and self.connected and now - self.last_event_at < 30_000:
+                    row = observation(list(self.analysis_candles), end)
+                    if row:
+                        await asyncio.to_thread(self.history.save, row)
+                        last_end = end
+                        self.history_error = None
+                    else:
+                        self.history_error = "Completed minute history is incomplete; observation skipped"
+            except Exception as error:
+                self.history_error = str(error)
+                logger.exception("Market history recording failed")
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=5)
 
     async def _seed(self) -> None:
         try:
@@ -110,7 +139,9 @@ class BinanceSpotFeed:
         while not self._stopping.is_set():
             try:
                 now = time.monotonic()
-                include_slow_data = not self.delta_context or now - self._delta_history_at >= self.settings.delta_history_seconds
+                include_slow_data = (
+                    not self.delta_context or now - self._delta_history_at >= self.settings.delta_history_seconds
+                )
                 context = await self.delta.snapshot(include_slow_data=include_slow_data)
                 observed_at = int(time.time() * 1000)
                 context["receivedAt"] = observed_at
@@ -337,6 +368,7 @@ class BinanceSpotFeed:
             "lastError": self.last_error,
             "reconnects": self.reconnects,
             "subscribers": len(self._subscribers),
+            "historyError": self.history_error,
         }
 
     def book_levels(self, limit: int) -> tuple[list[list[float]], list[list[float]]]:
