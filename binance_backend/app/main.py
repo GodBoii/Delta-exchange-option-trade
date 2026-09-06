@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import re
+import sqlite3
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -157,6 +159,18 @@ async def btcusd_trades(
 async def btcusd_analysis(request: Request) -> dict[str, Any]:
     live = request.app.state.feed.snapshot()
     return response_envelope(None, {"analysis": live["analysis"], "realtime": live["realtime"]})
+
+
+@app.get("/api/market/btcusd/history")
+async def btcusd_history(request: Request) -> dict[str, Any]:
+    feed: BinanceSpotFeed = request.app.state.feed
+    now = int(time.time() * 1000)
+    try:
+        rows = await asyncio.to_thread(feed.history.read, now)
+    except sqlite3.Error:
+        return {"available": False, "observations": [], "error": "Market history is unavailable"}
+    return {"available": True, "observations": rows, "asOf": now, "schemaVersion": 1,
+            "intervalMinutes": 10, "error": feed.history_error}
 
 
 @app.get("/api/market/btcusd/delta")
