@@ -18,11 +18,13 @@
 
 import type { ComponentType, SVGProps } from "react";
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowsClockwise, ArrowSquareOut, Bank,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowsClockwise, ArrowSquareOut,
+  ArrowsOutLineHorizontal, Bank,
   Broadcast, CalendarBlank, CaretDown, CaretUp, ChartBar, ChartDonut,
   ChartLineUp, Check, CirclesThreePlus, ClockCounterClockwise, Copy, CurrencyDollar,
   DownloadSimple, Equalizer, Eye, FileText, Fingerprint, FloppyDisk, Folders, Gauge,
-  DeviceMobile, Export, Info, Key, Lightning, List, Lock, MoonStars, Newspaper, Path, Plus,
+  DeviceMobile, Export, Info, Key, Lightning, List, Lock, MagnifyingGlassMinus,
+  MagnifyingGlassPlus, MoonStars, Newspaper, Path, Plus,
   PlusSquare, Prohibit, SignOut, Skull, SlidersHorizontal, Spinner, Square, Stack, Sun, Trash,
   TrendUp, UploadSimple, User, Vault, Warning, WifiSlash, X
 } from "@phosphor-icons/react";
@@ -98,3 +100,8 @@ export const ThemeSystem = Gauge as Icon;
 export const Smartphone = DeviceMobile as Icon;
 export const ShareSheet = Export as Icon;
 export const AddToHomeScreen = PlusSquare as Icon;
+
+/* Chart zoom */
+export const ZoomIn = MagnifyingGlassPlus as Icon;
+export const ZoomOut = MagnifyingGlassMinus as Icon;
+export const FitWidth = ArrowsOutLineHorizontal as Icon;
