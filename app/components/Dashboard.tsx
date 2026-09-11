@@ -12,7 +12,7 @@ import {
 import type { AccountOverview, DeltaRecord, RiskStrategy } from "@/lib/app-types";
 import {
   AnimatedNumber, ConfirmModal, EmptyState, IconSwap, Meter, Panel, PanelHeader, Revealed,
-  SectionHeading, SpinningCounter, StatusChip, SwapText, TableSkeleton, TileSkeleton, TiltCard,
+  SectionHeading, SpinningCounter, StatusChip, SwapText, TableSkeleton, TileSkeleton,
   Toggle, type NoticeHandler, type StatusTone
 } from "@/app/components/ui";
 
@@ -137,7 +137,6 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
     <div className="portfolio">
       <SectionHeading
         title="Portfolio"
-        description="Wallet balances, margin usage, live positions, and outstanding orders."
         actions={
           <>
             <span className="refresh-state">
@@ -298,19 +297,17 @@ function Tile({ icon, label, value, note, meter, roll = false }: {
   roll?: boolean;
 }) {
   return (
-    <TiltCard className="tile-tilt">
-      <article className="tile">
-        <span className="tile-icon" aria-hidden="true">{icon}</span>
-        <p className="tile-label">{label}</p>
-        <strong className="tile-value">
-          {roll
-            ? <SpinningCounter value={value} animateOnMount />
-            : <AnimatedNumber value={value} />}
-        </strong>
-        {meter && <Meter value={meter.value} max={meter.max} tone={meter.tone} label={label} />}
-        <p className="tile-note">{note}</p>
-      </article>
-    </TiltCard>
+    <article className="tile">
+      <span className="tile-icon" aria-hidden="true">{icon}</span>
+      <p className="tile-label">{label}</p>
+      <strong className="tile-value">
+        {roll
+          ? <SpinningCounter value={value} animateOnMount />
+          : <AnimatedNumber value={value} />}
+      </strong>
+      {meter && <Meter value={meter.value} max={meter.max} tone={meter.tone} label={label} />}
+      <p className="tile-note">{note}</p>
+    </article>
   );
 }
 
