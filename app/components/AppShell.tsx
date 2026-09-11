@@ -64,7 +64,6 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   children: ReactNode;
 }) {
   const items = NAV_ITEMS.filter(item => availableTabs.includes(item.id));
-  const activeItem = items.find(item => item.id === tab);
   const { barRef, pill } = useSlidingPill(`${tab}:${availableTabs.join(",")}`, '[aria-current="page"]');
   const activeRef = useRef<HTMLButtonElement>(null);
 
@@ -86,7 +85,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
 
       <header className="topbar">
         <div className="topbar-row">
-          <Brand subtitle={activeItem ? activeItem.hint : "Delta Exchange India"} />
+          <Brand subtitle="" />
 
           <Tooltip label={connection.detail} placement="bottom">
             <span className={`live-pill tone-${connection.tone}`}>
@@ -120,6 +119,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
                   key={item.id}
                   ref={current ? activeRef : undefined}
                   className="topnav-item"
+                  aria-label={item.label}
                   data-divider={item.id === firstResearch ? "before" : undefined}
                   aria-current={current ? "page" : undefined}
                   onClick={() => onNavigate(item.id)}
@@ -235,6 +235,7 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
       <button
         type="button"
         className="account-trigger"
+        aria-label="Account menu"
         aria-expanded={open}
         aria-haspopup="menu"
         aria-controls={open ? menuId : undefined}
