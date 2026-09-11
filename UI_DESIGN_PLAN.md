@@ -13,6 +13,20 @@ changes at the token or at its single definition.
 Components never hard-code a colour, radius, spacing step, or type size. Every value resolves
 through a custom property.
 
+## Page surfaces
+
+Content sits directly on the page canvas. Shared panels, portfolio figures, reports, and
+market sections have no enclosing border, shadow, or raised background. Headings, spacing,
+and row dividers establish grouping. Avoid nesting padded surfaces inside these sections.
+
+Inputs, selected controls, menus, dialogs, and risk feedback retain visible boundaries.
+Mobile table records use separators instead of individual cards. Keep touch targets at
+44px where practical and label icon-only controls for assistive technology.
+
+Page titles do not need explanatory subtitles. Keep counts, timestamps, units, validation,
+and information needed to assess a trading action. Put chart shortcuts in tooltips and
+accessible descriptions instead of a visible instruction paragraph.
+
 ## Colour
 
 Three semantic families, and nothing else carries meaning:
