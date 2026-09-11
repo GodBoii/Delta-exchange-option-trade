@@ -167,11 +167,7 @@ export default function AuthView({ onAuthenticated }: { onAuthenticated: () => P
             the headline, then the explanation, then the capability list. */}
         <section className={`entry-copy t-stagger${shown ? " is-shown" : ""}`}>
           <p className="eyebrow t-stagger-line t-stagger-line--1"><span aria-hidden="true" />Delta options trading</p>
-          <h1 className="t-stagger-line t-stagger-line--2">Build, schedule, and track your options strategies.</h1>
-          <p className="entry-lede t-stagger-line t-stagger-line--3">
-            Plan multi-leg strategies for Delta Exchange India, choose entry and exit times, and
-            keep a clear record of every scheduled strategy.
-          </p>
+          <h1 className="t-stagger-line t-stagger-line--2">Your options workspace.</h1>
 
           <ul className="entry-capabilities t-stagger-line t-stagger-line--4">
             <li>
