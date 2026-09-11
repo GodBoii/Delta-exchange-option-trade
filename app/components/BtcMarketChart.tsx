@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, BarChart3, FitWidth, RefreshCw, WifiOff, ZoomIn, ZoomOut } from "@/app/components/icons";
+import { ArrowLeft, ArrowRight, BarChart3, RefreshCw, WifiOff, ZoomIn, ZoomOut } from "@/app/components/icons";
 import {
   AnimatedNumber, SectionHeading, Shimmer, SwapText, useSlidingPill
 } from "@/app/components/ui";
@@ -351,7 +351,6 @@ export default function BtcMarketChart() {
   return <div className="market-page">
     <SectionHeading
       title="Market analysis"
-      description="Binance Spot order flow and volatility alongside Delta BTCUSD perpetual-market data."
       actions={
         <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
           <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
@@ -420,9 +419,9 @@ export default function BtcMarketChart() {
           <button type="button" aria-label="Pan to newer candles" title="Newer candles (Right arrow)" onClick={() => navigation.pan(Math.max(1, Math.round(visibleCount / 4)))} disabled={visibleRange.end === totalCandles}><ArrowRight aria-hidden="true" /></button>
           <button type="button" aria-label="Zoom in" title="Zoom in (+)" onClick={() => navigation.zoom(1 / 1.3)} disabled={visibleCount <= MIN_VISIBLE}><ZoomIn aria-hidden="true" /></button>
           <button type="button" aria-label="Zoom out" title="Zoom out (-)" onClick={() => navigation.zoom(1.3)} disabled={visibleCount >= totalCandles}><ZoomOut aria-hidden="true" /></button>
-          <button type="button" className="chart-text-control" title="Fit all loaded candles (Home)" onClick={navigation.fitAll} disabled={visibleCount >= totalCandles}><FitWidth aria-hidden="true" />Fit all</button>
+          <button type="button" className="chart-text-control" title="Fit all loaded candles (Home)" onClick={navigation.fitAll} disabled={visibleCount >= totalCandles}>Fit all</button>
           <button type="button" className="chart-text-control" title="Return to latest candles at this zoom (End)" onClick={navigation.latest} disabled={visibleRange.end === totalCandles}>Latest</button>
-          <button type="button" className="chart-text-control" title="Reset to the latest 80 candles (0)" onClick={navigation.reset}>Reset</button>
+          <button type="button" aria-label="Reset chart" title="Reset to the latest 80 candles (0)" onClick={navigation.reset}><RefreshCw aria-hidden="true" /></button>
         </div>
       </div>}
       <div className="chart-stage" role="group" aria-label="Interactive BTC chart" aria-describedby={chartHelpId} tabIndex={0} onKeyDown={navigation.onKeyDown}>
@@ -493,7 +492,7 @@ export default function BtcMarketChart() {
         {(error || feedError) && data && <div className="chart-stale-banner"><WifiOff />{error || feedError}. Reconnecting automatically.</div>}
       </div>
 
-      <p className="chart-help" id={chartHelpId}>Drag to pan · Scroll or pinch to zoom · Shift + scroll to pan · Arrow keys to move · + / − to zoom · Home to fit · End for latest · Double-click or 0 to reset. Prices auto-scale to visible candles.</p>
+      <p className="visually-hidden" id={chartHelpId}>Drag to pan · Scroll or pinch to zoom · Shift + scroll to pan · Arrow keys to move · + / − to zoom · Home to fit · End for latest · Double-click or 0 to reset. Prices auto-scale to visible candles.</p>
 
       {data?.analysis && <AnalysisGrid analysis={data.analysis} />}
 
@@ -507,7 +506,7 @@ export default function BtcMarketChart() {
       {data && <DeltaMarketSection delta={data.deltaContext} binanceSpotPrice={data.ticker.lastPrice} />}
 
       <footer className="market-footer">
-        <span><i /> Binance Spot BTCUSDT analysis · Delta BTCUSD derivative context</span>
+        <span><i /> Binance Spot · Delta BTCUSD</span>
         <span>{updatedAt ? `Updated ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"}</span>
       </footer>
     </section>
@@ -792,7 +791,6 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
         </div>
         <div className="basis-row"><span>Spot / mark basis</span><strong className={(delta.markPrice || 0) >= spotPrice ? "up" : "down"}>{signedMoney((delta.markPrice || 0) - spotPrice)}</strong></div>
       </> : <div className="detail-empty"><WifiOff /><p>{delta.lastError ? errorMessage(new Error(delta.lastError), "Delta market data is temporarily unavailable.") : "Waiting for Delta open-interest data"}</p></div>}
-      <p className="source-note">OI, mark, funding, and Delta quotes belong to the Delta BTCUSD perpetual. They are not Binance Spot values.</p>
     </article>
 
     <article className="market-detail-card trades-panel">
@@ -830,7 +828,7 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
 
   return <section className="delta-market-section" aria-label="Complete Delta Exchange BTCUSD public market data">
     <header className="delta-section-header">
-      <div><small>DELTA EXCHANGE</small><h2>BTCUSD perpetual market</h2><p>Live market data for the contract used by scheduled strategies.</p></div>
+      <div><small>DELTA EXCHANGE</small><h2>BTCUSD perpetual market</h2></div>
       <div className="delta-live-state"><i /><span>{delta.tradingStatus || "Live"}</span><time>{delta.receivedAt ? `Updated ${new Date(delta.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting"}</time></div>
     </header>
 
@@ -895,7 +893,6 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
           <ContractFact label="Position limit" value={`${compact(delta.product?.positionSizeLimitContracts || 0)} contracts`} />
           <ContractFact label="Index" value={delta.product?.indexSymbol || ".DEXBTUSD"} />
         </div>
-        <p className="source-note">Delta values describe the BTCUSD perpetual used by this app for execution. Binance values above describe BTCUSDT Spot and remain an independent market reference.</p>
       </article>
     </div>
   </section>;
