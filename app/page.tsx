@@ -319,8 +319,7 @@ function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
       <WifiOff aria-hidden="true" />
       <span>
         <strong>Live trading is temporarily unavailable.</strong>
-        {" "}You can still edit strategies and view public market data. Scheduling, portfolio data,
-        strategy history, and news analysis will return when trading services reconnect.
+        {" "}Builder and public market data remain available.
       </span>
       <button type="button" className="button secondary t-learn" onClick={() => void onRetry()}>
         <RefreshCw aria-hidden="true" />Retry<LearnMoreChevron />
