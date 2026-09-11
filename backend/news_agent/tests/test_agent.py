@@ -9,9 +9,11 @@ from news_agent.config import NewsAgentSettings
 
 def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     db = InMemoryDb()
+    settings = NewsAgentSettings.load()
     agent = create_news_agent(require_api_key=False, db=db)
 
-    assert agent.model.id == "z-ai/glm-5.3-flash"
+    assert agent.model.id == "deepseek/deepseek-v4.1-flash"
+    assert settings.automation_model_id == agent.model.id
     assert agent.model.reasoning_effort == "xhigh"
     assert agent.model.supports_native_structured_outputs is False
     assert agent.model.max_tokens is None
@@ -19,7 +21,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     assert agent.output_schema is None
     assert agent.db is db
     assert agent.add_history_to_context is True
-    assert agent.num_history_runs == NewsAgentSettings.load().history_runs
+    assert agent.num_history_runs == settings.history_runs
     assert agent.num_history_runs == 15
     assert agent.max_tool_calls_from_history is None
     assert agent.tool_call_limit is None
