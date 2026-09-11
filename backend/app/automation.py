@@ -583,7 +583,11 @@ class AutomationScheduler:
                 "status": "scheduled",
                 "scheduled_for": utc_text(run.scheduled_for),
                 "model_id": MODEL_ID,
-                "reason": f"Fixed {run.trigger.replace('_', ' ')} review",
+                "reason": (
+                    "Daily options review two hours before 17:30 IST expiry"
+                    if run.trigger == "pre_expiry"
+                    else f"Fixed {run.trigger.replace('_', ' ')} review"
+                ),
             }
             for row in settings
             for run in fixed_runs
