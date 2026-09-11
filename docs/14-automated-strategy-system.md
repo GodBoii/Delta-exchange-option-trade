@@ -639,7 +639,8 @@ starts at the next boundary after startup; downtime is not backfilled or represe
 The latest 50 hours are available through `GET /api/market/btcusd/history`; older observations remain local.
 
 The automation service reuses `fixed_runs_between` to group observations into intervals from one scheduled
-session opening to the next. Asia uses 09:00 Tokyo, London 08:00 London, and New York 09:30 New York, with
+session opening to the next. Asia uses 09:00 Tokyo, London 08:00 London, pre-expiry uses 15:30 IST,
+and New York uses 09:30 New York, with
 their existing daylight-saving rules and weekend scheduling. These are review intervals, not overlapping
 exchange trading hours. Each fixed run receives the cycle beginning at the previous matching session
 opening through the current capture time. Manual, follow-up, and activation runs use the latest session
@@ -752,7 +753,7 @@ Rules:
 - A follow-up run cannot schedule another follow-up.
 - Only one follow-up may run between two fixed reviews.
 - Limit agent follow-ups to three per Asia/Kolkata calendar day.
-- A strategy activation cannot use the exact minute of an Asia, London, or New York fixed review.
+- A strategy activation cannot use the exact minute of any fixed review, including the pre-expiry review.
 - A scheduled run cannot bypass the normal session and account controls.
 
 The more conventional tool name would be `schedule_next_agent_run`, but this draft retains the requested name until the API naming is finalized.
@@ -861,6 +862,8 @@ Execute and monitor
 - Every AI-selected strategy receives a separate Binance-only activation recheck five minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy.
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
 - Asia, London, and New York triggers use their local timezones, so daylight-saving changes convert correctly.
+- The daily `pre_expiry` review runs at 15:30 Asia/Kolkata, two hours before the 17:30 IST options expiry, including weekends. It shares the existing automation switch, per-user run lock, ten-minute lateness limit, and fixed-review follow-up boundaries. This is one daily review per enabled user, regardless of the number of positions or expiries held.
+- Apply `017_pre_expiry_review.sql` before deploying the backend and news analyzer. It permits the new trigger and updates database follow-up boundaries. Scheduler synchronization creates the pending reviews without a separate cron job.
 
 ## 13. Resolved defaults
 
@@ -870,7 +873,7 @@ Execute and monitor
 4. The default 50% account policy supports two reserved or active allocations. Other percentages derive their limit from the same rule.
 5. Every hold-to-expiry strategy starts with a five-minute buffer.
 6. Agent follow-ups require at least five minutes, must occur before the next fixed review, cannot chain, are limited to one between fixed reviews, and are limited to three per day.
-7. The first fixed reviews are Asia, London, and New York. No extra India-time review is enabled initially.
+7. Fixed reviews are Asia, London, pre-expiry at 15:30 IST, and New York.
 8. The AI chooses the strategy without user-configured signal thresholds.
 
 ## 14. Live execution responsibilities
