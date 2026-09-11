@@ -21,7 +21,7 @@ from .supabase import SupabaseAdmin
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automation", tags=["automation"])
 news_analyzer_url = "http://news-analyzer:8002"
-MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
+MODEL_ID = "deepseek/deepseek-v4.1-flash"
 FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
 FIXED_RUN_CATCH_UP = timedelta(minutes=5)
 FIXED_RUN_SYNC_SECONDS = 60.0
@@ -227,6 +227,7 @@ async def execute_automation_run(
                 "market_snapshot_id": payload.get("marketSnapshotId"),
                 "agno_session_id": payload.get("sessionId"),
                 "agno_run_id": payload.get("runId"),
+                "model_id": payload.get("model") or MODEL_ID,
                 "report_markdown": payload.get("report"),
                 "member_responses": payload.get("memberResponses") or [],
                 "tool_calls": payload.get("toolCalls") or [],
