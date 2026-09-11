@@ -58,6 +58,7 @@ def test_fixed_sessions_follow_summer_timezones() -> None:
     assert [(run.trigger, run.scheduled_for) for run in runs] == [
         ("asia_session", datetime(2026, 8, 29, 0, 0, tzinfo=UTC)),
         ("london_session", datetime(2026, 8, 29, 7, 0, tzinfo=UTC)),
+        ("pre_expiry", datetime(2026, 8, 29, 10, 0, tzinfo=UTC)),
         ("new_york_session", datetime(2026, 8, 29, 13, 30, tzinfo=UTC)),
         ("asia_session", datetime(2026, 8, 30, 0, 0, tzinfo=UTC)),
     ]
@@ -70,6 +71,7 @@ def test_fixed_sessions_follow_winter_timezones() -> None:
     assert [(run.trigger, run.scheduled_for.hour, run.scheduled_for.minute) for run in runs] == [
         ("asia_session", 0, 0),
         ("london_session", 8, 0),
+        ("pre_expiry", 10, 0),
         ("new_york_session", 14, 30),
     ]
 
@@ -81,6 +83,21 @@ def test_next_fixed_run_excludes_the_current_instant() -> None:
 
     assert fixed.trigger == "london_session"
     assert fixed.scheduled_for == datetime(2026, 8, 29, 7, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("day", ["2026-03-08", "2026-03-29", "2026-09-12", "2026-11-01"])
+def test_pre_expiry_review_is_two_hours_before_daily_expiry(day: str) -> None:
+    expiry = datetime.fromisoformat(f"{day}T17:30:00+05:30")
+    scheduled = expiry - timedelta(hours=2)
+    fixed = next_fixed_run(scheduled - timedelta(microseconds=1))
+
+    assert fixed.trigger == "pre_expiry"
+    assert fixed.scheduled_for == scheduled
+    assert fixed.run_key == f"pre_expiry:{day}"
+    assert previous_fixed_run(scheduled + timedelta(microseconds=1)) == fixed
+    assert fixed_session_during_minute(scheduled + timedelta(seconds=59)) == fixed
+    assert fixed_session_during_minute(scheduled + timedelta(minutes=1)) is None
+    assert next_fixed_run(scheduled).trigger == "new_york_session"
 
 
 def test_previous_fixed_run_excludes_the_current_instant() -> None:
@@ -137,6 +154,7 @@ async def test_scheduler_precreates_fixed_reviews_in_one_database_call() -> None
         "asia_session",
         "london_session",
         "new_york_session",
+        "pre_expiry",
     }
     assert all(str(row["scheduled_for"]).endswith("Z") for row in database.payload)
     assert database.reconciled
