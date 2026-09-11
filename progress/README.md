@@ -4,6 +4,7 @@ This folder is the durable project history for the Delta Exchange / Trade Cognit
 
 ## Documents
 
+- [BTC_CHART_NAVIGATION.md](./BTC_CHART_NAVIGATION.md) records the 2026-09-11 chart zoom, pan, live-following, and minimap changes.
 - [PROJECT_HISTORY.md](./PROJECT_HISTORY.md) — consolidated history of the 25 prior Codex tasks associated with this workspace, including implementations, diagnoses, architecture changes, verification results, superseded decisions, and remaining risks.
 - [COMBINED_PREMIUM_STOP_LOSS.md](./COMBINED_PREMIUM_STOP_LOSS.md) — detailed implementation log for the combined-premium stop-loss feature.
 
