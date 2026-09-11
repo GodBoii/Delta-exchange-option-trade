@@ -91,7 +91,7 @@ class AutomationAnalysisRequest(BaseModel):
     sessionId: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     accountContext: dict[str, Any]
     trigger: str = Field(
-        pattern=r"^(manual|asia_session|london_session|new_york_session|agent_follow_up|activation_recheck)$"
+        pattern=r"^(manual|asia_session|london_session|new_york_session|pre_expiry|agent_follow_up|activation_recheck)$"
     )
     triggerReason: str | None = Field(default=None, max_length=1000)
     signalsToInspect: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=10)
