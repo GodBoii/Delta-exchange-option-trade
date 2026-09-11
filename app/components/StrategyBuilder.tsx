@@ -823,7 +823,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     <div className="builder">
       <SectionHeading
         title="Strategy builder"
-        description="Build a reusable options strategy, then choose when it should enter and exit."
         actions={
           <>
             <button type="button" className="button ghost" onClick={() => importInput.current?.click()}>
@@ -850,10 +849,10 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             <PanelHeader
               icon={<CircleDollarSign />}
               title="Strategy details"
-              meta="Name, market, and strategy type"
+
             />
             <div className="grid-2">
-              <Field label="Strategy name" hint="Names may be reused; every schedule is a separate run." invalid={invalidFields.has("name")}>
+              <Field label="Strategy name" invalid={invalidFields.has("name")}>
                 <ClearableInput
                   value={strategy.name}
                   maxLength={80}
@@ -862,7 +861,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                   onChange={name => setStrategy({ ...strategy, name })}
                 />
               </Field>
-              <Field label="Description" hint="Included when the automation agent compares strategies.">
+              <Field label="Description">
                 <button
                   type="button"
                   className="description-trigger"
@@ -935,7 +934,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
               />
               <Toggle
                 label="Available to automation"
-                description="The agent may select this saved version. It cannot edit it."
+
                 checked={strategy.enabledForAi}
                 onChange={enabledForAi => setStrategy({ ...strategy, enabledForAi })}
               />
@@ -1006,7 +1005,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
             <PanelHeader
               icon={<Layers3 />}
               title="Position sizing"
-              meta="Lot behavior for this strategy structure"
+
             />
             <div className="grid-3">
               <Segmented
@@ -1169,7 +1168,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           </Panel>
 
           <Panel>
-            <PanelHeader icon={<ShieldCheck />} title="Review" meta="Checked before scheduling" />
+            <PanelHeader icon={<ShieldCheck />} title="Review"  />
 
             <StructureStrip structure={structure} />
 
@@ -1276,7 +1275,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
           size="compact"
           onClose={() => setDescriptionOpen(false)}
         >
-          <Field label="Description" hint="The automation agent reads this when it compares saved strategies.">
+          <Field label="Description">
             <textarea
               className="description-editor"
               value={strategy.description}
@@ -1629,7 +1628,7 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
                 onChange={value => onUpdate({ strikeMode: value as StrategyLeg["strikeMode"] })}
                 options={STRIKE_MODES}
               />
-              <Field label="Leg role" hint="Used by validation and automation explanations.">
+              <Field label="Leg role">
                 <input
                   value={leg.role ?? ""}
                   maxLength={40}
