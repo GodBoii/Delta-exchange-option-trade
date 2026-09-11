@@ -153,7 +153,7 @@ def run_automation_team(
                     "and a follow-up run cannot schedule another follow-up."
                 ),
                 (
-                    "Never schedule a strategy activation during the exact minute of an Asia, London, or New York "
+                    "Never schedule a strategy activation during the exact minute of any "
                     "fixed review."
                 ),
                 "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
