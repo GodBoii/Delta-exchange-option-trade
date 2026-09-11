@@ -173,7 +173,6 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
     <div className="runs">
       <SectionHeading
         title="Strategy history"
-        description="Review scheduled and completed strategies. You can cancel before entry, exit an active strategy, or delete a finished record."
         actions={
           <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
             <IconSwap showB={loading} a={<RefreshCw />} b={<RefreshCw className="spin" />} />
