@@ -81,7 +81,6 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
     <div className="automation-page">
       <SectionHeading
         title="Automation"
-        description="Analyze Binance Spot charts and news, then schedule and recheck saved strategies live."
         actions={
           <>
             <button type="button" className="button secondary" onClick={() => void load()} disabled={loading || running}>
