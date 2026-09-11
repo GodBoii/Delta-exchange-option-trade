@@ -9,7 +9,7 @@ import type { ApiRequester } from "@/lib/api";
 import { cleanAgentMarkdown } from "@/lib/agent-markdown";
 import { errorMessage } from "@/lib/format";
 import {
-  HoverGroup, InlineMessage, SectionHeading, StatusDot
+  InlineMessage, SectionHeading, StatusDot
 } from "@/app/components/ui";
 
 type SavedOutcome = {
@@ -119,7 +119,6 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
     <div className="news-page">
       <SectionHeading
         title="Bitcoin news analysis"
-        description="News analyses produced by the news member during main automation runs."
         actions={
           result && (
             <div className="news-saved-state">
@@ -136,10 +135,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
             <span><History aria-hidden="true" />Analysis history</span>
             <small>{sessions.length} {sessions.length === 1 ? "report" : "reports"}</small>
           </header>
-          {/* A horizontal stack of sibling cards, so hovering one lifts it and
-              nudges its neighbours with a distance falloff. The return springs,
-              which is the one place hover-out is the richer half of the motion. */}
-          <HoverGroup className="news-session-chips">
+          <div className="news-session-chips">
             {sessions.map((session, index) => (
               <button
                 type="button"
@@ -155,7 +151,7 @@ export default function NewsAnalysis({ request }: { request: ApiRequester }) {
                 <small>{session.runCount} {session.runCount === 1 ? "analysis" : "analyses"}</small>
               </button>
             ))}
-          </HoverGroup>
+          </div>
         </section>
       )}
 
