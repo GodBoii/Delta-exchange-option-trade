@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = BACKEND_DIR / ".env"
 
-MODEL_ID = "z-ai/glm-5.3-flash"
-AUTOMATION_MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
+MODEL_ID = "deepseek/deepseek-v4.1-flash"
+AUTOMATION_MODEL_ID = MODEL_ID
 AUTOMATION_SESSION_TABLE = "automation_agent_sessions"
 SESSION_TABLE = "news_agent_sessions"
 DB_SCHEMA = "ai"
