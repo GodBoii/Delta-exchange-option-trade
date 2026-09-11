@@ -17,6 +17,18 @@ def report(direction: str = "mixed") -> str:
     return f"# BTC analysis\n\nThe evidence currently points to a **{direction}** outlook."
 
 
+def test_automation_request_accepts_pre_expiry_trigger() -> None:
+    request = main.AutomationAnalysisRequest(
+        userId="11111111-1111-4111-8111-111111111111",
+        agentRunId="22222222-2222-4222-8222-222222222222",
+        sessionId="scheduled-pre-expiry",
+        accountContext={},
+        trigger="pre_expiry",
+    )
+
+    assert request.trigger == "pre_expiry"
+
+
 def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
     settings = replace(
         NewsAgentSettings.load(),
