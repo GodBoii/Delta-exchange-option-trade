@@ -26,7 +26,7 @@ def payload(now):
 
 
 @pytest.mark.parametrize("day", ["2026-09-06", "2026-03-08", "2026-03-29", "2026-11-01"])
-@pytest.mark.parametrize("trigger", ["asia_session", "london_session", "new_york_session"])
+@pytest.mark.parametrize("trigger", ["asia_session", "london_session", "pre_expiry", "new_york_session"])
 def test_matching_session_cycle_and_dst(day, trigger):
     midnight = datetime.fromisoformat(day).replace(tzinfo=UTC)
     now = next(
@@ -34,7 +34,7 @@ def test_matching_session_cycle_and_dst(day, trigger):
     )
     result = session_history(payload(now), now, trigger)
     sessions = result["sessions"]
-    assert len(sessions) == 3
+    assert len(sessions) == 4
     assert sessions[-1]["session"] == trigger
     assert datetime.fromisoformat(sessions[0]["end"]) == now
     assert all(s["coveragePercent"] == 100 and s["averageSidewaysScorePercent"] == 80 for s in sessions)
