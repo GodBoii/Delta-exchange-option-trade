@@ -75,7 +75,7 @@ supabase/migrations/009_shared_default_strategies.sql
 
 Migration `009` replaces the original per-account built-in strategies with one shared, read-only set. Migration `015` retires Iron condor and Iron butterfly, leaving six active shared strategies while preserving historical runs. New user-created strategies remain private to their account.
 
-Then apply migrations `010` through `016` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, and `016` links follow-ups to the run that requested them so they receive its full final response.
+Then apply migrations `010` through `018` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, `016` links follow-ups to the run that requested them so they receive its full final response, `017` adds the pre-expiry review, and `018` moves every agent to `deepseek/deepseek-v4.1-flash`.
 
 After deploying the current engine, run `python -m scripts.seed_default_strategies` from `backend` to add the seven unhedged templates, bringing the active built-in library to thirteen. This insert-only command preserves existing definitions and history. The additions cover single-sided premium selling, ITM directional positions, and next-day-expiry range/expansion trades. See [strategy coverage](docs/14-automated-strategy-system.md#additional-built-in-market-choices).
 
