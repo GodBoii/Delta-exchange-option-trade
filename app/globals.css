@@ -2126,27 +2126,23 @@ time,
    7. Panels and headings
    -------------------------------------------------------------------------- */
 
-/* Every raised surface carries a lit top edge. On a dark interface that reads
-   as elevation far more cheaply than a heavier shadow, and it keeps the
-   hairline geometry identical between resting and hovered states so nothing
-   shifts by a pixel when the border colour changes. */
+/* Page sections use spacing and a single divider. Raised surfaces are reserved for controls and overlays. */
 .panel {
   position: relative;
-  padding: var(--s-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--shadow-1), var(--inset-lit);
-  transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
+  padding: var(--s-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* No hover response: a panel is a container, not a control, and lighting its
    border under the cursor suggested a click target that does not exist. */
 
 .panel.invalid {
-  border-color: rgb(229 105 95 / 45%);
-  box-shadow: 0 0 0 3px var(--short-soft), var(--inset-lit);
+  border-color: var(--short);
+  box-shadow: none;
+  border-top: 2px solid var(--short);
 }
 
 .panel > * + * { margin-top: var(--s-4); }
@@ -2187,13 +2183,12 @@ time,
 .panel-icon {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 24px;
+  height: 24px;
   flex: none;
-  border-radius: var(--r-md);
-  background: var(--surface-3);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--inset-lit);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-2);
 }
 
@@ -2388,12 +2383,13 @@ time,
   gap: var(--s-3);
   padding: var(--s-4);
   margin-bottom: var(--s-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border: 0;
+  border-radius: 0;
   background: var(--surface-1);
   color: var(--text-2);
   font-size: var(--t-sm);
   line-height: var(--lh-snug);
+  border-left: 2px solid var(--line);
 }
 
 .callout > svg { width: 18px; height: 18px; }
@@ -2524,16 +2520,17 @@ time,
 .skeleton-tile {
   display: grid;
   gap: var(--s-3);
-  padding: var(--s-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
+  padding: var(--s-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .skeleton-label { width: 45%; height: 10px; }
 .skeleton-value { width: 70%; height: 24px; }
 
-.skeleton-table { display: grid; gap: var(--s-3); }
+.skeleton-table { display: grid; gap: var(--s-3); border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: var(--s-4) 0; }
 .skeleton-head { height: 14px; width: 30%; }
 .skeleton-row { height: 34px; }
 
@@ -3381,7 +3378,7 @@ time,
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
-  background: var(--bloom-accent), var(--bloom-long), var(--canvas);
+  background: var(--canvas);
 }
 
 /* Chrome.
@@ -3526,7 +3523,7 @@ time,
    more space than the distinction is worth in a strip. */
 .topnav-item[data-divider="before"] {
   margin-left: var(--s-4);
-  border-left: 1px solid var(--line);
+  border-left: 0;
   padding-left: calc(var(--s-4) + var(--s-1));
 }
 
@@ -3956,12 +3953,11 @@ time,
   display: grid;
   gap: var(--s-4);
   width: 100%;
-  padding: var(--s-6);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-xl);
-  background: var(--surface-1);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--shadow-3), var(--inset-lit);
+  padding: var(--s-6) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* The metal ring wrapper lays out inline by default; the call to action inside
@@ -3991,8 +3987,8 @@ time,
    moves the same element. The border width never changes between states, so the
    tween cannot shift the content inside by a pixel. */
 .entry-card.is-error {
-  border-color: rgb(229 105 95 / 62%);
-  box-shadow: var(--shadow-3), var(--glow-short);
+  box-shadow: none;
+  border-top: 2px solid var(--short);
 }
 
 /* The capability list is stacked copy, so it enters with the text reveal. */
@@ -4053,13 +4049,13 @@ time,
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   align-items: start;
-  gap: var(--s-4);
+  gap: var(--s-8);
 }
 
 .builder-main,
 .builder-rail {
   display: grid;
-  gap: var(--s-4);
+  gap: var(--s-6);
   min-width: 0;
 }
 
@@ -4086,11 +4082,11 @@ time,
 
 .review-facts {
   display: grid;
-  gap: 1px;
+  gap: 0;
   margin: 0;
   overflow: hidden;
-  border-radius: var(--r-md);
-  background: var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .review-facts > div {
@@ -4098,8 +4094,9 @@ time,
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s-3);
-  padding: var(--s-3);
-  background: var(--surface-2);
+  padding: var(--s-3) 0;
+  background: transparent;
+  border-bottom: 1px solid var(--line);
 }
 
 .review-facts dt {
@@ -4335,10 +4332,10 @@ time,
 .timeline {
   display: grid;
   gap: var(--s-3);
-  padding: var(--s-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
+  padding: var(--s-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .timeline-track {
@@ -4492,10 +4489,10 @@ time,
 .risk-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(110px, 0.7fr)) minmax(200px, 1.2fr);
-  gap: 1px;
+  gap: var(--s-4);
   overflow: hidden;
-  border-radius: var(--r-md);
-  background: var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .risk-input,
@@ -4504,8 +4501,9 @@ time,
   align-content: center;
   gap: var(--s-2);
   min-height: 104px;
-  padding: var(--s-4);
-  background: var(--surface-2);
+  padding: var(--s-3) 0;
+  background: transparent;
+  border-bottom: 1px solid var(--line);
 }
 
 .risk-input > span:first-child,
@@ -4584,26 +4582,25 @@ time,
 
 /* Legs */
 
-/* The corners are rounded on the first and last rows rather than by clipping the
-   list, because the row tools carry tooltips and an `overflow: hidden` parent
-   would cut every one of them off. The accordion still clips its own panel. */
+/* Strategy legs use row separators; overflow stays visible for tooltips. */
 .leg-list {
   display: grid;
-  gap: 1px;
-  border-radius: var(--r-md);
-  background: var(--line);
+  gap: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.leg:first-child { border-radius: var(--r-md) var(--r-md) 0 0; }
-.leg:last-child { border-radius: 0 0 var(--r-md) var(--r-md); }
-.leg:only-child { border-radius: var(--r-md); }
+.leg:first-child { border-radius: 0; }
+.leg:last-child { border-radius: 0; }
+.leg:only-child { border-radius: 0; }
 
 .leg {
-  background: var(--surface-2);
+  background: transparent;
   transition: background-color var(--acc-expand) var(--acc-ease);
+  border-bottom: 1px solid var(--line);
 }
 
-.leg[data-open="true"] { background: var(--surface-3); }
+.leg[data-open="true"] { background: var(--tint-1); }
 
 .leg.invalid { box-shadow: inset 0 0 0 1px rgb(229 105 95 / 55%); }
 
@@ -4749,12 +4746,7 @@ time,
   gap: var(--s-3);
 }
 
-/* Headline figures tilt toward the pointer with a soft glare (`t-tilt`). These
-   are the one surface in the app where that is appropriate: they are glanceable
-   and carry no controls, so nothing moves out from under a click. The pointer
-   is tracked on the flat outer wrapper, never the card that rotates. */
-.tile-tilt,
-.tile-tilt > .t-tilt-card { height: 100%; }
+/* Headline figures share the page canvas and align as a single metric strip. */
 
 .tile {
   position: relative;
@@ -4762,16 +4754,13 @@ time,
   align-content: start;
   gap: var(--s-2);
   height: 100%;
-  padding: var(--s-5);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--inset-lit);
-  transition: border-color var(--dur) ease;
+  padding: var(--s-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  border-bottom: 1px solid var(--line);
 }
-
-.tile-tilt:hover .tile { border-color: var(--line-strong); }
 
 .tile-icon {
   display: grid;
@@ -4779,10 +4768,9 @@ time,
   width: 32px;
   height: 32px;
   margin-bottom: var(--s-2);
-  border-radius: var(--r-sm);
-  background: var(--surface-3);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--inset-lit);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text-2);
 }
 
@@ -4816,8 +4804,8 @@ time,
 
 .table-scroll {
   overflow-x: auto;
-  margin-inline: calc(var(--s-5) * -1);
-  padding-inline: var(--s-5);
+  margin-inline: 0;
+  padding-inline: 0;
 }
 
 .data-table {
@@ -5030,11 +5018,12 @@ time,
 .down { color: var(--short) !important; }
 
 .market-terminal {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-2);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
 }
 
 .market-toolbar {
@@ -5043,9 +5032,9 @@ time,
   justify-content: space-between;
   gap: var(--s-4);
   flex-wrap: wrap;
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-3) 0;
   border-bottom: 1px solid var(--line);
-  background: var(--surface-2);
+  background: transparent;
 }
 
 .market-symbol {
@@ -5150,14 +5139,15 @@ time,
 .market-stats {
   display: grid;
   grid-template-columns: minmax(200px, 1.6fr) repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  background: var(--line);
+  gap: var(--s-4);
+  background: transparent;
   border-bottom: 1px solid var(--line);
 }
 
 .market-stats > div {
-  padding: var(--s-3) var(--s-4);
-  background: var(--surface-1);
+  padding: var(--s-3) 0;
+  background: transparent;
+  border-right: 0;
 }
 
 .market-last-price {
@@ -5199,7 +5189,7 @@ time,
   align-items: center;
   gap: var(--s-4);
   min-height: 36px;
-  padding-inline: var(--s-4);
+  padding-inline: 0;
   border-bottom: 1px solid var(--line);
   color: var(--text-3);
   font-size: var(--t-xs);
@@ -5297,18 +5287,15 @@ time,
   align-items: center;
   justify-content: space-between;
   gap: var(--s-2);
-  padding: var(--s-2) var(--s-4);
+  padding: var(--s-2) 0;
   border-bottom: 1px solid var(--line);
 }
 
-.chart-range-label,
-.chart-help {
+.chart-range-label {
   color: var(--text-2);
   font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
 }
-
-.chart-help { padding: var(--s-2) var(--s-4); line-height: 1.6; }
 
 .chart-zoom-controls {
   display: flex;
@@ -5439,9 +5426,10 @@ time,
 .analysis-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 1px;
-  background: var(--line);
+  gap: var(--s-4) var(--s-6);
+  background: transparent;
   border-top: 1px solid var(--line);
+  padding-block: var(--s-5);
 }
 
 .analysis-metric {
@@ -5449,8 +5437,8 @@ time,
   align-content: center;
   gap: var(--s-1);
   min-width: 0;
-  padding: var(--s-4);
-  background: var(--surface-1);
+  padding: var(--s-2) 0;
+  background: transparent;
 }
 
 .analysis-metric small {
@@ -5486,9 +5474,10 @@ time,
 .delta-detail-grid,
 .delta-history-grid {
   display: grid;
-  gap: 1px;
-  background: var(--line);
+  gap: var(--s-6) var(--s-8);
+  background: transparent;
   border-top: 1px solid var(--line);
+  padding-block: var(--s-6);
 }
 
 .market-detail-grid { grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.9fr); }
@@ -5497,8 +5486,8 @@ time,
 .market-detail-card,
 .delta-data-panel {
   min-width: 0;
-  padding: var(--s-5);
-  background: var(--surface-1);
+  padding: var(--s-3) 0;
+  background: transparent;
 }
 
 .detail-header {
@@ -5709,13 +5698,6 @@ time,
 .basis-row span { color: var(--text-3); }
 .basis-row strong { font-size: var(--t-sm); }
 
-.source-note {
-  margin-top: var(--s-3);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  line-height: var(--lh-snug);
-}
-
 .detail-empty,
 .delta-list-empty,
 .delta-series-empty {
@@ -5746,9 +5728,9 @@ time,
 .recent-trades-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
+  gap: 0 var(--s-4);
   margin-top: var(--s-4);
-  background: var(--line);
+  background: transparent;
 }
 
 .trade-tile {
@@ -5757,10 +5739,11 @@ time,
   align-items: center;
   gap: var(--s-2);
   min-width: 0;
-  padding: var(--s-2);
-  background: var(--surface-1);
+  padding: var(--s-2) 0;
+  background: transparent;
   font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--line);
 }
 
 .trade-tile > span { font-weight: 650; }
@@ -5771,8 +5754,9 @@ time,
 
 .delta-market-section {
   border-top: 1px solid var(--line);
-  background: var(--surface-2);
+  background: transparent;
   font-variant-numeric: tabular-nums;
+  margin-top: var(--s-6);
 }
 
 .delta-section-header {
@@ -5780,7 +5764,7 @@ time,
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--s-6);
-  padding: var(--s-6) var(--s-5) var(--s-5);
+  padding: var(--s-6) 0 var(--s-5);
 }
 
 .delta-section-header > div:first-child { display: grid; gap: var(--s-1); }
@@ -5824,9 +5808,10 @@ time,
 .delta-tape,
 .delta-contract-grid {
   display: grid;
-  gap: 1px;
-  background: var(--line);
+  gap: var(--s-4) var(--s-6);
+  background: transparent;
   border-block: 1px solid var(--line);
+  padding-block: var(--s-4);
 }
 
 .delta-tape { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
@@ -5837,8 +5822,8 @@ time,
   display: grid;
   gap: var(--s-1);
   min-width: 0;
-  padding: var(--s-4);
-  background: var(--surface-1);
+  padding: var(--s-2) 0;
+  background: transparent;
 }
 
 .delta-metric small,
@@ -5920,8 +5905,8 @@ time,
 
 .delta-series-card {
   min-width: 0;
-  padding: var(--s-4);
-  background: var(--surface-1);
+  padding: 0;
+  background: transparent;
 }
 
 .delta-series-card header {
@@ -6169,7 +6154,7 @@ time,
 .automation-chart-section > header strong { color: var(--text-1); font-size: var(--t-sm); }
 .automation-chart-section > header small { color: var(--text-3); font-size: var(--t-xs); }
 .automation-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
-.automation-chart-grid figure { overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
+.automation-chart-grid figure { overflow: hidden; border: 0; border-radius: 0; background: transparent; }
 .automation-chart-grid img { display: block; width: 100%; height: auto; object-fit: contain; }
 .automation-chart-grid figcaption { padding: var(--s-2) var(--s-3); color: var(--text-2); font-size: var(--t-xs); }
 .automation-run-ids { display: grid; gap: var(--s-2); color: var(--text-3); font-size: var(--t-xs); }
@@ -6200,10 +6185,12 @@ time,
 .news-sessions {
   display: grid;
   gap: var(--s-3);
-  padding: var(--s-4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface-1);
+  padding: var(--s-4) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  border-bottom: 1px solid var(--line);
 }
 
 .news-sessions > header {
@@ -6224,9 +6211,7 @@ time,
 .news-sessions > header svg { color: var(--accent); }
 .news-sessions > header small { color: var(--text-3); font-size: var(--t-xs); }
 
-/* Room above and below for the hover lift: a horizontally scrolling row also
-   scrolls vertically, so without the padding the 4px lift would trip a
-   scrollbar every time the pointer crossed a card. */
+/* Saved reports form a horizontally scrollable selection strip. */
 .news-session-chips {
   display: flex;
   gap: var(--s-2);
@@ -6234,30 +6219,25 @@ time,
   padding-block: var(--s-2) var(--s-3);
 }
 
-/* A horizontal stack of sibling cards, so hovering one lifts it and nudges its
-   neighbours with a distance falloff (`t-avatar`). The return springs — that is
-   the one interaction where hover-out is the richer half of the motion. */
-.news-session-chips .t-avatar { display: flex; }
-
 .news-session-chips button {
   display: grid;
   justify-items: start;
   gap: var(--s-1);
   min-width: 180px;
   padding: var(--s-3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--inset-lit);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   text-align: left;
   transition: border-color var(--dur) ease, background-color var(--dur) ease;
+  border-bottom: 2px solid transparent;
 }
 
 .news-session-chips button:hover:not(:disabled) { border-color: var(--line-strong); }
 
 .news-session-chips button.active {
-  border-color: rgb(212 162 68 / 45%);
+  border-color: var(--accent);
   background: var(--accent-soft);
 }
 
@@ -6281,10 +6261,12 @@ time,
 .news-session-chips button small { color: var(--text-3); font-size: 11px; }
 
 .news-report {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
 }
 
 .news-report-meta {
@@ -6327,6 +6309,7 @@ time,
   border-top: 1px solid var(--line);
   color: var(--text-3);
   font-size: var(--t-xs);
+  padding-inline: 0;
 }
 
 .news-report-footer svg { color: var(--warn); }
@@ -6335,7 +6318,7 @@ time,
 
 .news-markdown {
   max-width: 74ch;
-  padding: clamp(var(--s-6), 4vw, var(--s-12));
+  padding: var(--s-6) 0;
   color: var(--text-2);
   font-size: var(--t-lg);
   line-height: 1.75;
@@ -6430,10 +6413,11 @@ time,
   align-items: center;
   gap: var(--s-5);
   min-height: 260px;
-  padding: clamp(var(--s-6), 4vw, var(--s-10));
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface-1);
+  padding: var(--s-8) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .news-status-panel > svg { width: 24px; height: 24px; color: var(--accent); }
@@ -6670,7 +6654,7 @@ time,
   .delta-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .liquidity-panel { grid-row: auto; }
   .delta-contract-panel { grid-column: auto; }
-  .market-stats { grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(0, 1fr)); }
+  .market-stats { grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(0, 1fr)); background: transparent; gap: var(--s-4); }
   .market-stats > div:nth-child(n + 4) { display: none; }
   .entry-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s-10); }
   .entry-card-shell { justify-self: start; max-width: 520px; }
@@ -6813,8 +6797,8 @@ time,
   .grid-2,
   .grid-3 { grid-template-columns: minmax(0, 1fr); }
   .risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .panel { padding: var(--s-4); }
-  .table-scroll { margin-inline: calc(var(--s-4) * -1); padding-inline: var(--s-4); }
+  .panel { padding: var(--s-4) 0; }
+  .table-scroll { margin-inline: 0; padding-inline: 0; }
   /* The leg summary wraps instead of dropping facts, so the configuration
      stays fully readable on a phone. */
   .leg-toggle {
@@ -6840,7 +6824,7 @@ time,
   .market-toolbar { flex-direction: column; align-items: stretch; }
   .market-intervals { justify-content: space-between; }
   .market-intervals button { flex: 1; }
-  .market-stats { grid-template-columns: minmax(0, 1fr); }
+  .market-stats { grid-template-columns: minmax(0, 1fr); background: transparent; gap: var(--s-4); }
   .market-stats > div:nth-child(n + 3) { display: none; }
   .order-book-table,
   .delta-order-book,
@@ -6884,7 +6868,7 @@ time,
   .news-report-meta { grid-template-columns: minmax(0, 1fr); }
   .news-markdown {
     max-width: 100%;
-    padding: var(--s-5) var(--s-4);
+    padding: var(--s-6) 0;
     font-size: var(--t-md);
     overflow-wrap: anywhere;
   }
@@ -6897,7 +6881,7 @@ time,
     overscroll-behavior-inline: contain;
   }
 
-  .news-report-footer { align-items: flex-start; padding-inline: var(--s-4); }
+  .news-report-footer { align-items: flex-start; padding-inline: 0; }
   .modal-layer {
     place-items: center;
     padding:
@@ -6920,6 +6904,8 @@ time,
   .table-scroll {
     overscroll-behavior-inline: contain;
     -webkit-overflow-scrolling: touch;
+    margin-inline: 0;
+    padding-inline: 0;
   }
 
   /* Portfolio and strategy-history rows become compact records on phones.
@@ -6955,11 +6941,12 @@ time,
   .mobile-card-table tbody tr {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: var(--s-3);
-    border: 1px solid var(--line);
-    border-radius: var(--r-md);
-    background: var(--surface-2);
-    box-shadow: var(--inset-lit);
+    padding: var(--s-4) 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    border-bottom: 1px solid var(--line);
   }
 
   .mobile-card-table tbody tr > * {
@@ -7174,7 +7161,7 @@ time,
   .panel-header-actions > .button,
   .section-heading-actions > .button { flex: 1 1 auto; }
 
-  .callout { align-items: flex-start; flex-wrap: wrap; }
+  .callout { align-items: flex-start; flex-wrap: wrap; border-left: 2px solid var(--line); }
   .callout > .button { width: 100%; }
   .button-row { display: grid; grid-template-columns: minmax(0, 1fr); }
   .button-row > .button,
@@ -7209,6 +7196,7 @@ time,
   .callout {
     flex-direction: column;
     gap: var(--s-2);
+    border-left: 2px solid var(--line);
   }
 
   /* Risk input: even more compact */
@@ -7293,7 +7281,7 @@ time,
   .tile-label { font-size: 11px; }
 
   /* Panel: less padding */
-  .panel { padding: var(--s-3); }
+  .panel { padding: var(--s-4) 0; }
   .panel-header { padding-bottom: var(--s-3); }
 
   /* Workspace: tighter padding */
@@ -7308,8 +7296,6 @@ time,
 
 @media (hover: none) and (pointer: coarse) {
   .button:hover:not(:disabled) { transform: none; }
-
-  .tile-tilt:hover .tile { border-color: var(--line); }
 }
 
 /* --------------------------------------------------------------------------
