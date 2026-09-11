@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BarChart3, FitWidth, RefreshCw, WifiOff, ZoomIn, ZoomOut } from "@/app/components/icons";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, BarChart3, FitWidth, RefreshCw, WifiOff, ZoomIn, ZoomOut } from "@/app/components/icons";
 import {
   AnimatedNumber, SectionHeading, Shimmer, SwapText, useSlidingPill
 } from "@/app/components/ui";
@@ -9,6 +9,9 @@ import {
   bookPrice, compact, currencyCompact, errorMessage, humanize, money, price, signedCurrencyCompact, signedMoney,
   signedPercent
 } from "@/lib/format";
+
+import { useChartViewport } from "./useChartViewport";
+import { clampRange, moveRange, resizeRange, MIN_VISIBLE } from "@/lib/chart-viewport";
 
 type Candle = {
   openTime: number;
@@ -210,7 +213,6 @@ const intervals = [
   { value: "1d", label: "1D" },
 ] as const;
 
-const VIEW_WIDTH = 1200;
 const VIEW_HEIGHT = 560;
 const LEFT = 18;
 const RIGHT = 88;
@@ -218,9 +220,7 @@ const TOP = 28;
 const PRICE_BOTTOM = 423;
 const VOLUME_TOP = 452;
 const BOTTOM = 530;
-
-const DEFAULT_VISIBLE = 80;
-const MIN_VISIBLE = 10;
+const EMPTY_CANDLES: Candle[] = [];
 
 export default function BtcMarketChart() {
   const [interval, setIntervalValue] = useState("1h");
@@ -235,15 +235,7 @@ export default function BtcMarketChart() {
   const loadRequestRef = useRef(0);
   const { barRef: intervalBar, pill: intervalPill } = useSlidingPill(interval, '[aria-pressed="true"]');
 
-  /* ── Zoom / pan state ── */
-  const [zoomState, setZoomState] = useState<{ start: number; end: number } | null>(null);
-  const chartSvgRef = useRef<SVGSVGElement>(null);
-  const pointerDown = useRef(false);
-  const dragging = useRef(false);
-  const dragStartX = useRef(0);
-  const dragStartRange = useRef({ start: 0, end: 0 });
-  const prevTotalRef = useRef(0);
-
+  const chartHelpId = useId();
   useEffect(() => { intervalRef.current = interval; }, [interval]);
 
   const load = useCallback(async (quiet = false) => {
@@ -277,7 +269,6 @@ export default function BtcMarketChart() {
 
   useEffect(() => {
     setHovered(null);
-    setZoomState(null);
     void load();
     return () => { loadRequestRef.current += 1; };
   }, [load]);
@@ -344,133 +335,18 @@ export default function BtcMarketChart() {
     };
   }, []);
 
-  /* ── Derive visible candle range from zoom state ── */
-  const allCandles = data?.interval === interval ? data.candles : [];
+  const allCandles = data?.interval === interval ? data.candles : EMPTY_CANDLES;
   const totalCandles = allCandles.length;
-
-  const visibleRange = useMemo(() => {
-    if (!totalCandles) return { start: 0, end: 0 };
-    if (zoomState) {
-      const count = Math.max(MIN_VISIBLE, Math.min(totalCandles, zoomState.end - zoomState.start));
-      let s = Math.max(0, Math.min(totalCandles - count, zoomState.start));
-      const e = Math.min(totalCandles, s + count);
-      s = Math.max(0, e - count);
-      return { start: s, end: e };
-    }
-    const count = Math.min(DEFAULT_VISIBLE, totalCandles);
-    return { start: totalCandles - count, end: totalCandles };
-  }, [zoomState, totalCandles]);
-
-  /* Auto-scroll when new candles arrive and user was at the edge */
-  useEffect(() => {
-    if (totalCandles > prevTotalRef.current && zoomState) {
-      const wasEdge = zoomState.end >= prevTotalRef.current;
-      if (wasEdge) {
-        const count = zoomState.end - zoomState.start;
-        setZoomState({ start: totalCandles - count, end: totalCandles });
-      }
-    }
-    prevTotalRef.current = totalCandles;
-  }, [totalCandles, zoomState]);
-
-  /* Wheel-to-zoom (needs passive:false to preventDefault) */
-  const totalRef = useRef(totalCandles);
-  totalRef.current = totalCandles;
-  const zoomRef = useRef(zoomState);
-  zoomRef.current = zoomState;
-  const visibleRef = useRef(visibleRange);
-  visibleRef.current = visibleRange;
-
-  useEffect(() => {
-    const svg = chartSvgRef.current;
-    if (!svg) return;
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const total = totalRef.current;
-      if (!total) return;
-      const rect = svg.getBoundingClientRect();
-      const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const cur = zoomRef.current || visibleRef.current;
-      const count = cur.end - cur.start;
-      const anchor = cur.start + xRatio * count;
-      const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
-      let next = Math.round(count * factor);
-      next = Math.max(MIN_VISIBLE, Math.min(total, next));
-      if (next === count && next !== total) return;
-      let s = Math.round(anchor - xRatio * next);
-      let end = s + next;
-      if (s < 0) { s = 0; end = next; }
-      if (end > total) { end = total; s = Math.max(0, end - next); }
-      if (next >= total) { setZoomState(null); return; }
-      setZoomState({ start: s, end });
-    };
-    svg.addEventListener("wheel", handleWheel, { passive: false });
-    return () => svg.removeEventListener("wheel", handleWheel);
-  }, []);
-
+  const navigation = useChartViewport(allCandles, interval);
+  const { range: visibleRange, width: viewWidth } = navigation;
+  const visibleCount = visibleRange.end - visibleRange.start;
   const chart = useMemo(
-    () => chartGeometry(allCandles.slice(visibleRange.start, visibleRange.end)),
-    [allCandles, visibleRange.start, visibleRange.end],
+    () => chartGeometry(allCandles.slice(visibleRange.start, visibleRange.end), viewWidth),
+    [allCandles, visibleRange.start, visibleRange.end, viewWidth],
   );
-  const activeCandle = chart.candles[hovered ?? Math.max(0, chart.candles.length - 1)];
+  const hoveredIndex = hovered === null ? -1 : chart.candles.findIndex(candle => candle.openTime === hovered);
+  const activeCandle = chart.candles[hoveredIndex] ?? chart.candles.at(-1);
   const positive = (data?.ticker.priceChangePercent || 0) >= 0;
-  const isZoomed = zoomState !== null;
-  const zoomPercent = totalCandles ? Math.round((visibleRange.end - visibleRange.start) / totalCandles * 100) : 100;
-
-  /* ── Zoom toolbar helpers ── */
-  const zoomIn = () => {
-    const cur = zoomState || visibleRange;
-    const count = cur.end - cur.start;
-    const next = Math.max(MIN_VISIBLE, Math.round(count / 1.3));
-    const mid = (cur.start + cur.end) / 2;
-    let s = Math.round(mid - next / 2);
-    let e = s + next;
-    if (s < 0) { s = 0; e = next; }
-    if (e > totalCandles) { e = totalCandles; s = Math.max(0, e - next); }
-    setZoomState({ start: s, end: e });
-  };
-  const zoomOutFn = () => {
-    const cur = zoomState || visibleRange;
-    const count = cur.end - cur.start;
-    const next = Math.min(totalCandles, Math.round(count * 1.3));
-    if (next >= totalCandles) { setZoomState(null); return; }
-    const mid = (cur.start + cur.end) / 2;
-    let s = Math.round(mid - next / 2);
-    let e = s + next;
-    if (s < 0) { s = 0; e = next; }
-    if (e > totalCandles) { e = totalCandles; s = Math.max(0, e - next); }
-    setZoomState({ start: s, end: e });
-  };
-  const fitAll = () => setZoomState(null);
-  const snapLatest = () => {
-    const count = Math.min(DEFAULT_VISIBLE, totalCandles);
-    setZoomState({ start: totalCandles - count, end: totalCandles });
-  };
-
-  /* ── Keyboard handler ── */
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!totalCandles) return;
-    const cur = zoomState || visibleRange;
-    const count = cur.end - cur.start;
-    const step = e.shiftKey ? 10 : 1;
-    let handled = true;
-    if (e.key === "ArrowLeft") {
-      let s = Math.max(0, cur.start - step);
-      setZoomState({ start: s, end: s + count });
-    } else if (e.key === "ArrowRight") {
-      let e2 = Math.min(totalCandles, cur.end + step);
-      setZoomState({ start: e2 - count, end: e2 });
-    } else if (e.key === "+" || e.key === "=") {
-      zoomIn();
-    } else if (e.key === "-") {
-      zoomOutFn();
-    } else if (e.key === "Home") {
-      fitAll();
-    } else if (e.key === "End") {
-      snapLatest();
-    } else { handled = false; }
-    if (handled) e.preventDefault();
-  };
 
   return <div className="market-page">
     <SectionHeading
@@ -524,7 +400,7 @@ export default function BtcMarketChart() {
         <MarketStat label="24h trades" value={compact(data.ticker.tradeCount)} />
       </div>}
 
-      <div className="chart-readout" aria-live="polite">
+      <div className="chart-readout">
         {activeCandle ? <>
           <span>{dateTime(activeCandle.openTime, interval)}</span>
           <span>O <b>{price(activeCandle.open)}</b></span>
@@ -535,102 +411,54 @@ export default function BtcMarketChart() {
           {data?.ticker.bestBid && <span>Bid <b>{price(data.ticker.bestBid)}</b></span>}
           {data?.ticker.bestAsk && <span>Ask <b>{price(data.ticker.bestAsk)}</b></span>}
         </> : <span>Waiting for candles…</span>}
-        {totalCandles > 0 && <span className="chart-zoom-controls">
-          <button type="button" title="Zoom in (+)" onClick={zoomIn} disabled={visibleRange.end - visibleRange.start <= MIN_VISIBLE}><ZoomIn aria-hidden="true" /></button>
-          <button type="button" title="Zoom out (-)" onClick={zoomOutFn} disabled={!isZoomed}><ZoomOut aria-hidden="true" /></button>
-          <button type="button" title="Fit all candles (Home)" onClick={fitAll} disabled={!isZoomed}><FitWidth aria-hidden="true" /></button>
-          <span className="chart-zoom-pct">{zoomPercent}%</span>
-        </span>}
       </div>
 
-      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-      <div className="chart-stage" tabIndex={0} onKeyDown={handleKeyDown}>
+      {totalCandles > 0 && <div className="chart-navigation" role="group" aria-label="Chart navigation">
+        <span className="chart-range-label">{visibleCount} of {totalCandles} candles · {visibleRange.end === totalCandles ? "Latest candles" : "Viewing history"}</span>
+        <div className="chart-zoom-controls">
+          <button type="button" aria-label="Pan to older candles" title="Older candles (Left arrow)" onClick={() => navigation.pan(-Math.max(1, Math.round(visibleCount / 4)))} disabled={visibleRange.start === 0}><ArrowLeft aria-hidden="true" /></button>
+          <button type="button" aria-label="Pan to newer candles" title="Newer candles (Right arrow)" onClick={() => navigation.pan(Math.max(1, Math.round(visibleCount / 4)))} disabled={visibleRange.end === totalCandles}><ArrowRight aria-hidden="true" /></button>
+          <button type="button" aria-label="Zoom in" title="Zoom in (+)" onClick={() => navigation.zoom(1 / 1.3)} disabled={visibleCount <= MIN_VISIBLE}><ZoomIn aria-hidden="true" /></button>
+          <button type="button" aria-label="Zoom out" title="Zoom out (-)" onClick={() => navigation.zoom(1.3)} disabled={visibleCount >= totalCandles}><ZoomOut aria-hidden="true" /></button>
+          <button type="button" className="chart-text-control" title="Fit all loaded candles (Home)" onClick={navigation.fitAll} disabled={visibleCount >= totalCandles}><FitWidth aria-hidden="true" />Fit all</button>
+          <button type="button" className="chart-text-control" title="Return to latest candles at this zoom (End)" onClick={navigation.latest} disabled={visibleRange.end === totalCandles}>Latest</button>
+          <button type="button" className="chart-text-control" title="Reset to the latest 80 candles (0)" onClick={navigation.reset}>Reset</button>
+        </div>
+      </div>}
+      <div className="chart-stage" role="group" aria-label="Interactive BTC chart" aria-describedby={chartHelpId} tabIndex={0} onKeyDown={navigation.onKeyDown}>
         {loading && !chart.candles.length ? <ChartLoading /> : data && chart.candles.length ? <svg
-          ref={chartSvgRef}
-          className={`candlestick-chart${dragging.current ? " grabbing" : ""}`}
-          viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+          ref={navigation.svgRef}
+          className={`candlestick-chart${navigation.isDragging ? " grabbing" : ""}`}
+          viewBox={`0 0 ${viewWidth} ${VIEW_HEIGHT}`}
           preserveAspectRatio="none"
           role="img"
           aria-label={`BTCUSDT ${interval} candlestick chart with ${chart.candles.length} candles`}
+          onDoubleClick={navigation.reset}
           onPointerDown={event => {
-            if (event.button !== 0) return;
-            pointerDown.current = true;
-            dragging.current = false;
-            dragStartX.current = event.clientX;
-            dragStartRange.current = { ...visibleRange };
-            event.currentTarget.setPointerCapture(event.pointerId);
+            event.currentTarget.parentElement?.focus({ preventScroll: true });
+            navigation.onPointerDown(event);
           }}
           onPointerMove={event => {
-            if (pointerDown.current) {
-              const dx = event.clientX - dragStartX.current;
-              if (Math.abs(dx) > 3) dragging.current = true;
-              if (dragging.current) {
-                const rect = event.currentTarget.getBoundingClientRect();
-                const { start, end } = dragStartRange.current;
-                const count = end - start;
-                const pxPerCandle = rect.width / count;
-                const shift = Math.round(-dx / pxPerCandle);
-                let s = start + shift;
-                let e2 = end + shift;
-                if (s < 0) { s = 0; e2 = count; }
-                if (e2 > totalCandles) { e2 = totalCandles; s = Math.max(0, e2 - count); }
-                setZoomState({ start: s, end: e2 });
-                setHovered(null);
-                return;
-              }
-            }
+            if (navigation.onPointerMove(event)) { setHovered(null); return; }
             const rect = event.currentTarget.getBoundingClientRect();
-            const x = ((event.clientX - rect.left) / rect.width) * VIEW_WIDTH;
+            const x = ((event.clientX - rect.left) / rect.width) * viewWidth;
+            const y = ((event.clientY - rect.top) / rect.height) * VIEW_HEIGHT;
             const index = Math.floor((x - LEFT) / chart.step);
-            if (index >= 0 && index < chart.candles.length) setHovered(index);
+            setHovered(x >= LEFT && x < viewWidth - RIGHT && y >= TOP && y <= BOTTOM
+              ? chart.candles[index]?.openTime ?? null : null);
           }}
-          onPointerUp={event => {
-            pointerDown.current = false;
-            dragging.current = false;
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }}
-          onPointerLeave={() => {
-            pointerDown.current = false;
-            dragging.current = false;
-            setHovered(null);
-          }}
-          onTouchStart={event => {
-            if (event.touches.length === 2) {
-              const t = event.touches;
-              const dist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-              (event.currentTarget as unknown as Record<string, unknown>).__pinchStart = dist;
-              (event.currentTarget as unknown as Record<string, unknown>).__pinchRange = { ...visibleRange };
-            }
-          }}
-          onTouchMove={event => {
-            if (event.touches.length === 2) {
-              const el = event.currentTarget as unknown as Record<string, unknown>;
-              const startDist = el.__pinchStart as number | undefined;
-              const startRange = el.__pinchRange as { start: number; end: number } | undefined;
-              if (!startDist || !startRange) return;
-              const t = event.touches;
-              const dist = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-              const ratio = startDist / dist;
-              const count = startRange.end - startRange.start;
-              let next = Math.round(count * ratio);
-              next = Math.max(MIN_VISIBLE, Math.min(totalCandles, next));
-              if (next >= totalCandles) { setZoomState(null); return; }
-              const mid = (startRange.start + startRange.end) / 2;
-              let s = Math.round(mid - next / 2);
-              let e = s + next;
-              if (s < 0) { s = 0; e = next; }
-              if (e > totalCandles) { e = totalCandles; s = Math.max(0, e - next); }
-              setZoomState({ start: s, end: e });
-            }
-          }}
+          onPointerUp={navigation.onPointerUp}
+          onPointerCancel={event => { navigation.onPointerUp(event); setHovered(null); }}
+          onLostPointerCapture={navigation.onPointerUp}
+          onPointerLeave={() => setHovered(null)}
         >
           <defs>
             <linearGradient id="volumeUp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#55d7c4" stopOpacity=".52" /><stop offset="1" stopColor="#55d7c4" stopOpacity=".12" /></linearGradient>
             <linearGradient id="volumeDown" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#ff766d" stopOpacity=".48" /><stop offset="1" stopColor="#ff766d" stopOpacity=".1" /></linearGradient>
           </defs>
-          {chart.priceTicks.map(tick => <g key={tick.value} className="chart-grid"><line x1={LEFT} x2={VIEW_WIDTH - RIGHT} y1={tick.y} y2={tick.y} /><text x={VIEW_WIDTH - RIGHT + 12} y={tick.y + 4}>{price(tick.value)}</text></g>)}
-          {chart.timeTicks.map(tick => <g key={`${tick.x}-${tick.label}`} className="chart-grid chart-time"><line x1={tick.x} x2={tick.x} y1={TOP} y2={BOTTOM} /><text x={tick.x} y={VIEW_HEIGHT - 10}>{tick.label}</text></g>)}
-          <line className="volume-separator" x1={LEFT} x2={VIEW_WIDTH - RIGHT} y1={VOLUME_TOP - 14} y2={VOLUME_TOP - 14} />
+          {chart.priceTicks.map(tick => <g key={tick.value} className="chart-grid"><line x1={LEFT} x2={viewWidth - RIGHT} y1={tick.y} y2={tick.y} /><text x={viewWidth - RIGHT + 12} y={tick.y + 4}>{price(tick.value)}</text></g>)}
+          {chart.timeTicks.map((tick, index) => <g key={`${tick.x}-${tick.label}`} className="chart-grid chart-time"><line x1={tick.x} x2={tick.x} y1={TOP} y2={BOTTOM} /><text x={tick.x} y={VIEW_HEIGHT - 10} style={{ textAnchor: index === 0 ? "start" : index === chart.timeTicks.length - 1 ? "end" : "middle" }}>{tick.label}</text></g>)}
+          <line className="volume-separator" x1={LEFT} x2={viewWidth - RIGHT} y1={VOLUME_TOP - 14} y2={VOLUME_TOP - 14} />
           {chart.candles.map((candle, index) => {
             const x = LEFT + index * chart.step + chart.step / 2;
             const rising = candle.close >= candle.open;
@@ -645,24 +473,27 @@ export default function BtcMarketChart() {
               <rect className="candle-body" x={x - chart.bodyWidth / 2} y={bodyY} width={chart.bodyWidth} height={bodyHeight} rx={0.6} />
             </g>;
           })}
-          <line className="last-price-line" x1={LEFT} x2={VIEW_WIDTH - RIGHT} y1={chart.lastPriceY} y2={chart.lastPriceY} />
-          <rect className="last-price-label" x={VIEW_WIDTH - RIGHT + 4} y={chart.lastPriceY - 11} width={78} height={22} rx={3} />
-          <text className="last-price-text" x={VIEW_WIDTH - RIGHT + 43} y={chart.lastPriceY + 4}>{price(chart.lastClose)}</text>
-          {hovered != null && activeCandle && <g className="chart-crosshair">
-            <line x1={LEFT + hovered * chart.step + chart.step / 2} x2={LEFT + hovered * chart.step + chart.step / 2} y1={TOP} y2={BOTTOM} />
-            <line x1={LEFT} x2={VIEW_WIDTH - RIGHT} y1={chart.y(activeCandle.close)} y2={chart.y(activeCandle.close)} />
-            <circle cx={LEFT + hovered * chart.step + chart.step / 2} cy={chart.y(activeCandle.close)} r="4" />
+          <line className="last-price-line" x1={LEFT} x2={viewWidth - RIGHT} y1={chart.lastPriceY} y2={chart.lastPriceY} />
+          <rect className="last-price-label" x={viewWidth - RIGHT + 4} y={chart.lastPriceY - 11} width={78} height={22} rx={3} />
+          <text className="last-price-text" x={viewWidth - RIGHT + 43} y={chart.lastPriceY + 4}>{price(chart.lastClose)}</text>
+          {hoveredIndex >= 0 && activeCandle && <g className="chart-crosshair">
+            <line x1={LEFT + hoveredIndex * chart.step + chart.step / 2} x2={LEFT + hoveredIndex * chart.step + chart.step / 2} y1={TOP} y2={BOTTOM} />
+            <line x1={LEFT} x2={viewWidth - RIGHT} y1={chart.y(activeCandle.close)} y2={chart.y(activeCandle.close)} />
+            <circle cx={LEFT + hoveredIndex * chart.step + chart.step / 2} cy={chart.y(activeCandle.close)} r="4" />
           </g>}
         </svg> : <ChartError message={error || "No BTCUSDT candles were returned."} onRetry={() => void load()} />}
         {data && chart.candles.length > 0 && <ChartMinimap
+          key={interval}
           candles={allCandles}
           visibleStart={visibleRange.start}
           visibleEnd={visibleRange.end}
           totalCandles={totalCandles}
-          onRangeChange={range => setZoomState(range.end >= totalCandles && range.start <= 0 ? null : range)}
+          onRangeChange={navigation.changeRange}
         />}
         {(error || feedError) && data && <div className="chart-stale-banner"><WifiOff />{error || feedError}. Reconnecting automatically.</div>}
       </div>
+
+      <p className="chart-help" id={chartHelpId}>Drag to pan · Scroll or pinch to zoom · Shift + scroll to pan · Arrow keys to move · + / − to zoom · Home to fit · End for latest · Double-click or 0 to reset. Prices auto-scale to visible candles.</p>
 
       {data?.analysis && <AnalysisGrid analysis={data.analysis} />}
 
@@ -716,7 +547,7 @@ function feedLabel(state: FeedState) {
   return "Connecting";
 }
 
-function chartGeometry(candles: Candle[]) {
+function chartGeometry(candles: Candle[], viewWidth: number) {
   if (!candles.length) return emptyGeometry();
   const rawMin = Math.min(...candles.map(candle => candle.low));
   const rawMax = Math.max(...candles.map(candle => candle.high));
@@ -725,7 +556,7 @@ function chartGeometry(candles: Candle[]) {
   const max = rawMax + padding;
   const range = Math.max(1, max - min);
   const maxVolume = Math.max(1, ...candles.map(candle => candle.baseVolume));
-  const width = VIEW_WIDTH - LEFT - RIGHT;
+  const width = viewWidth - LEFT - RIGHT;
   const step = width / candles.length;
   const y = (value: number) => TOP + ((max - value) / range) * (PRICE_BOTTOM - TOP);
   const volumeY = (value: number) => BOTTOM - (value / maxVolume) * (BOTTOM - VOLUME_TOP);
@@ -733,7 +564,8 @@ function chartGeometry(candles: Candle[]) {
     const value = max - (range * index / 5);
     return { value, y: y(value) };
   });
-  const timeTickIndexes = Array.from(new Set(Array.from({ length: 6 }, (_, index) => Math.min(candles.length - 1, Math.round(index * (candles.length - 1) / 5)))));
+  const timeTickCount = Math.max(2, Math.floor(width / 130));
+  const timeTickIndexes = Array.from(new Set(Array.from({ length: timeTickCount }, (_, index) => Math.round(index * (candles.length - 1) / (timeTickCount - 1)))));
   const timeTicks = timeTickIndexes.map(index => ({
     x: LEFT + index * step + step / 2,
     label: shortTime(candles[index].openTime),
@@ -742,7 +574,7 @@ function chartGeometry(candles: Candle[]) {
   return {
     candles,
     step,
-    bodyWidth: Math.max(1.5, Math.min(7, step * .64)),
+    bodyWidth: Math.max(.5, step * .64),
     y,
     volumeY,
     priceTicks,
@@ -769,8 +601,7 @@ function ChartMinimap({ candles, visibleStart, visibleEnd, totalCandles, onRange
   totalCandles: number;
   onRangeChange: (range: { start: number; end: number }) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ type: "move" | "left" | "right"; x: number; start: number; end: number } | null>(null);
+  const dragRef = useRef<{ type: "move" | "left" | "right"; pointerId: number; x: number; start: number; end: number } | null>(null);
 
   if (!candles.length) return null;
 
@@ -792,15 +623,22 @@ function ChartMinimap({ candles, visibleStart, visibleEnd, totalCandles, onRange
   const windowWidth = totalCandles ? ((visibleEnd - visibleStart) / totalCandles) * 100 : 100;
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || dragRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
     const xPx = e.clientX - rect.left;
     const pctX = xPx / rect.width * 100;
     const winL = windowLeft;
     const winR = windowLeft + windowWidth;
-    const edgeThreshold = Math.max(1.5, windowWidth * 0.08);
+    const edgeThreshold = 12 / rect.width * 100;
+    let selected = { start: visibleStart, end: visibleEnd };
 
     let type: "move" | "left" | "right";
-    if (Math.abs(pctX - winL) < edgeThreshold) {
+    const targetEdge = e.target instanceof HTMLElement && e.target.classList.contains("minimap-edge")
+      ? (e.target.classList.contains("left") ? "left" : "right") : null;
+    if (targetEdge) {
+      type = targetEdge;
+    } else if (Math.abs(pctX - winL) < edgeThreshold) {
       type = "left";
     } else if (Math.abs(pctX - winR) < edgeThreshold) {
       type = "right";
@@ -813,54 +651,55 @@ function ChartMinimap({ candles, visibleStart, visibleEnd, totalCandles, onRange
       let en = s + count;
       if (s < 0) { s = 0; en = count; }
       if (en > totalCandles) { en = totalCandles; s = Math.max(0, en - count); }
-      onRangeChange({ start: s, end: en });
+      selected = clampRange(s, en - s, totalCandles);
+      onRangeChange(selected);
       type = "move";
     }
-    dragRef.current = { type, x: e.clientX, start: visibleStart, end: visibleEnd };
+    dragRef.current = { type, pointerId: e.pointerId, x: e.clientX, ...selected };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
-    if (!d) return;
+    if (!d || d.pointerId !== e.pointerId) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const dx = e.clientX - d.x;
     const dCandles = Math.round((dx / rect.width) * totalCandles);
-    const count = d.end - d.start;
-
-    if (d.type === "move") {
-      let s = d.start + dCandles;
-      let en = d.end + dCandles;
-      if (s < 0) { s = 0; en = count; }
-      if (en > totalCandles) { en = totalCandles; s = Math.max(0, en - count); }
-      onRangeChange({ start: s, end: en });
-    } else if (d.type === "left") {
-      let s = d.start + dCandles;
-      s = Math.max(0, Math.min(d.end - MIN_VISIBLE, s));
-      onRangeChange({ start: s, end: d.end });
-    } else {
-      let en = d.end + dCandles;
-      en = Math.min(totalCandles, Math.max(d.start + MIN_VISIBLE, en));
-      onRangeChange({ start: d.start, end: en });
-    }
+    onRangeChange(d.type === "move"
+      ? moveRange(d, dCandles, totalCandles)
+      : resizeRange(d, d.type, dCandles, totalCandles));
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== e.pointerId) return;
     dragRef.current = null;
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  const handleEdgeKey = (event: React.KeyboardEvent, edge: "left" | "right") => {
+    const step = event.shiftKey ? 10 : 1;
+    let shift: number;
+    if (event.key === "ArrowLeft") shift = -step;
+    else if (event.key === "ArrowRight") shift = step;
+    else if (event.key === "Home") shift = -totalCandles;
+    else if (event.key === "End") shift = totalCandles;
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    onRangeChange(resizeRange({ start: visibleStart, end: visibleEnd }, edge, shift, totalCandles));
   };
 
   return (
     <div
       className="chart-minimap"
-      ref={containerRef}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onLostPointerCapture={handlePointerUp}
       aria-label={`Chart overview showing candles ${visibleStart + 1} to ${visibleEnd} of ${totalCandles}`}
     >
-      <svg viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="none" aria-hidden="true">
         <polygon className="minimap-fill" points={fillPoints} />
         <polyline className="minimap-line" points={areaPoints} />
       </svg>
@@ -868,8 +707,8 @@ function ChartMinimap({ candles, visibleStart, visibleEnd, totalCandles, onRange
         className="minimap-window"
         style={{ left: `${windowLeft}%`, width: `${windowWidth}%` }}
       >
-        <i className="minimap-edge left" />
-        <i className="minimap-edge right" />
+        <span className="minimap-edge left" role="slider" tabIndex={0} aria-label="First visible candle" aria-valuemin={1} aria-valuemax={visibleEnd - Math.min(MIN_VISIBLE, totalCandles) + 1} aria-valuenow={visibleStart + 1} aria-valuetext={dateTime(candles[visibleStart].openTime, "1h")} onKeyDown={event => handleEdgeKey(event, "left")} />
+        <span className="minimap-edge right" role="slider" tabIndex={0} aria-label="Last visible candle" aria-valuemin={visibleStart + Math.min(MIN_VISIBLE, totalCandles)} aria-valuemax={totalCandles} aria-valuenow={visibleEnd} aria-valuetext={dateTime(candles[visibleEnd - 1].openTime, "1h")} onKeyDown={event => handleEdgeKey(event, "right")} />
       </div>
     </div>
   );
