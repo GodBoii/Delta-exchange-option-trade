@@ -176,6 +176,28 @@ async def build_activation_recheck_context(
     }
 
 
+async def require_analyzer_ready() -> None:
+    """Check readiness before claiming a run; never retry an accepted analysis POST."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5, connect=2)) as client:
+            response = await client.get(f"{news_analyzer_url}/health")
+            response.raise_for_status()
+            health = response.json()
+        if (
+            not isinstance(health, dict)
+            or health.get("success") is not True
+            or health.get("service") != "news-analyzer"
+            or health.get("databaseReady") is not True
+        ):
+            raise ValueError("Analysis service is not ready")
+    except (httpx.HTTPError, ValueError) as error:
+        raise AppError(
+            503,
+            "Analysis service is starting or unavailable. Please try again shortly.",
+            "automation_service_unavailable",
+        ) from error
+
+
 async def execute_automation_run(
     *,
     db: SupabaseAdmin,
@@ -216,6 +238,13 @@ async def execute_automation_run(
                     504,
                     f"Automation analysis did not respond within {timeout_seconds} seconds",
                     "automation_analysis_timeout",
+                ) from error
+            except (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError) as error:
+                raise AppError(
+                    503,
+                    "Analysis service disconnected before returning a result. "
+                    "It may have restarted. The request was not retried automatically.",
+                    "automation_analysis_interrupted",
                 ) from error
         try:
             payload = response.json()
@@ -506,6 +535,7 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     settings = await ensure_settings(db, user_id)
     if not settings["enabled"]:
         raise AppError(409, "Turn on Automation before running the agent", "automation_disabled")
+    await require_analyzer_ready()
     rows = await db.insert(
         "automation_agent_runs",
         {
@@ -635,6 +665,7 @@ class AutomationScheduler:
             },
         )
         now = datetime.now(UTC)
+        analyzer_ready = False
         for row in due:
             if available <= 0:
                 break
@@ -648,6 +679,13 @@ class AutomationScheduler:
                     {"id": f"eq.{row['id']}", "status": "eq.scheduled"},
                 )
                 continue
+            if not analyzer_ready:
+                try:
+                    await require_analyzer_ready()
+                except AppError as error:
+                    logger.warning("Scheduled automation runs deferred: %s", error.message)
+                    return
+                analyzer_ready = True
             claimed = await self.db.rpc(
                 "claim_automation_agent_run",
                 {"p_user_id": str(row["user_id"]), "p_run_id": str(row["id"])},
