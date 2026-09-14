@@ -80,3 +80,46 @@ async def test_scheduler_only_expires_runs_after_analysis_and_persistence_window
     await scheduler._process_due_runs()
 
     assert database.row["status"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("error_type", [httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError])
+async def test_interrupted_analysis_is_not_resubmitted_and_preserves_committed_action(
+    monkeypatch, committed, error_type,
+) -> None:
+    database = RunDatabase(datetime.now(UTC))
+    requests = []
+
+    async def context(*_args):
+        return {}
+
+    async def disconnect(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if committed:
+            database.row["outcome"] = "strategy_selected"
+        raise error_type("Server disconnected without sending a response", request=request)
+
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(automation, "build_account_context", context)
+    monkeypatch.setattr(
+        automation.httpx, "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(disconnect), **kwargs),
+    )
+    kwargs = dict(
+        db=database, engine=object(), user_id="user-1", run_id="run-1", session_id="session-1",
+        trigger="new_york_session", reason="Fixed review",
+    )
+    if committed:
+        result = await automation.execute_automation_run(**kwargs)
+        assert result["outcome"] == "strategy_selected"
+        assert database.row["status"] == "completed"
+        assert database.row["error"] == "Final report unavailable"
+    else:
+        with pytest.raises(AppError) as caught:
+            await automation.execute_automation_run(**kwargs)
+        assert caught.value.code == "automation_analysis_interrupted"
+        assert database.row["status"] == "failed"
+        assert "disconnected" in database.row["error"]
+        assert "not retried" in database.row["error"]
+    assert len(requests) == 1
