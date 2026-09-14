@@ -26,7 +26,9 @@ FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
 FIXED_RUN_CATCH_UP = timedelta(minutes=5)
 FIXED_RUN_SYNC_SECONDS = 60.0
 MAX_AUTOMATION_RUN_LATENESS = timedelta(minutes=10)
-MAX_AUTOMATION_RUN_RUNTIME = timedelta(minutes=20)
+AUTOMATION_ANALYSIS_TIMEOUT_SECONDS = 45 * 60
+# Allow account-context collection and result persistence around the HTTP request.
+MAX_AUTOMATION_RUN_RUNTIME = timedelta(seconds=AUTOMATION_ANALYSIS_TIMEOUT_SECONDS, minutes=5)
 MAX_PARALLEL_AUTOMATION_RUNS = 3
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
@@ -187,6 +189,7 @@ async def execute_automation_run(
     strategy_proposal_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    timeout_seconds = 120 if trigger == "activation_recheck" else AUTOMATION_ANALYSIS_TIMEOUT_SECONDS
     try:
         if trigger == "activation_recheck":
             if not strategy_proposal_id:
@@ -194,20 +197,26 @@ async def execute_automation_run(
             account_context = await build_activation_recheck_context(db, user_id, strategy_proposal_id)
         else:
             account_context = await build_account_context(engine, user_id)
-        timeout_seconds = 120 if trigger == "activation_recheck" else 900
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=5)) as client:
-            response = await client.post(
-                f"{news_analyzer_url}/v1/automation/analyze",
-                json={
-                    "userId": user_id,
-                    "agentRunId": run_id,
-                    "sessionId": session_id,
-                    "accountContext": account_context,
-                    "trigger": trigger,
-                    "triggerReason": reason,
-                    "signalsToInspect": signals_to_inspect or [],
-                },
-            )
+            try:
+                response = await client.post(
+                    f"{news_analyzer_url}/v1/automation/analyze",
+                    json={
+                        "userId": user_id,
+                        "agentRunId": run_id,
+                        "sessionId": session_id,
+                        "accountContext": account_context,
+                        "trigger": trigger,
+                        "triggerReason": reason,
+                        "signalsToInspect": signals_to_inspect or [],
+                    },
+                )
+            except httpx.ReadTimeout as error:
+                raise AppError(
+                    504,
+                    f"Automation analysis did not respond within {timeout_seconds} seconds",
+                    "automation_analysis_timeout",
+                ) from error
         try:
             payload = response.json()
         except ValueError as error:
@@ -281,9 +290,10 @@ async def execute_automation_run(
             )
             logger.warning("Recovered committed automation outcome run_id=%s outcome=%s", run_id, payload["outcome"])
             return payload
+        error_message = str(error).strip() or type(error).__name__
         await db.update(
             "automation_agent_runs",
-            {"status": "failed", "completed_at": iso_now(), "error": str(error)},
+            {"status": "failed", "completed_at": iso_now(), "error": error_message},
             {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": "eq.running"},
         )
         raise
