@@ -216,6 +216,10 @@ https://www.tradecognition.online/auth/callback
 
 Deploy all three application services to an always-on Docker host. The Delta service still needs a stable outbound public IP because the tunnel changes inbound routing only. On the server, create the ignored `.env.local` containing the server variables.
 
+Compose waits for the news analyzer's health check before starting the Delta backend. The automation scheduler also checks analyzer readiness before claiming a due run, leaving it scheduled during temporary outages. The existing ten-minute lateness limit still applies. Manual runs return a temporary-unavailable message before creating a run if the analyzer is not ready.
+
+After pulling code, use `docker compose up -d --build` to rebuild and apply the service configuration. Restarting or recreating the analyzer during an active analysis can still interrupt that run; readiness checks cannot preserve work inside a stopped process. Deploy between analyses. A disconnected analysis request is not automatically resubmitted because it may already have recorded a strategy or follow-up. The backend checks for a committed outcome before marking it failed.
+
 Copy `.cloudflared.env.example` to `.cloudflared.env` and set `TUNNEL_TOKEN` to the token for the remotely managed `tradecognition-backend` tunnel. Start the application and tunnel together:
 
 ```bash
