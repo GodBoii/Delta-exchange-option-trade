@@ -48,7 +48,7 @@ def test_materializes_same_day_hold_to_expiry_schedule() -> None:
 
 
 def test_strategy_activation_rejects_a_fixed_session_minute() -> None:
-    fixed = next_fixed_run(datetime.now(UTC))
+    fixed = next_fixed_run(datetime.now(UTC) + timedelta(minutes=10))
     activation = fixed.scheduled_for + timedelta(seconds=30)
     tool = object.__new__(AutomationStrategyTools)
 
