@@ -766,6 +766,8 @@ If the setup is still valid, it returns a report without calling a tool. The ser
 
 Rechecks are separate from optional follow-ups and do not consume their quota. New selections must leave more than five minutes before activation. The backend request timeout is 120 seconds. Entry waits for a completed reconfirmation within the existing entry-lateness window; a failed, cancelled, or overdue recheck prevents entry. Manual and older schedules without a linked recheck keep their existing behavior. Turning off automation still cancels pending work.
 
+Full automation reviews allow 45 minutes for the analysis service to respond. The scheduler's stale-running cutoff is derived from that timeout plus five minutes for account-context collection and result persistence, giving a 50-minute cutoff. This accommodates news research and long model responses without the former 15-minute HTTP timeout or 20-minute scheduler cutoff prematurely failing the review. Read timeouts save an explicit error message. The analysis service still uses synchronous Agno execution; this is a longer timeout, not background execution or run-status polling. Agno documents that alternative at https://docs.agno.com/background-execution/overview.
+
 ## 10. Agent run schedule
 
 The agent runs from fixed session triggers and its own approved follow-up triggers.
