@@ -161,7 +161,7 @@ async def test_scheduler_precreates_fixed_reviews_in_one_database_call() -> None
 
 
 @pytest.mark.asyncio
-async def test_scheduler_claims_due_run_and_passes_follow_up_signals() -> None:
+async def test_scheduler_claims_due_run_and_passes_follow_up_signals(monkeypatch) -> None:
     due = {
         "id": "run-1",
         "user_id": "user-1",
@@ -186,6 +186,11 @@ async def test_scheduler_claims_due_run_and_passes_follow_up_signals() -> None:
 
     received: list[dict] = []
     scheduler = AutomationScheduler(Database(), object())  # type: ignore[arg-type]
+
+    async def ready() -> None:
+        return None
+
+    monkeypatch.setattr(automation, "require_analyzer_ready", ready)
 
     async def execute(row: dict) -> None:
         received.append(row)
