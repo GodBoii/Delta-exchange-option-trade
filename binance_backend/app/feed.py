@@ -36,6 +36,8 @@ class BinanceSpotFeed:
         self.connected = False
         self.book_synced = False
         self.last_event_at = 0
+        self.last_depth_at = 0
+        self.depth_event_at = 0
         self.last_trade_at = 0
         self.last_error: str | None = None
         self.reconnects = 0
@@ -254,6 +256,8 @@ class BinanceSpotFeed:
         update_levels(self.bids, data.get("b") or [])
         update_levels(self.asks, data.get("a") or [])
         self.book_update_id = final_update_id
+        self.last_depth_at = int(time.time() * 1000)
+        self.depth_event_at = int(data.get("E") or 0)
 
     def _handle_book_ticker(self, data: dict[str, Any]) -> None:
         self.ticker.update(
@@ -342,7 +346,7 @@ class BinanceSpotFeed:
             "candles": {interval: dict(candle) for interval, candle in self.current_candles.items()},
             "orderBook": {
                 "lastUpdateId": self.book_update_id,
-                "eventTime": self.last_event_at,
+                "eventTime": self.depth_event_at,
                 "bids": bids[:15],
                 "asks": asks[:15],
             },
@@ -363,6 +367,7 @@ class BinanceSpotFeed:
             "connected": self.connected,
             "bookSynced": self.book_synced,
             "lastEventAt": self.last_event_at or None,
+            "depthAgeMs": now_ms - self.last_depth_at if self.last_depth_at else None,
             "lastTradeAt": self.last_trade_at or None,
             "eventAgeMs": age,
             "lastError": self.last_error,
@@ -382,8 +387,8 @@ class BinanceSpotFeed:
         bids, asks = self.book_levels(limit)
         return {
             "lastUpdateId": self.book_update_id,
-            "eventTime": self.last_event_at,
-            "transactionTime": self.last_event_at,
+            "eventTime": self.depth_event_at,
+            "transactionTime": self.depth_event_at,
             "bids": bids,
             "asks": asks,
         }
