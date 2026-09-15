@@ -8,8 +8,8 @@ import {
 } from "@/app/components/icons";
 import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import type { SavedStrategy } from "@/lib/app-types";
-import type { Json, SavedStrategyRow } from "@/lib/supabase/types";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { SavedStrategyRow } from "@/lib/supabase/types";
+import { readStrategyLibrary, saveLibraryStrategy, deleteLibraryStrategy, definitionFingerprint as fingerprint } from "@/lib/strategy-library";
 import { requestJson } from "@/lib/api";
 import {
   errorMessage, formatDateTime, formatDuration, formatExpiry, relativeTime, toIso, toLocalInput
@@ -156,8 +156,6 @@ function refreshExpiredSchedule(strategy: StrategyDefinition): StrategyDefinitio
     }
   };
 }
-
-const fingerprint = (strategy: StrategyDefinition) => JSON.stringify(strategy);
 
 function savedStrategyFromRow(row: SavedStrategyRow): SavedStrategy | null {
   const definition = row.definition_json as unknown;
@@ -457,20 +455,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     const normalized = { ...definition, name: trimmedName };
     setLibraryState("saving");
     try {
-      const supabase = getSupabaseBrowserClient();
-      const columns = "id,user_id,name,definition_json,source_run_id,version,enabled_for_ai,created_at,updated_at";
       const existing = savedStrategies.find(item => item.id === savedId);
-      const { data, error: saveError } = savedId && !existing?.isDefault
-        ? await supabase.from("saved_strategies")
-          .update({ name: trimmedName, definition_json: normalized as unknown as Json, enabled_for_ai: normalized.enabledForAi })
-          .eq("id", savedId).eq("user_id", userId).select(columns).single()
-        : await supabase.from("saved_strategies")
-          .insert({ user_id: userId, name: trimmedName, definition_json: normalized as unknown as Json, enabled_for_ai: normalized.enabledForAi })
-          .select(columns).single();
-      if (saveError) throw saveError;
-
-      const saved = savedStrategyFromRow(data as SavedStrategyRow);
-      if (!saved) throw new Error("Supabase returned an invalid saved strategy.");
+      const saved = savedStrategyFromRow(await saveLibraryStrategy(normalized, existing, userId));
+      if (!saved) throw new Error("The library returned an invalid saved strategy.");
 
       setSavedStrategies(current => [saved, ...current.filter(item => item.id !== saved.id)]
         .sort(sortSavedStrategies));
@@ -519,19 +506,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     async function loadLibrary() {
       setLibraryState("loading");
       try {
-        const pageSize = 500;
-        const rows: SavedStrategyRow[] = [];
-        for (let from = 0; ; from += pageSize) {
-          const { data, error: loadError } = await getSupabaseBrowserClient()
-            .from("saved_strategies")
-            .select("id,user_id,name,definition_json,source_run_id,version,enabled_for_ai,created_at,updated_at")
-            .order("updated_at", { ascending: false })
-            .range(from, from + pageSize - 1);
-          if (loadError) throw loadError;
-          const page = (data ?? []) as SavedStrategyRow[];
-          rows.push(...page);
-          if (page.length < pageSize) break;
-        }
+        const rows = await readStrategyLibrary();
         if (cancelled) return;
 
         const parsed = rows
@@ -697,9 +672,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     const deletedId = activeSavedId;
     setLibraryState("saving");
     try {
-      const { error: deleteError } = await getSupabaseBrowserClient()
-        .from("saved_strategies").delete().eq("id", deletedId).eq("user_id", userId);
-      if (deleteError) throw deleteError;
+      if (!activeSaved) throw new Error("Select a saved strategy before deleting");
+      await deleteLibraryStrategy(activeSaved, userId);
 
       const remaining = savedStrategies.filter(item => item.id !== deletedId);
       setSavedStrategies(remaining);
