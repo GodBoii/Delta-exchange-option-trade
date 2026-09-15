@@ -109,6 +109,9 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
         async def capital_policy(self, _user_id: str) -> CapitalPolicy:
             return CapitalPolicy()
 
+        async def saved_strategies(self, _user_id: str) -> list[dict]:
+            return []
+
     database = Database()
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=database, engine=Engine())))
 
