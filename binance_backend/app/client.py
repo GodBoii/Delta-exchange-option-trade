@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -26,10 +27,14 @@ class BinanceMarketClient:
             transport=transport,
             headers={"Accept": "application/json", "User-Agent": "delta-strategy-desk-spot-intelligence/2.0"},
         )
-        self._cache: dict[str, tuple[float, Any]] = {}
-        self._lock = asyncio.Lock()
+        self._cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+        self._requests: dict[str, asyncio.Task[Any]] = {}
+        self._lock = asyncio.Semaphore(4)
 
     async def close(self) -> None:
+        for task in self._requests.values():
+            task.cancel()
+        await asyncio.gather(*self._requests.values(), return_exceptions=True)
         await self.http.aclose()
 
     async def _get(
@@ -43,14 +48,27 @@ class BinanceMarketClient:
         if cache_key:
             cached = self._cache.get(cache_key)
             if cached and cached[0] > now:
+                self._cache.move_to_end(cache_key)
                 return cached[1]
+            task = self._requests.get(cache_key)
+            if task is None:
+                if len(self._requests) >= 128:
+                    raise BinanceMarketError("Market request capacity reached", 503)
+                task = asyncio.create_task(self._fetch(path, params, cache_key, cache_seconds))
+                self._requests[cache_key] = task
+                def completed(done: asyncio.Task[Any]) -> None:
+                    if self._requests.get(cache_key) is done:
+                        self._requests.pop(cache_key, None)
+                    if not done.cancelled():
+                        done.exception()
+                task.add_done_callback(completed)
+            return await asyncio.shield(task)
+        return await self._fetch(path, params, cache_key, cache_seconds)
 
+    async def _fetch(
+        self, path: str, params: dict[str, Any], cache_key: str | None, cache_seconds: float | None
+    ) -> Any:
         async with self._lock:
-            now = time.monotonic()
-            if cache_key:
-                cached = self._cache.get(cache_key)
-                if cached and cached[0] > now:
-                    return cached[1]
             try:
                 response = await self.http.get(path, params=params)
                 response.raise_for_status()
@@ -65,7 +83,11 @@ class BinanceMarketClient:
 
             if cache_key:
                 ttl = cache_seconds if cache_seconds is not None else self.settings.market_cache_seconds
-                self._cache[cache_key] = (now + ttl, payload)
+                if ttl > 0:
+                    self._cache[cache_key] = (time.monotonic() + ttl, payload)
+                    self._cache.move_to_end(cache_key)
+                    while len(self._cache) > 512:
+                        self._cache.popitem(last=False)
             return payload
 
     async def ticker(self) -> dict[str, Any]:
