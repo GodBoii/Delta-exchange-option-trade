@@ -6,6 +6,7 @@ import {
 } from "@/app/components/icons";
 import { requestJson } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
+import { useCurrency } from "@/app/components/currency";
 import {
   EM_DASH, decimal, errorMessage, formatDateTime, formatDuration, formatTimestamp, relativeTime,
   signedDecimal, titleCase, toNumber
@@ -377,7 +378,7 @@ function cashClass(value: unknown, cost = false): string | undefined {
   return (cost ? -number : number) > 0 ? "up" : "down";
 }
 
-function riskDetail(key: string, value: unknown, flat: boolean): DetailItem {
+function riskDetail(key: string, value: unknown, flat: boolean, formatMoneyNumber: ReturnType<typeof useCurrency>["formatMoneyNumber"], currencyCode: ReturnType<typeof useCurrency>["currencyCode"]): DetailItem {
   const labels: Record<string, string> = {
     profit: "Estimated gross P&L at last check",
     returnPercent: "Estimated gross return on entry premium",
@@ -389,12 +390,12 @@ function riskDetail(key: string, value: unknown, flat: boolean): DetailItem {
   if (key === "status" && flat) return { label, value: "Closed" };
   const signed = key === "profit" || key === "returnPercent";
   const percent = key === "returnPercent" || key === "stopPercent" || key === "takeProfitPercent";
-  const money = ["profit", "entryValue", "currentValue", "stopValue", "targetValue"].includes(key);
-  if (percent || money) {
+  const monetary = ["profit", "entryValue", "currentValue", "stopValue", "targetValue"].includes(key);
+  if (percent || monetary) {
     const number = toNumber(value);
     return { label, value: number === null ? EM_DASH : (
       <span className={signed ? cashClass(number) : undefined}>
-        {signed ? signedDecimal(number, 4) : decimal(number, 4)}{percent ? "%" : " USD"}
+        {percent ? signed ? signedDecimal(number, 4) : decimal(number, 4) : formatMoneyNumber(number, { digits: 4, signed })}{percent ? "%" : ` ${currencyCode}`}
       </span>
     ) };
   }
@@ -412,6 +413,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
   onClose: () => void;
   onAction: (kind: ActionKind) => void;
 }) {
+  const { currencyCode, formatMoneyNumber } = useCurrency();
   const [record, setRecord] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
@@ -476,15 +478,15 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
     { label: "Take profit", value: definition.takeProfitPercent != null ? `${definition.takeProfitPercent}% of ${readable(definition.riskBasis).toLowerCase().replaceAll("_", " ")}` : EM_DASH },
     { label: "Combined stop loss", value: definition.combinedStopLossPercent ? `${definition.combinedStopLossPercent}% of credit` : EM_DASH },
     { label: "Emergency stop loss", value: definition.emergencyStopLossPercent ? `${definition.emergencyStopLossPercent}% per leg` : EM_DASH },
-    { label: "Overall target", value: definition.overallTarget ? decimal(definition.overallTarget) : EM_DASH },
-    { label: "Overall stop loss", value: definition.overallStopLoss ? decimal(definition.overallStopLoss) : EM_DASH },
+    { label: "Overall target", value: definition.overallTarget ? `${formatMoneyNumber(definition.overallTarget)} ${currencyCode}` : EM_DASH },
+    { label: "Overall stop loss", value: definition.overallStopLoss ? `${formatMoneyNumber(definition.overallStopLoss)} ${currencyCode}` : EM_DASH },
     { label: "Trail to break even", value: readable(definition.trailToBreakEven) },
     { label: "Break even scope", value: readable(definition.breakEvenScope) }
   ];
 
   const capital: DetailItem[] = [
     { label: "Account policy", value: readable(record?.capitalPolicy.allocationMode) },
-    { label: "Capital budget", value: record?.capitalBudget ? `${decimal(record.capitalBudget)} USD` : EM_DASH },
+    { label: "Capital budget", value: record?.capitalBudget ? `${formatMoneyNumber(record.capitalBudget)} ${currencyCode}` : EM_DASH },
     { label: "Allocation slot", value: record?.capitalSlot ?? EM_DASH },
     { label: "Maximum simultaneous strategies", value: readable(record?.capitalPolicy.maximumConcurrentStrategies) }
   ];
@@ -492,7 +494,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
   const riskState = record?.riskState ?? {};
   const riskItems: DetailItem[] = Object.entries(riskState)
     .filter(([key]) => key !== "legs")
-    .map(([key, value]) => riskDetail(key, value, exposureStatus === "flat"));
+    .map(([key, value]) => riskDetail(key, value, exposureStatus === "flat", formatMoneyNumber, currencyCode));
 
   return (
     <Dialog
@@ -539,6 +541,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
 
           <DetailSection title="Capital allocation" meta="Account policy captured at entry">
             <DetailList items={capital} />
+            {currencyCode === "INR" && <p className="detail-note">INR figures use the current display rate, not the exchange rate on the trade date. Recorded and traded amounts remain in USD.</p>}
           </DetailSection>
 
           <DetailSection
@@ -548,12 +551,12 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
             {orders.length ? (
               <>
                 <div className="detail-tiles">
-                  <Tile label={settlement.fullyClosed ? "Realized P&L" : "Net cash flow so far"} value={signedDecimal(settlement.realizedPnl, 4)} tone={settlement.fullyClosed ? pnlTone(realized) : "neutral"} suffix="USD" />
-                  <Tile label={settlement.fullyClosed ? "Gross P&L" : "Gross cash flow so far"} value={signedDecimal(settlement.grossPnl, 4)} tone={settlement.fullyClosed ? pnlTone(toNumber(settlement.grossPnl)) : "neutral"} suffix="USD" />
-                  <Tile label="Entry premium" value={signedDecimal(settlement.entryPremium, 4)} tone={pnlTone(toNumber(settlement.entryPremium))} suffix="USD" />
-                  <Tile label="Exit premium" value={signedDecimal(settlement.exitPremium, 4)} tone={pnlTone(toNumber(settlement.exitPremium))} suffix="USD" />
-                  <Tile label="Commissions" value={decimal(settlement.commission, 4)} tone={pnlTone(-(toNumber(settlement.commission) ?? 0))} suffix="USD" />
-                  <Tile label="Slippage cost" value={signedDecimal(settlement.slippageCost, 4)} tone={pnlTone(-(toNumber(settlement.slippageCost) ?? 0))} suffix="USD" />
+                  <Tile label={settlement.fullyClosed ? "Realized P&L" : "Net cash flow so far"} value={formatMoneyNumber(settlement.realizedPnl, { digits: 4, signed: true })} tone={settlement.fullyClosed ? pnlTone(realized) : "neutral"} suffix={currencyCode} />
+                  <Tile label={settlement.fullyClosed ? "Gross P&L" : "Gross cash flow so far"} value={formatMoneyNumber(settlement.grossPnl, { digits: 4, signed: true })} tone={settlement.fullyClosed ? pnlTone(toNumber(settlement.grossPnl)) : "neutral"} suffix={currencyCode} />
+                  <Tile label="Entry premium" value={formatMoneyNumber(settlement.entryPremium, { digits: 4, signed: true })} tone={pnlTone(toNumber(settlement.entryPremium))} suffix={currencyCode} />
+                  <Tile label="Exit premium" value={formatMoneyNumber(settlement.exitPremium, { digits: 4, signed: true })} tone={pnlTone(toNumber(settlement.exitPremium))} suffix={currencyCode} />
+                  <Tile label="Commissions" value={formatMoneyNumber(settlement.commission, { digits: 4 })} tone={pnlTone(-(toNumber(settlement.commission) ?? 0))} suffix={currencyCode} />
+                  <Tile label="Slippage cost" value={formatMoneyNumber(settlement.slippageCost, { digits: 4, signed: true })} tone={pnlTone(-(toNumber(settlement.slippageCost) ?? 0))} suffix={currencyCode} />
                   <Tile label="Lots filled" value={`${decimal(settlement.filledLots, 0)} / ${decimal(settlement.requestedLots, 0)}`} />
                   <Tile label="Lots closed" value={decimal(settlement.closedLots, 0)} />
                 </div>
@@ -563,26 +566,26 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                       <thead>
                         <tr>
                           <th scope="col">Contract</th>
-                          <th scope="col">Entry premium</th>
-                          <th scope="col">Exit premium</th>
-                          <th scope="col">Commission</th>
+                          <th scope="col">Entry premium ({currencyCode})</th>
+                          <th scope="col">Exit premium ({currencyCode})</th>
+                          <th scope="col">Commission ({currencyCode})</th>
                           <th scope="col">Lots in / out</th>
-                          <th scope="col">{settlement.fullyClosed ? "Realized" : "Net cash flow"}</th>
+                          <th scope="col">{settlement.fullyClosed ? "Realized" : "Net cash flow"} ({currencyCode})</th>
                         </tr>
                       </thead>
                       <tbody>
                         {settlement.bySymbol?.map(item => (
                           <tr key={item.symbol}>
                             <th scope="row" className="mono">{item.symbol}</th>
-                            <td data-label="Entry premium" className={cashClass(item.entryPremium)}>{signedDecimal(item.entryPremium, 4)}</td>
-                            <td data-label="Exit premium" className={cashClass(item.exitPremium)}>{signedDecimal(item.exitPremium, 4)}</td>
-                            <td data-label="Commission" className={cashClass(item.commission, true)}>{decimal(item.commission, 4)}</td>
+                            <td data-label="Entry premium" className={cashClass(item.entryPremium)}>{formatMoneyNumber(item.entryPremium, { digits: 4, signed: true })}</td>
+                            <td data-label="Exit premium" className={cashClass(item.exitPremium)}>{formatMoneyNumber(item.exitPremium, { digits: 4, signed: true })}</td>
+                            <td data-label="Commission" className={cashClass(item.commission, true)}>{formatMoneyNumber(item.commission, { digits: 4 })}</td>
                             <td data-label="Lots in / out">{decimal(item.entryLots, 0)} / {decimal(item.exitLots, 0)}</td>
                             <td
                               data-label={settlement.fullyClosed ? "Realized" : "Net cash flow"}
                               className={settlement.fullyClosed ? cashClass(item.realizedPnl) : undefined}
                             >
-                              {signedDecimal(item.realizedPnl, 4)}
+                              {formatMoneyNumber(item.realizedPnl, { digits: 4, signed: true })}
                             </td>
                           </tr>
                         ))}
@@ -591,7 +594,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                   </div>
                 )}
                 <p className="detail-note">
-                  Premium is signed cash flow in USD: green collects, red pays. Premium received is not profit.
+                  Premium is signed cash flow shown in {currencyCode}: green collects, red pays. Premium received is not profit.
                   Net P&L equals entry premium plus exit premium minus commissions once every contract is closed.
                   Slippage is already included in fill prices and is not deducted again. Values are rounded to four decimals.
                 </p>
@@ -634,11 +637,11 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                         <td data-label="Lots">{definition.lotsMode === "auto" ? "Auto" : leg.lots}</td>
                         <td data-label="Order">
                           {titleCase(leg.orderType.replace("_order", ""))}
-                          {leg.limitPrice ? ` @ ${decimal(leg.limitPrice)}` : ""}
+                          {leg.limitPrice ? ` @ ${formatMoneyNumber(leg.limitPrice)} ${currencyCode}` : ""}
                         </td>
-                        <td data-label="Target">{leg.targetProfit ? decimal(leg.targetProfit) : EM_DASH}</td>
-                        <td data-label="Stop">{leg.stopLoss ? decimal(leg.stopLoss) : EM_DASH}</td>
-                        <td data-label="Trail">{leg.trailStop ? decimal(leg.trailStop) : EM_DASH}</td>
+                        <td data-label="Target">{leg.targetProfit ? formatMoneyNumber(leg.targetProfit) : EM_DASH}</td>
+                        <td data-label="Stop">{leg.stopLoss ? formatMoneyNumber(leg.stopLoss) : EM_DASH}</td>
+                        <td data-label="Trail">{leg.trailStop ? formatMoneyNumber(leg.trailStop) : EM_DASH}</td>
                         <td data-label="Re-entry">{leg.reentryOnTarget || leg.reentryOnStop ? `${leg.reentryOnTarget} / ${leg.reentryOnStop}` : EM_DASH}</td>
                       </tr>
                     ))}
@@ -650,7 +653,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
 
           {Boolean(orders.length) && (
             <DetailSection title="Fills and execution quality" meta="Positive slippage is adverse">
-              <p className="detail-note">Fill, reference and slippage prices are USD per underlying unit. Fees and notional are USD for the filled quantity. Red slippage is adverse; green is favorable.</p>
+              <p className="detail-note">Fill, reference and slippage prices are shown in {currencyCode} per underlying unit. Fees and notional use {currencyCode} for the filled quantity. Red slippage is adverse; green is favorable.</p>
               <div className="table-scroll mobile-card-list">
                 <table className="data-table detail-table mobile-card-table">
                   <thead>
@@ -659,11 +662,11 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                       <th scope="col">Contract</th>
                       <th scope="col">Side</th>
                       <th scope="col">Lots</th>
-                      <th scope="col">Avg fill</th>
-                      <th scope="col">Reference</th>
-                      <th scope="col">Slippage</th>
-                      <th scope="col">Fees</th>
-                      <th scope="col">Notional</th>
+                    <th scope="col">Avg fill ({currencyCode})</th>
+                    <th scope="col">Reference ({currencyCode})</th>
+                    <th scope="col">Slippage ({currencyCode})</th>
+                    <th scope="col">Fees ({currencyCode})</th>
+                    <th scope="col">Notional ({currencyCode})</th>
                       <th scope="col">State</th>
                       <th scope="col">Placed</th>
                     </tr>
@@ -687,21 +690,21 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                               <small>{decimal(order.size, 0)} requested</small>
                             </span>
                           </td>
-                          <td data-label="Avg fill">{decimal(order.averageFillPrice)}</td>
-                          <td data-label="Reference">{decimal(order.referencePrice)}</td>
+                          <td data-label="Avg fill">{formatMoneyNumber(order.averageFillPrice)}</td>
+                          <td data-label="Reference">{formatMoneyNumber(order.referencePrice)}</td>
                           <td
                             data-label="Slippage"
                             className={slippage === null || slippage === 0 ? undefined : slippage > 0 ? "down" : "up"}
                           >
                             <span className="cell-stack">
-                              <span>{signedDecimal(order.slippage)}</span>
+                              <span>{formatMoneyNumber(order.slippage, { signed: true })}</span>
                               <small className={cashClass(order.slippage, true)}>{toNumber(order.slippagePercent) !== null ? `${signedDecimal(order.slippagePercent, 3)}%` : EM_DASH}</small>
                             </span>
                           </td>
-                          <td data-label="Fees" className={cashClass(order.commission, true)}>{decimal(order.commission, 4)}</td>
+                          <td data-label="Fees" className={cashClass(order.commission, true)}>{formatMoneyNumber(order.commission, { digits: 4 })}</td>
                           <td data-label="Notional">
                             <span className="cell-stack">
-                              <span>{value === null ? EM_DASH : decimal(value, 4)}</span>
+                              <span>{formatMoneyNumber(value, { digits: 4 })}</span>
                               <small>lot {decimal(order.contractValue, 4)}</small>
                             </span>
                           </td>
