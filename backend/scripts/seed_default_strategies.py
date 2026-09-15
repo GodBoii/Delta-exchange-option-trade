@@ -24,6 +24,9 @@ def database_url() -> str:
 
 
 def seed() -> int:
+    load_dotenv(BACKEND_DIR / ".env", override=False)
+    if os.getenv("CONVEX_LIBRARY_ENABLED", "false").lower() == "true":
+        raise RuntimeError("The library is owned by Convex; do not seed the retired PostgreSQL copy")
     definitions = default_strategy_definitions()
     inserted = 0
     with psycopg.connect(database_url()) as connection:
