@@ -24,6 +24,7 @@ from .config import get_settings
 from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
 from .errors import AppError
+from .instance_lock import InstanceLock
 from .models import (
     CancelOrderRequest,
     CapitalSettingsUpdate,
@@ -43,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    instance_lock = InstanceLock(settings.trading_lock_path) if settings.convex_runtime_enabled else None
+    if instance_lock is not None:
+        instance_lock.acquire()
     db = SupabaseAdmin(settings)
     engine = TradingEngine(db, settings)
     scheduler = Scheduler(engine, settings.scheduler_poll_seconds, settings.scheduler_enabled)
@@ -61,7 +65,10 @@ async def lifespan(app: FastAPI):
     finally:
         await automation_scheduler.stop()
         await scheduler.stop()
+        await engine.close()
         await db.close()
+        if instance_lock is not None:
+            instance_lock.close()
 
 
 app = FastAPI(
