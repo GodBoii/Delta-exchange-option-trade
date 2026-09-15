@@ -2,9 +2,13 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { orderContext, orderOutcome } from "./orderValidators";
 import { exchangeFill } from "./fillValidators";
-import { savedStrategyRecord, capitalRecord } from "./applicationValidators";
+import { savedStrategyRecord, capitalRecord, profileRecord, connectionRecord } from "./applicationValidators";
+import { runtimeTables } from "./runtimeTables";
 
 export default defineSchema({
+  ...runtimeTables,
+  profiles: defineTable(profileRecord).index("by_user", ["id"]),
+  exchangeConnections: defineTable(connectionRecord).index("by_user", ["user_id"]),
   savedStrategies: defineTable({ ...savedStrategyRecord.fields, deleted: v.boolean() })
     .index("by_external_id", ["id"])
     .index("by_owner_deleted", ["user_id", "deleted"]),
