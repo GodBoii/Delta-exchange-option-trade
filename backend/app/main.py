@@ -44,8 +44,11 @@ async def lifespan(app: FastAPI):
     app.state.engine = engine
     app.state.scheduler = scheduler
     app.state.automation_scheduler = automation_scheduler
+    if not settings.scheduler_enabled:
+        await engine.recover_interrupted_states()
     scheduler.start()
-    automation_scheduler.start()
+    if settings.automation_scheduler_enabled:
+        automation_scheduler.start()
     try:
         yield
     finally:
@@ -269,14 +272,7 @@ async def update_capital_settings(
     user: RequiredUser,
 ) -> dict[str, Any]:
     await current_account(request.app.state.db, user, required=True)
-    payload = {
-        "user_id": str(user["id"]),
-        "allocation_mode": body.allocationMode,
-        "capital_amount": body.capitalAmount if body.allocationMode == "fixed_amount" else None,
-    }
-    rows = await request.app.state.db.upsert("capital_settings", payload, on_conflict="user_id")
-    if not rows:
-        raise AppError(500, "Could not save the capital policy", "capital_settings_failed")
+    await request.app.state.engine.save_capital_policy(str(user["id"]), body.allocationMode, body.capitalAmount)
     return await capital_overview(request, str(user["id"]))
 
 
