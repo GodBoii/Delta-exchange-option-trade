@@ -6,8 +6,9 @@ from pydantic import ValidationError
 
 from app.capital import capital_budget, maximum_concurrent_strategies
 from app.default_strategies import default_strategy_definitions
+from app.errors import AppError
 from app.models import CapitalSettingsUpdate, StrategyDefinition, StrategyLeg
-from app.strategy import combined_premium_metrics, resolve_leg, strategy_level_metrics
+from app.strategy import resolve_leg, strategy_level_metrics
 
 CHAIN = [
     item
@@ -74,6 +75,11 @@ def test_moves_calls_up_and_puts_down_for_otm():
 
 def test_resolves_exact_strike():
     assert "60000" in resolve_leg(base_leg(strikeMode="exact", exactStrike=60000), CHAIN)["productSymbol"]
+
+
+def test_unavailable_strike_distance_is_not_silently_clamped():
+    with pytest.raises(AppError, match="not listed"):
+        resolve_leg(base_leg(strikeMode="otm", strikeSteps=100), CHAIN)
 
 
 def test_accepts_valid_strategy():
@@ -149,17 +155,19 @@ def test_combined_premium_requires_two_short_legs():
 
 
 def test_combined_premium_100_percent_triggers_at_twice_entry_credit():
-    metrics = combined_premium_metrics(
+    metrics = strategy_level_metrics(
         [
             {"side": "sell", "filled_size": 1, "entry_price": 120, "mark_price": 210, "contract_value": 1},
             {"side": "sell", "filled_size": 1, "entry_price": 80, "mark_price": 190, "contract_value": 1},
         ],
-        Decimal("100"),
+        risk_basis="net_credit",
+        stop_percent=Decimal("100"),
+        take_profit_percent=Decimal("50"),
     )
-    assert metrics["entry_credit"] == Decimal("200")
-    assert metrics["close_cost"] == Decimal("400")
-    assert metrics["loss"] == Decimal("200")
-    assert metrics["trigger_close_cost"] == Decimal("400")
+    assert metrics["entry_value"] == Decimal("200")
+    assert metrics["current_value"] == Decimal("400")
+    assert metrics["profit"] == Decimal("-200")
+    assert metrics["stop_value"] == Decimal("400")
 
 
 def test_default_library_contains_the_thirteen_approved_strategies():
