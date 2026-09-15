@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     convex_trading_secret: str | None = Field(default=None, validation_alias="CONVEX_TRADING_SECRET")
     convex_order_journal_enabled: bool = False
     convex_library_enabled: bool = False
+    convex_accounts_enabled: bool = False
+    convex_runtime_enabled: bool = False
+    convex_credential_key: str | None = None
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
     automation_scheduler_enabled: bool = True
