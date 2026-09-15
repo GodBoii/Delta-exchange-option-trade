@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { CircleDollarSign, RefreshCw, Save } from "@/app/components/icons";
 import type { CapitalAllocationMode, CapitalOverview } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
-import { errorMessage, money } from "@/lib/format";
+import { errorMessage } from "@/lib/format";
+import { useCurrency } from "@/app/components/currency";
 import {
   IconSwap, InlineMessage, Meter, NumberField, Panel, PanelHeader, Select, Shimmer,
   type NoticeHandler, type SelectOption
@@ -40,6 +41,7 @@ function isCapitalAllocationMode(value: string): value is CapitalAllocationMode 
  * them is worth a heading.
  */
 export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandler }) {
+  const { currencyCode, convertFromUsd, convertToUsd, formatMoney } = useCurrency();
   const [overview, setOverview] = useState<CapitalOverview | null>(null);
   const [mode, setMode] = useState<CapitalAllocationMode>("half_balance");
   const [capitalAmount, setCapitalAmount] = useState(1);
@@ -53,14 +55,14 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
       const data = await requestJson<CapitalOverview>("/api/capital/settings");
       setOverview(data);
       setMode(data.settings.allocationMode);
-      setCapitalAmount(data.settings.capitalAmount ?? 1);
+      setCapitalAmount(convertFromUsd(data.settings.capitalAmount ?? 1));
       setError("");
     } catch (loadError) {
       setError(errorMessage(loadError, "Capital settings could not be loaded."));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [convertFromUsd]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -76,7 +78,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
         method: "PUT",
         body: JSON.stringify({
           allocationMode: mode,
-          capitalAmount: mode === "fixed_amount" ? capitalAmount : null
+          capitalAmount: mode === "fixed_amount" ? convertToUsd(capitalAmount) : null
         })
       });
       setOverview(data);
@@ -94,9 +96,11 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
   const dirty = overview === null
     ? false
     : overview.settings.allocationMode !== mode
-      || (mode === "fixed_amount" && overview.settings.capitalAmount !== capitalAmount);
+      || (mode === "fixed_amount" && Math.abs((overview.settings.capitalAmount ?? 0) - convertToUsd(capitalAmount)) > 0.00001);
 
   const pending = loading ? "Loading" : "Unavailable";
+  const modeOptions = MODE_OPTIONS.map(option => option.value === "fixed_amount"
+    ? { ...option, label: `Fixed ${currencyCode} amount` } : option);
   const allocationsFull = overview?.availableAllocations === 0;
 
   return (
@@ -136,9 +140,9 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
           <Select
             label="Budget per strategy"
             value={mode}
-            options={MODE_OPTIONS}
+            options={modeOptions}
             onChange={value => { if (isCapitalAllocationMode(value)) setMode(value); }}
-            hint="Calculated from total USD balance, then capped by the balance actually available."
+            hint={`Calculated from the total USD balance. Displayed in ${currencyCode}, then capped by the balance actually available.`}
           />
           {mode === "fixed_amount" && (
             <NumberField
@@ -146,7 +150,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
               value={capitalAmount}
               min={0.01}
               step={0.01}
-              suffix="USD"
+              suffix={currencyCode}
               invalid={capitalAmount <= 0}
               onChange={setCapitalAmount}
             />
@@ -156,19 +160,19 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
         <dl className="capital-figures">
           <div>
             <dt>Total balance</dt>
-            <dd>{overview ? money(overview.wallet.totalBalance) : pending}</dd>
+            <dd>{overview ? formatMoney(overview.wallet.totalBalance) : pending}</dd>
           </div>
           <div>
             <dt>Available now</dt>
-            <dd>{overview ? money(overview.wallet.availableBalance) : pending}</dd>
+            <dd>{overview ? formatMoney(overview.wallet.availableBalance) : pending}</dd>
           </div>
           <div>
             <dt>Budget per strategy</dt>
-            <dd>{overview ? money(overview.nominalBudgetPerStrategy) : pending}</dd>
+            <dd>{overview ? formatMoney(overview.nominalBudgetPerStrategy) : pending}</dd>
           </div>
           <div>
             <dt>Next strategy can use</dt>
-            <dd>{overview ? money(overview.availableBudgetForNextStrategy) : pending}</dd>
+            <dd>{overview ? formatMoney(overview.availableBudgetForNextStrategy) : pending}</dd>
           </div>
         </dl>
 
