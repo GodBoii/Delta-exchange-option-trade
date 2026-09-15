@@ -13,6 +13,9 @@ def response_value(response: httpx.Response) -> Any:
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, dict) or data.get("status") != "success":
+            error_data = data.get("errorData") if isinstance(data, dict) else None
+            if isinstance(error_data, dict) and error_data.get("code") in {"capital_slots_full"}:
+                raise AppError(409, str(error_data.get("message") or error_data["code"]), error_data["code"])
             raise ValueError("Unconfirmed application-data response")
         return data.get("value")
     except (httpx.HTTPError, ValueError) as error:
@@ -40,6 +43,12 @@ class ConvexApplicationData:
 
     def body(self, path: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"path": path, "args": {"secret": self.secret, **args}, "format": "json"}
+
+    def request_sync(self, path: str, args: dict[str, Any], *, mutation: bool = False) -> Any:
+        with httpx.Client(timeout=httpx.Timeout(30, connect=5)) as client:
+            return response_value(
+                client.post(f"{self.url}/api/{'mutation' if mutation else 'query'}", json=self.body(path, args))
+            )
 
     async def request(self, path: str, args: dict[str, Any], *, mutation: bool = False) -> Any:
         if self.client is None:
