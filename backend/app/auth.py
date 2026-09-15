@@ -84,7 +84,11 @@ async def credentials_for_user(db: SupabaseAdmin, user_id: str) -> dict[str, str
     row = result[0] if isinstance(result, list) and result else result if isinstance(result, dict) else None
     if not row or row.get("status") != "connected":
         raise AppError(401, "Connect Delta Exchange to continue", "delta_not_connected")
-    return {"api_key": str(row["api_key"]), "api_secret": str(row["api_secret"])}
+    return {
+        "api_key": str(row["api_key"]),
+        "api_secret": str(row["api_secret"]),
+        "delta_user_id": str(row.get("delta_user_id") or ""),
+    }
 
 
 async def delta_client_for_user(db: SupabaseAdmin, settings: Settings, user_id: str) -> DeltaClient:
