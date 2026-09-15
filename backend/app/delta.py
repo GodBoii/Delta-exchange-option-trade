@@ -8,7 +8,8 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from .config import Settings
-from .errors import AppError
+from .errors import AppError, DeltaOrderRejected
+from .order_journal import ConvexOrderJournal
 
 
 class DeltaClient:
@@ -17,6 +18,7 @@ class DeltaClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0))
+        self.order_journal: ConvexOrderJournal | None = None
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -58,13 +60,31 @@ class DeltaClient:
             data = response.json()
         except ValueError:
             data = {"success": False, "error": {"message": f"Delta returned HTTP {response.status_code}"}}
+        if not isinstance(data, dict):
+            raise AppError(502, "Delta returned an invalid response", "invalid_delta_response")
         if response.is_error or data.get("success") is False:
-            delta_error = data.get("error") or {}
+            delta_error = data.get("error")
+            delta_error = delta_error if isinstance(delta_error, dict) else {}
             code = str(delta_error.get("code") or f"delta_http_{response.status_code}")
             message = str(delta_error.get("message") or code.replace("_", " "))
             status = response.status_code if 400 <= response.status_code < 500 else 502
-            raise AppError(status, message, code)
+            error_type = (
+                DeltaOrderRejected
+                if method == "POST"
+                and path == "/v2/orders"
+                and 400 <= response.status_code < 500
+                and data.get("success") is False
+                and delta_error.get("code")
+                and "client_order" not in code.lower()
+                else AppError
+            )
+            raise error_type(status, message, code)
         return data
+
+    async def order_by_client_id(self, client_order_id: str) -> dict[str, Any]:
+        return await self.request(
+            "GET", f"/v2/orders/client_order_id/{quote(client_order_id, safe='')}", authenticated=True
+        )
 
     async def profile(self) -> dict[str, Any]:
         return await self.request("GET", "/v2/profile", authenticated=True)
@@ -93,9 +113,7 @@ class DeltaClient:
         return await self.request("GET", "/v2/positions/margined", authenticated=True)
 
     async def position(self, product_id: int) -> dict[str, Any]:
-        return await self.request(
-            "GET", "/v2/positions", query={"product_id": product_id}, authenticated=True
-        )
+        return await self.request("GET", "/v2/positions", query={"product_id": product_id}, authenticated=True)
 
     async def fills(
         self,
@@ -135,7 +153,14 @@ class DeltaClient:
             },
         )
 
-    async def place_order(self, order: dict[str, Any]) -> dict[str, Any]:
+    async def place_order(self, order: dict[str, Any], *, context: dict[str, str] | None = None) -> dict[str, Any]:
+        if self.order_journal is not None:
+            return await self.order_journal.submit(
+                order,
+                lambda: self.request("POST", "/v2/orders", body=order, authenticated=True),
+                self.order_by_client_id,
+                context=context,
+            )
         return await self.request("POST", "/v2/orders", body=order, authenticated=True)
 
     async def cancel_order(self, order_id: int, product_id: int) -> dict[str, Any]:
