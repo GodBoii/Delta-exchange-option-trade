@@ -79,28 +79,30 @@ export type RunExecution = {
 
 /** Money view of a run, recomputed from the recorded orders on every read. */
 export type RunSettlement = {
+  accountingBasis?: "allocated_exchange_fills";
+  accountingComplete?: boolean;
   entryPremium?: string;
   exitPremium?: string;
   grossPnl?: string;
-  commission?: string;
-  realizedPnl?: string;
+  commission?: string | null;
+  realizedPnl?: string | null;
   slippageCost?: string;
   requestedLots?: string;
   filledLots?: string;
   closedLots?: string;
   fullyClosed?: boolean;
   settledAt?: string;
-  closureReason?: "scheduled_exit" | "exchange_settlement" | "exchange_flat";
+  closureReason?: "scheduled_exit" | "exchange_settlement" | "exchange_flat" | "exchange_fills";
   reconciledAt?: string;
   exchangeSettlementFillIds?: string[];
   bySymbol?: {
     symbol: string;
     entryPremium: string;
     exitPremium: string;
-    commission: string;
+    commission: string | null;
     entryLots: string;
     exitLots: string;
-    realizedPnl: string;
+    realizedPnl: string | null;
   }[];
 };
 
