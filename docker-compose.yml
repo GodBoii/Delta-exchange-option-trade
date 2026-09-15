@@ -1,6 +1,8 @@
 services:
   delta-exchange:
     container_name: Delta-exchange
+    volumes:
+      - trading-state:/app/state
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -80,4 +82,5 @@ services:
       retries: 3
 
 volumes:
+  trading-state:
   market-history:
