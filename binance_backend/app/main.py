@@ -89,7 +89,8 @@ async def btcusd_market(
     )
     live = feed.snapshot()
     current = live["candles"].get(interval)
-    if current:
+    if (current and (startTime is None or current["openTime"] >= startTime)
+            and (endTime is None or current["openTime"] <= endTime)):
         replace_latest_candle(candles, current, limit)
     ticker = {**rest_ticker, **live["ticker"]}
     return response_envelope(
@@ -126,7 +127,8 @@ async def btcusd_candles(
     candles = await request.app.state.market.candles(interval, limit, startTime, endTime)
     live = request.app.state.feed.snapshot()
     current = live["candles"].get(interval)
-    if current:
+    if (current and (startTime is None or current["openTime"] >= startTime)
+            and (endTime is None or current["openTime"] <= endTime)):
         replace_latest_candle(candles, current, limit)
     return response_envelope(interval, {"candles": candles, "realtime": live["realtime"]})
 
