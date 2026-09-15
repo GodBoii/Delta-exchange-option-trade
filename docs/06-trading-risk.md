@@ -57,7 +57,7 @@ On trigger:
 4. Cancel related open/bracket orders to prevent stale triggers.
 5. Record the aggregate trigger snapshot and each close result.
 
-This client-side monitor is not atomic. It must be highly available and should be paired with exchange-side emergency per-leg protection and the deadman switch.
+This client-side monitor is not atomic. Keep confirmed exchange-side protection independent of backend availability. Do not automatically pair it with a cancel-orders deadman switch: cancelling orders can remove the very protection needed during an outage.
 
 ## Margin modes
 
@@ -65,7 +65,7 @@ The account exposes margin mode controls such as isolated and portfolio/cross mo
 
 ## Deadman switch
 
-The heartbeat API can cancel orders or apply configured protective actions when acknowledgements stop. It protects against a dead client; it does not implement strategy P&L logic.
+The heartbeat API can cancel orders or apply configured actions when acknowledgements stop. It does not implement strategy P&L logic. Validate the exact India action, scope and effect on brackets before enabling it. The following example illustrates the API shape only; it is not a recommended protection policy for this application.
 
 Typical flow:
 
@@ -80,4 +80,3 @@ POST /v2/heartbeat/create
 ```
 
 Then send `POST /v2/heartbeat` with the same ID and a TTL before expiry. Send TTL `0` for a deliberate shutdown if documented behavior remains unchanged.
-
