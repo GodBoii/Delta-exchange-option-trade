@@ -5,8 +5,10 @@ from urllib.parse import quote
 
 import httpx
 
+from .application_data import ConvexApplicationData
 from .config import Settings
 from .errors import AppError
+from .runtime_store import TABLES, ConvexRuntimeStore
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,11 @@ class SupabaseAdmin:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+        self.runtime = (
+            ConvexRuntimeStore(ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, self.client))
+            if getattr(settings, "convex_runtime_enabled", False)
+            else None
+        )
         self.admin_headers = {
             "apikey": settings.supabase_service_role_key,
             "Authorization": f"Bearer {settings.supabase_service_role_key}",
@@ -42,12 +49,16 @@ class SupabaseAdmin:
         return response.json()
 
     async def select(self, table: str, params: dict[str, str]) -> list[dict[str, Any]]:
+        if self.runtime is not None and table in TABLES:
+            return await self.runtime.select(table, params)
         response = await self.client.get(
             f"{self.settings.supabase_url}/rest/v1/{table}", headers=self.admin_headers, params=params
         )
         return self._json(response, "Database query failed")
 
     async def insert(self, table: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if self.runtime is not None and table in TABLES:
+            return await self.runtime.write(table, payload)
         response = await self.client.post(
             f"{self.settings.supabase_url}/rest/v1/{table}",
             headers={**self.admin_headers, "Prefer": "return=representation"},
@@ -63,6 +74,12 @@ class SupabaseAdmin:
         on_conflict: str,
         ignore_duplicates: bool = False,
     ) -> list[dict[str, Any]]:
+        if self.runtime is not None and table in TABLES:
+            if ignore_duplicates:
+                existing = await self.runtime.select(table, {on_conflict: f"eq.{payload[on_conflict]}"})
+                if existing:
+                    return []
+            return await self.runtime.write(table, payload, on_conflict)
         resolution = "ignore-duplicates" if ignore_duplicates else "merge-duplicates"
         response = await self.client.post(
             f"{self.settings.supabase_url}/rest/v1/{table}",
@@ -73,6 +90,8 @@ class SupabaseAdmin:
         return self._return_rows(table, response, "Database upsert failed")
 
     async def update(self, table: str, payload: dict[str, Any], params: dict[str, str]) -> list[dict[str, Any]]:
+        if self.runtime is not None and table in TABLES:
+            return await self.runtime.update(table, payload, params)
         response = await self.client.patch(
             f"{self.settings.supabase_url}/rest/v1/{table}",
             headers={**self.admin_headers, "Prefer": "return=representation"},
@@ -82,6 +101,8 @@ class SupabaseAdmin:
         return self._return_rows(table, response, "Database update failed")
 
     async def delete(self, table: str, params: dict[str, str]) -> list[dict[str, Any]]:
+        if self.runtime is not None and table in TABLES:
+            return await self.runtime.update(table, {}, params, remove=True)
         response = await self.client.request(
             "DELETE",
             f"{self.settings.supabase_url}/rest/v1/{table}",
@@ -126,6 +147,12 @@ class SupabaseAdmin:
             logger.warning("Convex signal publish failed table=%s id=%s error=%s", table, row.get("id"), error)
 
     async def rpc(self, function: str, payload: dict[str, Any]) -> Any:
+        if self.runtime is not None and function not in {
+            "get_delta_credentials",
+            "store_delta_connection",
+            "delete_delta_connection",
+        }:
+            return await self.runtime.rpc(function, payload)
         response = await self.client.post(
             f"{self.settings.supabase_url}/rest/v1/rpc/{function}", headers=self.admin_headers, json=payload
         )
