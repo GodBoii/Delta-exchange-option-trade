@@ -12,8 +12,12 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = Field(validation_alias="SUPABASE_SERVICE_ROLE_KEY")
     convex_url: str | None = Field(default=None, validation_alias="CONVEX_URL")
     convex_sync_secret: str | None = Field(default=None, validation_alias="CONVEX_SYNC_SECRET")
+    convex_trading_secret: str | None = Field(default=None, validation_alias="CONVEX_TRADING_SECRET")
+    convex_order_journal_enabled: bool = False
+    convex_library_enabled: bool = False
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
+    automation_scheduler_enabled: bool = True
     scheduler_poll_seconds: float = 2.0
     max_entry_lateness_seconds: int = 180
     exit_verify_timeout_seconds: float = 10.0
