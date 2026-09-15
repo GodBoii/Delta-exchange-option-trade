@@ -5,9 +5,10 @@ import {
   Clock3, Layers, RefreshCw, Shield, TrendingUp, Wallet
 } from "@/app/components/icons";
 import CapitalAllocation from "@/app/components/CapitalAllocation";
+import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import {
-  EM_DASH, errorMessage, formatClock, money, percent, quantity, relativeTime, titleCase, toNumber
+  EM_DASH, errorMessage, formatClock, percent, quantity, relativeTime, titleCase, toNumber
 } from "@/lib/format";
 import type { AccountOverview, DeltaRecord, RiskStrategy } from "@/lib/app-types";
 import {
@@ -60,6 +61,7 @@ function walletRows(balances: DeltaRecord[]): Wallet[] {
 }
 
 export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
+  const { formatMoney, currencyCode } = useCurrency();
   const [data, setData] = useState<AccountOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
@@ -168,14 +170,14 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
           <div className="tile-grid">
             <Tile
               icon={<Wallet />}
-              label={primary ? `${primary.asset} wallet balance` : "Wallet balance"}
-              value={primary ? quantity(primary.balance, 4) : EM_DASH}
-              note={primary ? `${quantity(primary.available, 4)} available to trade` : "No funded asset found"}
+              label={primary ? primary.asset === "USD" && currencyCode === "INR" ? "USD wallet · INR value" : `${primary.asset} wallet balance` : "Wallet balance"}
+              value={primary ? primary.asset === "USD" ? formatMoney(primary.balance, { digits: 4 }) : `${quantity(primary.balance, 4)} ${primary.asset}` : EM_DASH}
+              note={primary ? `${primary.asset === "USD" ? formatMoney(primary.available, { digits: 4 }) : `${quantity(primary.available, 4)} ${primary.asset}`} available to trade` : "No funded asset found"}
             />
             <Tile
               icon={<Shield />}
               label="Margin in use"
-              value={primary ? quantity(primary.blocked, 4) : EM_DASH}
+              value={primary ? primary.asset === "USD" ? formatMoney(primary.blocked, { digits: 4 }) : `${quantity(primary.blocked, 4)} ${primary.asset}` : EM_DASH}
               note={primary && primary.balance > 0
                 ? `${percent((primary.blocked / primary.balance) * 100, 1)} of ${primary.asset} balance`
                 : "Includes positions and open orders"}
@@ -188,7 +190,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
               icon={<TrendingUp />}
               label="Open positions"
               value={String(positions.length)}
-              note={positionMargin > 0 ? `${quantity(positionMargin, 4)} margin committed` : "No margin committed"}
+              note={positionMargin > 0 ? `${primary?.asset === "USD" ? formatMoney(positionMargin, { digits: 4 }) : quantity(positionMargin, 4)} margin committed` : "No margin committed"}
             />
             <Tile
               roll
@@ -316,6 +318,7 @@ function Tile({ icon, label, value, note, meter, roll = false }: {
  * ------------------------------------------------------------------ */
 
 function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onClose: (row: DeltaRecord) => void }) {
+  const { formatMoney } = useCurrency();
   return (
     <Panel>
       <PanelHeader
@@ -360,9 +363,9 @@ function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onCl
                     <th scope="row">{symbol}</th>
                     <td data-label="Side"><span className={`side-tag ${long ? "buy" : "sell"}`}>{long ? "Long" : "Short"}</span></td>
                     <td className="numeric" data-label="Size">{quantity(Math.abs(size), 0)}</td>
-                    <td className="numeric" data-label="Entry">{entry === null ? EM_DASH : money(entry)}</td>
-                    <td className="numeric" data-label="Margin">{margin === null ? EM_DASH : quantity(margin, 4)}</td>
-                    <td className="numeric" data-label="Liquidation">{liquidation === null ? EM_DASH : money(liquidation)}</td>
+                    <td className="numeric" data-label="Entry">{formatMoney(entry)}</td>
+                    <td className="numeric" data-label="Margin">{formatMoney(margin, { digits: 4 })}</td>
+                    <td className="numeric" data-label="Liquidation">{formatMoney(liquidation)}</td>
                     <td className="numeric" data-label="Buffer from entry">
                       {buffer === null
                         ? EM_DASH
@@ -371,7 +374,7 @@ function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onCl
                     <td className="numeric" data-label="Realised P&L">
                       {realised === null
                         ? EM_DASH
-                        : <span className={realised >= 0 ? "value positive" : "value negative"}>{quantity(realised, 4)}</span>}
+                        : <span className={realised >= 0 ? "value positive" : "value negative"}>{formatMoney(realised, { digits: 4, signed: true })}</span>}
                     </td>
                     <td className="row-action" data-label="Position actions">
                       <button type="button" className="button ghost small" onClick={() => onClose(row)}>Close</button>
@@ -399,6 +402,7 @@ function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onCl
  * ------------------------------------------------------------------ */
 
 function OrdersPanel({ orders, onCancel }: { orders: DeltaRecord[]; onCancel: (row: DeltaRecord) => void }) {
+  const { formatMoney } = useCurrency();
   return (
     <Panel>
       <PanelHeader
@@ -440,7 +444,7 @@ function OrdersPanel({ orders, onCancel }: { orders: DeltaRecord[]; onCancel: (r
                     <td data-label="Type">{titleCase(readText(row, "order_type") ?? "—")}</td>
                     <td className="numeric" data-label="Filled">{quantity(filled, 0)} / {quantity(size, 0)}</td>
                     <td className="numeric" data-label="Price">
-                      {limitPrice !== null ? money(limitPrice) : average !== null ? money(average) : "Market"}
+                      {limitPrice !== null ? formatMoney(limitPrice) : average !== null ? formatMoney(average) : "Market"}
                     </td>
                     <td data-label="State"><StatusChip tone={orderTone(state)}>{titleCase(state)}</StatusChip></td>
                     <td data-label="Placed">{created ? relativeTime(created) : EM_DASH}</td>
@@ -481,12 +485,15 @@ function orderTone(state: string): StatusTone {
  * denominated differently, so one total would be arithmetically meaningless.
  */
 function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
+  const { formatMoney, currencyCode } = useCurrency();
+  const walletAmount = (wallet: Wallet, value: number) => wallet.asset === "USD"
+    ? formatMoney(value, { digits: 6 }) : quantity(value, 6);
   return (
     <Panel>
       <PanelHeader
         icon={<Wallet />}
         title="Wallet balances"
-        meta="Reported per asset; balances are not summed across denominations"
+        meta={`Reported per asset${currencyCode === "INR" ? "; USD values shown in INR" : ""}; balances are not summed`}
       />
       {wallets.length ? (
         <div className="table-scroll mobile-card-list">
@@ -506,10 +513,10 @@ function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
               {wallets.map(wallet => (
                 <tr key={wallet.asset}>
                   <th scope="row">{wallet.asset}</th>
-                  <td className="numeric" data-label="Balance">{quantity(wallet.balance, 6)}</td>
-                  <td className="numeric" data-label="Available">{quantity(wallet.available, 6)}</td>
-                  <td className="numeric" data-label="Position margin">{quantity(wallet.positionMargin, 6)}</td>
-                  <td className="numeric" data-label="Order margin">{quantity(wallet.orderMargin, 6)}</td>
+                  <td className="numeric" data-label="Balance">{walletAmount(wallet, wallet.balance)}</td>
+                  <td className="numeric" data-label="Available">{walletAmount(wallet, wallet.available)}</td>
+                  <td className="numeric" data-label="Position margin">{walletAmount(wallet, wallet.positionMargin)}</td>
+                  <td className="numeric" data-label="Order margin">{walletAmount(wallet, wallet.orderMargin)}</td>
                   <td className="table-meter" data-label="Utilisation">
                     {wallet.balance > 0 ? (
                       <>
