@@ -9,11 +9,14 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+import httpx
+
 from .application_data import ConvexApplicationData
 from .auth import credentials_for_user
 from .capital import CapitalPolicy, capital_budget, maximum_concurrent_strategies, policy_from_row
 from .config import Settings
-from .delta import DeltaClient
+from .delta import DeltaClient, RequestBudget
+from .delta_events import DeltaEvents
 from .errors import AppError, DeltaOrderRejected
 from .fill_accounting import PositionResult, exclusive_fill_positions
 from .models import StrategyDefinition
@@ -73,6 +76,16 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
 class AccountExposure:
     positions: dict[int, Decimal]
     open_orders: tuple[dict[str, Any], ...]
+
+
+@dataclass(slots=True)
+class AccountSession:
+    http: httpx.AsyncClient
+    budget: RequestBudget
+    credentials: dict[str, str]
+    events: DeltaEvents | None
+    leases: int = 0
+    last_used: float = 0
 
 
 def has_exchange_exposure(product_ids: set[int], snapshot: AccountExposure) -> bool:
@@ -247,6 +260,11 @@ class TradingEngine:
         self.startup_recovered = not getattr(settings, "convex_order_journal_enabled", False)
         self.running_operations: set[str] = set()
         self.synced_fills: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self.sessions: dict[str, AccountSession] = {}
+        self.account_budgets: dict[str, RequestBudget] = {}
+        self.session_lock = asyncio.Lock()
+        self.wake = asyncio.Event()
+        self.risk_errors: dict[str, str] = {}
         self.application_data = (
             ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client)
             if getattr(settings, "convex_library_enabled", False)
@@ -255,7 +273,60 @@ class TradingEngine:
 
     async def client_for_user(self, user_id: str) -> DeltaClient:
         credentials = await credentials_for_user(self.db, user_id)
-        client = DeltaClient(self.settings, credentials["api_key"], credentials["api_secret"])
+        async with self.session_lock:
+            session = self.sessions.get(user_id)
+            if session is not None and session.credentials != credentials:
+                if session.leases:
+                    raise AppError(
+                        409, "Credentials changed during an account operation", "account_credentials_changed"
+                    )
+                await self.close_session(user_id)
+                session = None
+            if session is None:
+                for owner, idle in list(self.sessions.items()):
+                    if idle.leases == 0 and time.monotonic() - idle.last_used > 300:
+                        await self.close_session(owner)
+                if len(self.sessions) >= 100:
+                    raise AppError(503, "Active account connection capacity reached", "account_capacity_reached")
+                events = (
+                    DeltaEvents(
+                        credentials["api_key"],
+                        credentials["api_secret"],
+                        self.wake,
+                        self.settings.delta_public_ws_url,
+                        self.settings.delta_private_ws_url,
+                    )
+                    if self.settings.delta_events_enabled
+                    else None
+                )
+                session = AccountSession(
+                    httpx.AsyncClient(
+                        timeout=httpx.Timeout(12, connect=5),
+                        limits=httpx.Limits(max_connections=12, max_keepalive_connections=8),
+                    ),
+                    self.account_budgets.setdefault(credentials.get("delta_user_id") or user_id, RequestBudget()),
+                    credentials,
+                    events,
+                )
+                self.sessions[user_id] = session
+                if events is not None:
+                    events.start()
+            session.leases += 1
+            session.last_used = time.monotonic()
+
+        def release() -> None:
+            session.leases -= 1
+            session.last_used = time.monotonic()
+
+        client = DeltaClient(
+            self.settings,
+            credentials["api_key"],
+            credentials["api_secret"],
+            http_client=session.http,
+            release=release,
+            budget=session.budget,
+            events=session.events,
+        )
         if self.settings.convex_order_journal_enabled:
             if (
                 not self.settings.convex_url
@@ -271,6 +342,17 @@ class TradingEngine:
                 client.client,
             )
         return client
+
+    async def close_session(self, user_id: str) -> None:
+        session = self.sessions.pop(user_id, None)
+        if session is not None:
+            if session.events is not None:
+                await session.events.close()
+            await session.http.aclose()
+
+    async def close(self) -> None:
+        for user_id in list(self.sessions):
+            await self.close_session(user_id)
 
     async def capital_policy(self, user_id: str) -> CapitalPolicy:
         if self.application_data is not None:
@@ -428,9 +510,19 @@ class TradingEngine:
         return [{**leg, "lots": lots} for leg in resolved]
 
     async def reserve_capital_slot(self, user_id: str, strategy_id: str, maximum_slots: int) -> dict[str, Any]:
+        extra = {}
+        if getattr(self.db, "runtime", None) is not None:
+            client = await self.client_for_user(user_id)
+            try:
+                available, total = await self.usd_capital(client)
+                policy = await self.capital_policy(user_id)
+                extra = {"p_budget": format(capital_budget(available, total, policy.allocation_mode, policy.capital_amount), "f"),
+                         "p_total_balance": format(total, "f")}
+            finally:
+                await client.close()
         reservation = await self.db.rpc(
             "reserve_strategy_capital_slot",
-            {"p_user_id": user_id, "p_strategy_id": strategy_id, "p_maximum_slots": maximum_slots},
+            {"p_user_id": user_id, "p_strategy_id": strategy_id, "p_maximum_slots": maximum_slots, **extra},
         )
         if not reservation:
             raise AppError(
@@ -1939,6 +2031,12 @@ class TradingEngine:
             ready = {order["leg_id"] for order in orders} == {leg.id for leg in definition.legs} and all(
                 decimal_value(order.get("filled_size")) >= decimal_value(order.get("size")) for order in orders
             )
+            if not ready and row.get("entry_execution_at"):
+                started = datetime.fromisoformat(str(row["entry_execution_at"]).replace("Z", "+00:00"))
+                if (utc_now() - started).total_seconds() >= getattr(self.settings, "entry_fill_deadline_seconds", 60):
+                    return await self.claim_risk_exit(
+                        str(row["id"]), row.get("risk_state") or {}, "partial_entry_timeout"
+                    )
             risk_state: dict[str, Any] = {
                 **(row.get("risk_state") or {}),
                 "mode": "strategy_level",
@@ -1973,7 +2071,12 @@ class TradingEngine:
 
             open_orders = [order for order in orders if owned is None or owned[int(order["product_id"])].remaining]
             market_data = await asyncio.gather(
-                *(client.ticker(str(order["product_symbol"])) for order in open_orders),
+                *(
+                    (client.risk_ticker if isinstance(client, DeltaClient) else client.ticker)(
+                        str(order["product_symbol"])
+                    )
+                    for order in open_orders
+                ),
                 *(self.contract_value(client, str(order["product_symbol"])) for order in orders),
             )
             ticker_results = market_data[: len(open_orders)]
@@ -1988,7 +2091,7 @@ class TradingEngine:
                     {"risk_state": risk_state, "risk_monitor_at": iso_now()},
                     {"id": f"eq.{row['id']}", "status": "eq.active"},
                 )
-                return False
+                raise AppError(503, "A risk mark price is unavailable", "risk_price_unavailable")
             priced_legs: list[dict[str, Any]] = []
             for order, multiplier in zip(orders, contract_values, strict=True):
                 position = owned.get(int(order["product_id"])) if owned is not None else None
@@ -2080,7 +2183,7 @@ class TradingEngine:
     async def process_active_risks(self) -> None:
         active = await self.strategy_pages(
             {
-                "select": "id,user_id,definition_json,risk_state",
+                "select": "id,user_id,definition_json,risk_state,entry_execution_at",
                 "status": "eq.active",
                 "combined_stop_triggered_at": "is.null",
                 "limit": "25",
@@ -2090,7 +2193,9 @@ class TradingEngine:
             try:
                 if await self.monitor_combined_strategy(row):
                     await self.execute_exit(str(row["id"]), preclaimed=True)
+                self.risk_errors.pop(str(row["id"]), None)
             except Exception as exc:
+                self.risk_errors[str(row["id"])] = type(exc).__name__
                 logger.exception("Combined risk monitor failed for strategy %s", row["id"])
                 await self.db.update(
                     "strategies",
@@ -2536,26 +2641,30 @@ class Scheduler:
 
     async def stop(self) -> None:
         self.stop_event.set()
+        self.engine.wake.set()
         if self.task:
             try:
                 await asyncio.wait_for(self.task, timeout=5)
             except TimeoutError:
                 self.task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self.task
 
     async def run(self) -> None:
         logger.info("Python scheduler started; polling every %.1f seconds", self.poll_seconds)
         while not self.stop_event.is_set():
+            self.engine.wake.clear()
             self.last_started_at = iso_now()
             try:
                 await self.engine.recover_interrupted_states()
                 await self.engine.process_due_strategies()
                 self.last_completed_at = iso_now()
-                self.last_error = None
+                self.last_error = "One or more strategy risk checks failed" if self.engine.risk_errors else None
             except Exception as exc:
                 self.last_error = str(exc)
                 logger.exception("Scheduler polling cycle failed")
             with suppress(TimeoutError):
-                await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_seconds)
+                await asyncio.wait_for(self.engine.wake.wait(), timeout=self.poll_seconds)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -2565,4 +2674,9 @@ class Scheduler:
             "lastStartedAt": self.last_started_at,
             "lastCompletedAt": self.last_completed_at,
             "lastError": self.last_error,
+            "riskFailureCount": len(self.engine.risk_errors),
+            "connectedPrivateStreams": sum(
+                bool(session.events and session.events.connected["private"])
+                for session in self.engine.sessions.values()
+            ),
         }
