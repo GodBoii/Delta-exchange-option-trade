@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -459,6 +460,21 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
 
 
 app = FastAPI(title="News Analyzer", version="1.0.0", docs_url="/docs", redoc_url=None)
+
+
+@app.middleware("http")
+async def authenticate_internal_request(request: Request, call_next):
+    if request.url.path.startswith("/v1/") and settings.analysis_service_secret:
+        supplied = request.headers.get("X-Analysis-Secret", "")
+        if not hmac.compare_digest(supplied, settings.analysis_service_secret):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "success": False,
+                    "error": {"code": "service_unauthorized", "message": "Service authentication required"},
+                },
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")
