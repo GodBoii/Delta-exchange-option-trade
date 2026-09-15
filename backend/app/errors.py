@@ -4,3 +4,7 @@ class AppError(Exception):
         self.status = status
         self.message = message
         self.code = code
+
+
+class DeltaOrderRejected(AppError):
+    """The exchange explicitly rejected the submitted order."""
