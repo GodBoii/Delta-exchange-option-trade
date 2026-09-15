@@ -223,6 +223,11 @@ async def execute_automation_run(
             try:
                 response = await client.post(
                     f"{news_analyzer_url}/v1/automation/analyze",
+                    headers=(
+                        {"X-Analysis-Secret": db.settings.analysis_service_secret}
+                        if getattr(getattr(db, "settings", None), "analysis_service_secret", None)
+                        else {}
+                    ),
                     json={
                         "userId": user_id,
                         "agentRunId": run_id,
@@ -410,9 +415,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         if snapshot_ids
         else []
     )
-    stored_charts = {
-        str(snapshot["id"]): snapshot.get("chart_images") or [] for snapshot in snapshots
-    }
+    stored_charts = {str(snapshot["id"]): snapshot.get("chart_images") or [] for snapshot in snapshots}
     charts_by_snapshot: dict[str, list[dict[str, str]]] = {}
     for snapshot_id, chart_rows in stored_charts.items():
         signed = await asyncio.gather(*(_signed_chart(db, chart) for chart in chart_rows if isinstance(chart, dict)))
@@ -572,6 +575,7 @@ class AutomationScheduler:
         self.task: asyncio.Task[None] | None = None
         self.running_tasks: set[asyncio.Task[None]] = set()
         self.last_fixed_sync = 0.0
+        self.recovered = not getattr(getattr(db, "settings", None), "convex_runtime_enabled", False)
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="automation-agent-scheduler")
@@ -589,6 +593,23 @@ class AutomationScheduler:
         logger.info("Automation scheduler started; polling every %.1f seconds", self.poll_seconds)
         while not self.stop_event.is_set():
             try:
+                if not self.recovered:
+                    interrupted = await self.db.select(
+                        "automation_agent_runs", {"select": "id,outcome,report_markdown", "status": "eq.running"}
+                    )
+                    for row in interrupted:
+                        await self.db.update(
+                            "automation_agent_runs",
+                            {
+                                "status": "completed" if row.get("outcome") else "failed",
+                                "completed_at": iso_now(),
+                                "error": "Review interrupted by backend restart",
+                                "report_markdown": row.get("report_markdown")
+                                or "The backend restarted before the final report was returned.",
+                            },
+                            {"id": f"eq.{row['id']}", "status": "eq.running"},
+                        )
+                    self.recovered = True
                 monotonic_now = time.monotonic()
                 if monotonic_now - self.last_fixed_sync >= FIXED_RUN_SYNC_SECONDS:
                     await self._enqueue_session_reviews()
