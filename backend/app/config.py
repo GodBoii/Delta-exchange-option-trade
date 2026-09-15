@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +17,15 @@ class Settings(BaseSettings):
     convex_library_enabled: bool = False
     convex_accounts_enabled: bool = False
     convex_runtime_enabled: bool = False
+    shared_analysis_enabled: bool = True
     convex_credential_key: str | None = None
+    analysis_service_secret: str | None = None
+    delta_events_enabled: bool = False
+    delta_public_ws_url: str = "wss://public-socket.india.delta.exchange"
+    delta_private_ws_url: str = "wss://socket.india.delta.exchange"
+    delta_mark_max_age_seconds: float = 5.0
+    entry_fill_deadline_seconds: float = Field(default=60, ge=5, le=600)
+    trading_lock_path: str = "/app/state/trading.lock"
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
     automation_scheduler_enabled: bool = True
@@ -33,6 +41,25 @@ class Settings(BaseSettings):
     )
     frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
     log_level: str = "INFO"
+
+    @model_validator(mode="after")
+    def validate_convex_cutover(self) -> "Settings":
+        if self.convex_runtime_enabled and not all(
+            (self.convex_library_enabled, self.convex_accounts_enabled, self.convex_order_journal_enabled)
+        ):
+            raise ValueError("Convex runtime requires library, account and order-journal storage together")
+        if any(
+            (
+                self.convex_runtime_enabled,
+                self.convex_library_enabled,
+                self.convex_accounts_enabled,
+                self.convex_order_journal_enabled,
+            )
+        ) and not all((self.convex_url, self.convex_trading_secret)):
+            raise ValueError("Enabled Convex storage requires its URL and trading service secret")
+        if self.convex_accounts_enabled and not self.convex_credential_key:
+            raise ValueError("Convex account storage requires CONVEX_CREDENTIAL_KEY")
+        return self
 
     @field_validator("scheduler_poll_seconds")
     @classmethod
