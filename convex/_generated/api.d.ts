@@ -8,12 +8,17 @@
  * @module
  */
 
+import type * as accounts from "../accounts.js";
 import type * as applicationValidators from "../applicationValidators.js";
 import type * as exchangeFills from "../exchangeFills.js";
 import type * as fillValidators from "../fillValidators.js";
 import type * as library from "../library.js";
 import type * as orderIntents from "../orderIntents.js";
 import type * as orderValidators from "../orderValidators.js";
+import type * as runtimeAutomation from "../runtimeAutomation.js";
+import type * as runtimeControl from "../runtimeControl.js";
+import type * as runtimeRecords from "../runtimeRecords.js";
+import type * as runtimeTables from "../runtimeTables.js";
 import type * as signals from "../signals.js";
 import type * as tradingAuth from "../tradingAuth.js";
 
@@ -24,12 +29,17 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accounts: typeof accounts;
   applicationValidators: typeof applicationValidators;
   exchangeFills: typeof exchangeFills;
   fillValidators: typeof fillValidators;
   library: typeof library;
   orderIntents: typeof orderIntents;
   orderValidators: typeof orderValidators;
+  runtimeAutomation: typeof runtimeAutomation;
+  runtimeControl: typeof runtimeControl;
+  runtimeRecords: typeof runtimeRecords;
+  runtimeTables: typeof runtimeTables;
   signals: typeof signals;
   tradingAuth: typeof tradingAuth;
 }>;
