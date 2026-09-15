@@ -11,6 +11,7 @@ function recordTable() {
   return defineTable({
     externalId: v.string(), owner: v.string(), status: v.string(), relation: v.string(), uniqueKey: v.string(),
     created: v.number(), time: v.number(), rowJson: v.string(),
+    payload: v.optional(v.id("runtimePayloads")),
   }).index("by_external", ["externalId"])
     .index("by_owner_unique", ["owner", "uniqueKey"])
     .index("by_unique", ["uniqueKey"])
