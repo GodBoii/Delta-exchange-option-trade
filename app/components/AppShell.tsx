@@ -8,6 +8,7 @@ import {
   ThemeDark, ThemeLight, ThemeSystem
 } from "@/app/components/icons";
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
+import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
 import {
   Badge, Brand, StatusDot, SwapText, Tooltip, useDisclosure, useSlidingPill
 } from "@/app/components/ui";
@@ -185,6 +186,11 @@ const APPEARANCE_OPTIONS: { value: ThemeChoice; label: string; icon: ReactNode }
   { value: "dark", label: "Dark", icon: <ThemeDark /> }
 ];
 
+const CURRENCY_OPTIONS: { value: DisplayCurrency; label: string; symbol: string }[] = [
+  { value: "USD", label: "Dollar", symbol: "$" },
+  { value: "INR", label: "Rupees", symbol: "₹" }
+];
+
 /**
  * Profile.
  *
@@ -203,7 +209,9 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
   const container = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const appearanceId = useId();
+  const currencyId = useId();
   const { choice, setChoice } = useTheme();
+  const { currency, setCurrency, rateState } = useCurrency();
   // The panel is kept in the tree for the length of its close transition, so
   // dismissal plays instead of the menu simply blinking out.
   const disclosure = useDisclosure(open, "--dropdown-close-dur");
@@ -212,7 +220,8 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
    * flag is part of the key: without it the pill would be measured once, before
    * the bar had been rendered, and stay at zero width on every open.
    */
-  const { barRef, pill } = useSlidingPill(`${choice}:${disclosure.mounted}`, '[aria-checked="true"]');
+  const appearancePill = useSlidingPill(`${choice}:${disclosure.mounted}`, '[aria-checked="true"]');
+  const currencyPill = useSlidingPill(`${currency}:${disclosure.mounted}`, '[aria-checked="true"]');
 
   useEffect(() => {
     if (!open) return;
@@ -273,8 +282,8 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
 
           <div className="account-section">
             <span className="account-section-label" id={appearanceId}>Appearance</span>
-            <div className="appearance-switch" role="radiogroup" aria-labelledby={appearanceId} ref={barRef}>
-              {pill}
+            <div className="appearance-switch" role="radiogroup" aria-labelledby={appearanceId} ref={appearancePill.barRef}>
+              {appearancePill.pill}
               {APPEARANCE_OPTIONS.map(option => (
                 <button
                   type="button"
@@ -289,6 +298,36 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="account-section">
+            <span className="account-section-label" id={currencyId}>Display currency</span>
+            <div className="appearance-switch currency-switch" role="radiogroup" aria-labelledby={currencyId} ref={currencyPill.barRef}>
+              {currencyPill.pill}
+              {CURRENCY_OPTIONS.map(option => {
+                const disabled = option.value === "INR" && rateState.kind !== "ready";
+                return (
+                  <button
+                    type="button"
+                    key={option.value}
+                    role="radio"
+                    aria-checked={currency === option.value}
+                    className="appearance-option"
+                    disabled={disabled}
+                    onClick={() => setCurrency(option.value)}
+                  >
+                    <span aria-hidden="true">{option.symbol}</span>
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <small className="currency-rate-note">
+              {rateState.kind === "ready"
+                ? `1 USD = ₹${rateState.rate.toLocaleString("en-IN", { maximumFractionDigits: 2 })}${rateState.date ? ` · ${rateState.date}` : ""}`
+                : rateState.kind === "error" ? "Rupee conversion is unavailable. Showing USD." : "Loading USD to INR rate. Showing USD meanwhile."}
+            </small>
+            <small className="currency-rate-note">Display conversion only. Delta amounts and orders stay in USD.</small>
           </div>
 
           <div className="account-section">
