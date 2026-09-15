@@ -53,6 +53,9 @@ class NewsAgentSettings:
     automation_chart_bucket: str = AUTOMATION_CHART_BUCKET
     chart_signed_url_seconds: int = CHART_SIGNED_URL_SECONDS
     automation_session_table: str = AUTOMATION_SESSION_TABLE
+    convex_library_enabled: bool = False
+    convex_url: str | None = None
+    convex_trading_secret: str | None = None
 
     @classmethod
     def load(cls) -> NewsAgentSettings:
@@ -71,6 +74,9 @@ class NewsAgentSettings:
             default_user_id=DEFAULT_USER_ID,
             supabase_url=os.getenv("NEXT_PUBLIC_SUPABASE_URL") or None,
             supabase_service_role_key=os.getenv("SUPABASE_SERVICE_ROLE_KEY") or None,
+            convex_library_enabled=os.getenv("CONVEX_LIBRARY_ENABLED", "false").lower() == "true",
+            convex_url=os.getenv("CONVEX_URL") or None,
+            convex_trading_secret=os.getenv("CONVEX_TRADING_SECRET") or None,
         )
 
     def require_api_key(self) -> str:
