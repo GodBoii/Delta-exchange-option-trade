@@ -56,6 +56,8 @@ class NewsAgentSettings:
     convex_library_enabled: bool = False
     convex_accounts_enabled: bool = False
     convex_runtime_enabled: bool = False
+    shared_analysis_enabled: bool = True
+    analysis_service_secret: str | None = None
     convex_url: str | None = None
     convex_trading_secret: str | None = None
 
@@ -79,6 +81,7 @@ class NewsAgentSettings:
             convex_library_enabled=os.getenv("CONVEX_LIBRARY_ENABLED", "false").lower() == "true",
             convex_accounts_enabled=os.getenv("CONVEX_ACCOUNTS_ENABLED", "false").lower() == "true",
             convex_runtime_enabled=os.getenv("CONVEX_RUNTIME_ENABLED", "false").lower() == "true",
+            analysis_service_secret=os.getenv("ANALYSIS_SERVICE_SECRET") or None,
             convex_url=os.getenv("CONVEX_URL") or None,
             convex_trading_secret=os.getenv("CONVEX_RESEARCH_SECRET") or None,
         )
