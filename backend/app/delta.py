@@ -1,27 +1,68 @@
+import asyncio
 import hashlib
 import hmac
 import json
 import time
+from collections import deque
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
 
 from .config import Settings
+from .delta_events import DeltaEvents
 from .errors import AppError, DeltaOrderRejected
 from .order_journal import ConvexOrderJournal
 
 
+class RequestBudget:
+    def __init__(self) -> None:
+        self.reads = asyncio.Semaphore(6)
+        self.orders = asyncio.Semaphore(2)
+        self.blocked_until = 0.0
+        self.used: deque[tuple[float, int]] = deque()
+
+    def charge(self, weight: int, priority: bool, mutation: bool = False) -> None:
+        now = time.monotonic()
+        while self.used and self.used[0][0] < now - 300:
+            self.used.popleft()
+        if now < self.blocked_until:
+            raise AppError(429, "Exchange rate limit reset is pending", "delta_rate_limited")
+        if sum(item[1] for item in self.used) + weight > (19500 if mutation else 19000 if priority else 16000):
+            raise AppError(429, "Account request budget reserved for recovery", "delta_rate_limited")
+        self.used.append((now, weight))
+
+
 class DeltaClient:
-    def __init__(self, settings: Settings, api_key: str | None = None, api_secret: str | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+        release: Callable[[], None] | None = None,
+        budget: RequestBudget | None = None,
+        events: DeltaEvents | None = None,
+    ) -> None:
         self.base_url = settings.delta_production_url.rstrip("/")
         self.api_key = api_key
         self.api_secret = api_secret
-        self.client = httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0))
+        self.client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0))
+        self.release = release
+        self.owns_http = http_client is None
+        self.budget = budget or RequestBudget()
+        self.events = events
+        self.mark_max_age = getattr(settings, "delta_mark_max_age_seconds", 5.0)
         self.order_journal: ConvexOrderJournal | None = None
 
     async def close(self) -> None:
-        await self.client.aclose()
+        if self.release is not None:
+            release, self.release = self.release, None
+            release()
+        elif self.owns_http:
+            await self.client.aclose()
 
     async def request(
         self,
@@ -50,12 +91,26 @@ class DeltaClient:
             prehash = f"{method}{timestamp}{path}{query_string}{payload}"
             signature = hmac.new(self.api_secret.encode(), prehash.encode(), hashlib.sha256).hexdigest()
             headers.update({"api-key": self.api_key, "timestamp": timestamp, "signature": signature})
+        priority = (
+            method in {"POST", "DELETE"}
+            or path in {"/v2/positions", "/v2/positions/margined", "/v2/orders", "/v2/fills"}
+            or "/client_order_id/" in path
+        )
+        weight = 10 if path == "/v2/fills" else 5 if method != "GET" else 3
         try:
-            response = await self.client.request(
-                method, f"{self.base_url}{path}{query_string}", headers=headers, content=payload or None
-            )
+            async with self.budget.orders if method != "GET" else self.budget.reads:
+                self.budget.charge(weight, priority, method != "GET")
+                response = await self.client.request(
+                    method, f"{self.base_url}{path}{query_string}", headers=headers, content=payload or None
+                )
         except httpx.HTTPError as exc:
             raise AppError(502, f"Delta Exchange is unreachable: {exc}", "delta_unreachable") from exc
+        if response.status_code == 429:
+            try:
+                delay = float(response.headers.get("X-RATE-LIMIT-RESET", "1000")) / 1000
+            except ValueError:
+                delay = 1.0
+            self.budget.blocked_until = time.monotonic() + max(1, min(delay, 300))
         try:
             data = response.json()
         except ValueError:
@@ -141,6 +196,12 @@ class DeltaClient:
 
     async def ticker(self, symbol: str) -> dict[str, Any]:
         return await self.request("GET", f"/v2/tickers/{encode_symbol(symbol)}")
+
+    async def risk_ticker(self, symbol: str) -> dict[str, Any]:
+        mark = self.events.mark(symbol, self.mark_max_age) if self.events is not None else None
+        if mark is not None:
+            return {"result": {"mark_price": mark}}
+        return await self.ticker(symbol)
 
     async def option_chain(self, underlying: str, expiry: str) -> dict[str, Any]:
         return await self.request(
