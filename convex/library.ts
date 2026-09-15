@@ -2,7 +2,7 @@ import { paginationOptsValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { savedStrategyRecord, capitalRecord } from "./applicationValidators";
-import { authorizeTradingService } from "./tradingAuth";
+import { authorizeTradingService, authorizeAccountReader } from "./tradingAuth";
 
 function validateDefinition(name: string, definitionJson: string, enabled: boolean) {
   if (name.trim().length < 2 || name.length > 80 || definitionJson.length > 262144) {
@@ -71,7 +71,7 @@ export const remove = mutation({
 export const serverList = query({
   args: { secret: v.string(), userId: v.string(), defaults: v.boolean(), paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
-    authorizeTradingService(args.secret);
+    authorizeAccountReader(args.secret);
     return await ctx.db.query("savedStrategies")
       .withIndex("by_owner_deleted", q => q.eq("user_id", args.defaults ? null : args.userId).eq("deleted", false))
       .paginate(args.paginationOpts);
@@ -81,7 +81,7 @@ export const serverList = query({
 export const serverGet = query({
   args: { secret: v.string(), userId: v.string(), id: v.string() },
   handler: async (ctx, args) => {
-    authorizeTradingService(args.secret);
+    authorizeAccountReader(args.secret);
     const record = await ctx.db.query("savedStrategies").withIndex("by_external_id", q => q.eq("id", args.id)).unique();
     return record && !record.deleted && (record.user_id === null || record.user_id === args.userId) ? record : null;
   },
@@ -90,7 +90,7 @@ export const serverGet = query({
 export const getCapital = query({
   args: { secret: v.string(), userId: v.string() },
   handler: async (ctx, args) => {
-    authorizeTradingService(args.secret);
+    authorizeAccountReader(args.secret);
     return await ctx.db.query("capitalSettings").withIndex("by_user", q => q.eq("user_id", args.userId)).unique()
       ?? { user_id: args.userId, allocation_mode: "half_balance", capital_amount: null };
   },
