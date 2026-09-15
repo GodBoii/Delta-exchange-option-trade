@@ -353,14 +353,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
     settings, capital_policy, strategies, runs, upcoming_runs, proposals = await asyncio.gather(
         ensure_settings(db, user_id),
         request.app.state.engine.capital_policy(user_id),
-        db.select(
-            "saved_strategies",
-            {
-                "select": "id,user_id,name,version,enabled_for_ai",
-                "or": f"(user_id.eq.{user_id},user_id.is.null)",
-                "order": "name.asc",
-            },
-        ),
+        request.app.state.engine.saved_strategies(user_id),
         db.select(
             "automation_agent_runs",
             {
