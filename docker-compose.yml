@@ -1,9 +1,6 @@
 services:
   delta-exchange:
     container_name: Delta-exchange
-    depends_on:
-      news-analyzer:
-        condition: service_healthy
     build:
       context: ./backend
       dockerfile: Dockerfile
