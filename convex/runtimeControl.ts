@@ -16,7 +16,8 @@ export function newRun(value: Row): Row {
 }
 
 export const reserveCapital = mutation({
-  args: { secret: v.string(), p_user_id: v.string(), p_strategy_id: v.string(), p_maximum_slots: v.number() },
+  args: { secret: v.string(), p_user_id: v.string(), p_strategy_id: v.string(), p_maximum_slots: v.number(),
+    p_budget: v.string(), p_total_balance: v.string() },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
     if (!Number.isInteger(args.p_maximum_slots) || args.p_maximum_slots < 1 || args.p_maximum_slots > 100) throw new ConvexError("Invalid slot count");
@@ -26,6 +27,23 @@ export const reserveCapital = mutation({
     const active = slots.filter(slot => ["reserved", "active"].includes(slot.status));
     const existing = active.find(slot => slot.relation === args.p_strategy_id);
     if (existing) return { slot: parseRow(existing.rowJson).slot_number, created: false, occupiedBefore: active.length - 1 };
+    const fixed = (value: unknown): bigint => {
+      if (typeof value !== "string" || !/^[0-9]+(?:\.[0-9]{1,30})?$/.test(value) || value.length > 80) throw new ConvexError("Invalid reserved capital");
+      const [whole, fraction = ""] = value.split(".");
+      return BigInt(whole) * 10n ** 30n + BigInt(fraction.padEnd(30, "0"));
+    };
+    const connection = await ctx.db.query("exchangeConnections").withIndex("by_user", q => q.eq("user_id", args.p_user_id)).unique();
+    if (!connection || connection.status !== "connected") throw new ConvexError("Delta account required");
+    const aliases = await ctx.db.query("exchangeConnections").withIndex("by_delta_account", q => q.eq("delta_user_id", connection.delta_user_id)).collect();
+    let reserved = 0n;
+    for (const alias of aliases) {
+      for (const item of await ownerRows(ctx, "strategy_capital_slots", alias.user_id)) {
+        if (["reserved", "active"].includes(item.status)) reserved += fixed(parseRow(item.rowJson).reserved_budget);
+      }
+    }
+    if (fixed(args.p_budget) <= 0n || reserved + fixed(args.p_budget) > fixed(args.p_total_balance)) {
+      throw new ConvexError({ code: "capital_slots_full", message: "Account capital is already reserved" });
+    }
     if (active.length >= args.p_maximum_slots) throw new ConvexError({ code: "capital_slots_full", message: "All capital allocations are occupied" });
     for (let slot = 1; slot <= args.p_maximum_slots; slot++) {
       const current = slots.find(row => parseRow(row.rowJson).slot_number === slot);
@@ -33,6 +51,7 @@ export const reserveCapital = mutation({
       await put(ctx, "strategy_capital_slots", {
         id: current?.externalId ?? uuid(), user_id: args.p_user_id, slot_number: slot, strategy_id: args.p_strategy_id,
         proposal_id: null, status: "reserved", reserved_at: new Date().toISOString(), released_at: null,
+        reserved_budget: args.p_budget,
       }, current);
       return { slot, created: true, occupiedBefore: active.length };
     }
@@ -70,7 +89,7 @@ export const claimAgent = mutation({
 
 export const ensureFixedRuns = mutation({
   args: { secret: v.string(), p_runs: v.array(v.object({ user_id: v.string(), run_key: v.string(), trigger: v.string(),
-    scheduled_for: v.string(), model_id: v.string(), reason: v.string() })) },
+    status: v.optional(v.string()), scheduled_for: v.string(), model_id: v.string(), reason: v.string() })) },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
     if (args.p_runs.length > 1000) throw new ConvexError("Fixed-run batch too large");
