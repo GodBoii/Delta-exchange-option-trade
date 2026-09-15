@@ -9,7 +9,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .auth import create_connection, current_account, delta_client_for_user, optional_user, require_user
+from .auth import (
+    create_connection,
+    current_account,
+    delta_client_for_user,
+    optional_user,
+    remove_connection,
+    require_user,
+)
 from .automation import AutomationScheduler
 from .automation import router as automation_router
 from .capital import capital_budget, maximum_concurrent_strategies
@@ -152,7 +159,7 @@ async def connect_delta(request: Request, body: ConnectRequest, user: RequiredUs
 
 @app.delete("/api/session")
 async def disconnect_delta(request: Request, user: RequiredUser) -> dict[str, bool]:
-    await request.app.state.db.rpc("delete_delta_connection", {"p_user_id": str(user["id"])})
+    await remove_connection(request.app.state.db, str(user["id"]))
     return {"success": True}
 
 
@@ -334,8 +341,7 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
         "strategies",
         {
             "select": (
-                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,"
-                "last_error,risk_state,created_at"
+                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,risk_state,created_at"
             ),
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
