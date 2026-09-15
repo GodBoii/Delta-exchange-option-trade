@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authorizeAccountReader } from "./tradingAuth";
-import { get, ownerRows, parseRow, put, text, time } from "./runtimeRecords";
+import { get, hydrate, ownerRows, parseRow, put, text, time } from "./runtimeRecords";
 import { newRun, uuid } from "./runtimeControl";
 
 export const context = query({
@@ -16,8 +16,8 @@ export const context = query({
     const parent = text(row, "parent_agent_run_id") ? await get(ctx, "automation_agent_runs", text(row, "parent_agent_run_id")) : null;
     const slots = await ownerRows(ctx, "strategy_capital_slots", args.userId);
     return { run: row, settings: settings ? parseRow(settings.rowJson) : null,
-      snapshot: snapshot && snapshot.owner === args.userId ? parseRow(snapshot.rowJson) : null,
-      parent: parent && parent.owner === args.userId ? parseRow(parent.rowJson) : null,
+      snapshot: snapshot && snapshot.owner === args.userId ? await hydrate(ctx, snapshot) : null,
+      parent: parent && parent.owner === args.userId ? await hydrate(ctx, parent) : null,
       occupied: slots.filter(slot => ["reserved", "active"].includes(slot.status)).length };
   },
 });
@@ -48,16 +48,32 @@ export const schedule = mutation({
     if (!settings || !parseRow(settings.rowJson).enabled || !run || run.owner !== args.userId || run.status !== "running" || parseRow(run.rowJson).outcome) throw new ConvexError("Run cannot select another action");
     const saved = await ctx.db.query("savedStrategies").withIndex("by_external_id", q => q.eq("id", args.savedId)).unique();
     if (!saved || saved.deleted || !saved.enabled_for_ai || (saved.user_id !== null && saved.user_id !== args.userId) || saved.version !== args.savedVersion) throw new ConvexError("Saved strategy version unavailable");
+    const source = parseRow(saved.definitionJson), materialized = parseRow(args.definitionJson);
+    const equal = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    for (const [key, value] of Object.entries(source)) {
+      if (["entry", "legs", "acknowledgement", "selectionCriteria", "allocationMode", "capitalAmount"].includes(key)) continue;
+      if (!equal(value, materialized[key])) throw new ConvexError("AI proposal changed a strategy-owned field");
+    }
+    if (!Array.isArray(source.legs) || !Array.isArray(materialized.legs) || source.legs.length !== materialized.legs.length) throw new ConvexError("AI proposal changed strategy legs");
+    for (let index = 0; index < source.legs.length; index++) {
+      const original = parseRow(JSON.stringify(source.legs[index]));
+      const proposed = parseRow(JSON.stringify(materialized.legs[index]));
+      for (const [key, value] of Object.entries(original)) if (key !== "expiry" && !equal(value, proposed[key])) throw new ConvexError("AI proposal changed leg configuration");
+    }
     const connection = await ctx.db.query("exchangeConnections").withIndex("by_user", q => q.eq("user_id", args.userId)).unique();
     if (!connection || connection.status !== "connected") throw new ConvexError("Delta connection required");
-    if (time(args.recheck) <= Date.now() || time(args.activation) <= time(args.recheck) || time(args.exit) <= time(args.activation)
+    const capital = await ctx.db.query("capitalSettings").withIndex("by_user", q => q.eq("user_id", args.userId)).unique();
+    const mode = capital?.allocation_mode ?? "half_balance";
+    const maximum = mode === "full_balance" ? 1 : mode === "half_balance" ? 2 : mode === "one_third_balance" ? 3 : mode === "one_quarter_balance" ? 4 : null;
+    if (maximum !== null && (await ownerRows(ctx, "strategy_capital_slots", args.userId)).filter(slot => ["reserved", "active"].includes(slot.status)).length >= maximum) throw new ConvexError("No capital allocation available");
+    if (time(args.recheck) <= Date.now() || time(args.activation) - time(args.recheck) !== 300000 || time(args.exit) <= time(args.activation)
         || time(args.expiry) <= time(args.activation) || args.confidence < 0 || args.confidence > 1) throw new ConvexError("Invalid strategy schedule");
     const snapshot = await get(ctx, "automation_market_snapshots", args.snapshotId);
     if (!snapshot || snapshot.owner !== args.userId || text(parseRow(run.rowJson), "market_snapshot_id") !== args.snapshotId) throw new ConvexError("Snapshot ownership mismatch");
     const strategyId = uuid(), proposalId = uuid(), recheckId = uuid();
     const now = new Date().toISOString();
     await put(ctx, "strategies", { id: strategyId, user_id: args.userId, saved_strategy_id: args.savedId, name: saved.name,
-      status: "scheduled", definition_json: parseRow(args.definitionJson), entry_at: args.activation, exit_at: args.exit,
+      status: "scheduled", definition_json: materialized, entry_at: args.activation, exit_at: args.exit,
       created_at: now, updated_at: now });
     await put(ctx, "strategy_proposals", { id: proposalId, user_id: args.userId, agent_run_id: args.runId,
       strategy_id: strategyId, saved_strategy_id: args.savedId, saved_strategy_version: args.savedVersion, status: "scheduled",
@@ -109,7 +125,10 @@ export const followup = mutation({
     const state = parseRow(run.rowJson), settings = parseRow(config.rowJson);
     if (!settings.enabled || state.trigger === "agent_follow_up") throw new ConvexError("Follow-up chaining is disabled");
     if (!args.reason.trim() || time(args.next) < Date.now() + Number(settings.minimum_follow_up_minutes ?? 5) * 60000) throw new ConvexError("Follow-up is too soon");
-    const records = await ownerRows(ctx, "automation_agent_runs", args.userId);
+    const records = await ctx.db.query("automation_agent_runs")
+      .withIndex("by_owner_time", q => q.eq("owner", args.userId).gte("time", Math.min(time(args.previous), time(args.dayStart)))
+        .lte("time", Math.max(time(args.fixed), time(args.next)))).take(1001);
+    if (records.length > 1000) throw new ConvexError("Review window exceeds its bounded transaction size");
     const pending = records.filter(row => row.status === "scheduled" && text(parseRow(row.rowJson), "trigger") !== "activation_recheck" && row.time > Date.now()).sort((a, b) => a.time - b.time);
     let target = pending.find(row => row.time <= time(args.next));
     if (!target) {
