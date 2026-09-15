@@ -6,9 +6,10 @@ import { savedStrategyRecord, capitalRecord, profileRecord, connectionRecord } f
 import { runtimeTables } from "./runtimeTables";
 
 export default defineSchema({
+  runtimePayloads: defineTable({ bodyJson: v.string() }),
   ...runtimeTables,
   profiles: defineTable(profileRecord).index("by_user", ["id"]),
-  exchangeConnections: defineTable(connectionRecord).index("by_user", ["user_id"]),
+  exchangeConnections: defineTable(connectionRecord).index("by_user", ["user_id"]).index("by_delta_account", ["delta_user_id"]),
   savedStrategies: defineTable({ ...savedStrategyRecord.fields, deleted: v.boolean() })
     .index("by_external_id", ["id"])
     .index("by_owner_deleted", ["user_id", "deleted"]),
