@@ -7,12 +7,13 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
+import httpx
 import psycopg
 from agno.tools import Toolkit
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.application_data import ConvexApplicationData
+from app.application_data import ConvexApplicationData, response_value
 from app.automation_schedule import (
     IST,
     fixed_session_during_minute,
@@ -53,6 +54,12 @@ class AutomationStrategyTools(Toolkit):
             if settings.convex_library_enabled
             else None
         )
+        self.account_data = (
+            ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
+            if getattr(settings, "convex_accounts_enabled", False)
+            else None
+        )
+        self.runtime_data = runtime_data(settings)
         super().__init__(
             name="automation_strategy_tools",
             tools=[
@@ -72,6 +79,37 @@ class AutomationStrategyTools(Toolkit):
     def show_available_strategy(self) -> str:
         """Return every enabled saved strategy, its immutable version, complete definition, and current availability."""
         external = self.application_data.selection_context(self.user_id) if self.application_data else None
+        if self.runtime_data is not None:
+            if external is None:
+                raise ValueError("Runtime migration requires the Convex library")
+            rows, capital_settings = external
+            context = self.runtime_data.request_sync(
+                "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
+            )
+            maximum = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
+            occupied = context["occupied"]
+            return json.dumps(
+                {
+                    "strategies": [
+                        {
+                            "id": row["id"],
+                            "version": row["version"],
+                            "name": row["name"],
+                            "definition": row["definition_json"],
+                            "currentAvailability": "unavailable"
+                            if maximum and occupied >= maximum
+                            else "available_for_live_schedule",
+                            "reasonUnavailable": ["Every account capital allocation is occupied"]
+                            if maximum and occupied >= maximum
+                            else None,
+                        }
+                        for row in rows
+                        if row["enabled_for_ai"]
+                    ],
+                    "activeSlotCount": occupied,
+                    "maximumSlots": maximum or "calculated_at_entry",
+                }
+            )
         with self._connect() as connection, connection.cursor() as cursor:
             if external is None:
                 cursor.execute(
@@ -159,6 +197,57 @@ class AutomationStrategyTools(Toolkit):
             raise ValueError("reasoning_summary is required")
 
         external = self.application_data.selection_context(self.user_id, saved_id) if self.application_data else None
+        if self.runtime_data is not None:
+            if not external or not external[0] or not external[0][0]["enabled_for_ai"]:
+                raise ValueError("Selected strategy is unavailable")
+            strategy = external[0][0]
+            if strategy["version"] != saved_strategy_version:
+                raise ValueError("The saved strategy version changed")
+            context = self.runtime_data.request_sync(
+                "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
+            )
+            snapshot = context["snapshot"]
+            if not snapshot or snapshot["id"] != self.market_snapshot_id:
+                raise ValueError("Current market snapshot is unavailable")
+            market = snapshot["market_json"]
+            live_definition, exit_at = materialize_live_definition(
+                strategy["definition_json"],
+                activation=activation,
+                option_context=market.get("executionOptionContext") or market.get("deltaOptionContext") or {},
+            )
+            return json.dumps(
+                self.runtime_data.request_sync(
+                    "runtimeAutomation:schedule",
+                    {
+                        "userId": self.user_id,
+                        "runId": self.agent_run_id,
+                        "savedId": saved_id,
+                        "savedVersion": saved_strategy_version,
+                        "activation": activation.isoformat(),
+                        "expiry": expiry.isoformat(),
+                        "exit": exit_at.isoformat(),
+                        "recheck": recheck_at.isoformat(),
+                        "definitionJson": json.dumps(live_definition),
+                        "confidence": ai_confidence,
+                        "reasoning": reasoning_summary.strip(),
+                        "supporting": supporting_signals,
+                        "invalidation": invalidation_signals,
+                        "snapshotId": self.market_snapshot_id,
+                        "newsId": self.news_analysis_id,
+                    },
+                    mutation=True,
+                )
+            )
+        account_connected = None
+        if self.account_data is not None:
+            with httpx.Client(timeout=15) as client:
+                overview = response_value(
+                    client.post(
+                        f"{self.account_data.url}/api/query",
+                        json=self.account_data.body("accounts:overview", {"userId": self.user_id}),
+                    )
+                )
+            account_connected = bool(overview["connection"] and overview["connection"]["status"] == "connected")
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select enabled from public.automation_settings where user_id = %s for share",
@@ -176,11 +265,13 @@ class AutomationStrategyTools(Toolkit):
             else:
                 _, capital_settings = external
             maximum_slots = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
-            cursor.execute(
-                "select 1 from public.exchange_connections where user_id = %s and status = 'connected' limit 1",
-                (self.user_id,),
-            )
-            if not cursor.fetchone():
+            if account_connected is None:
+                cursor.execute(
+                    "select 1 from public.exchange_connections where user_id = %s and status = 'connected' limit 1",
+                    (self.user_id,),
+                )
+                account_connected = bool(cursor.fetchone())
+            if not account_connected:
                 raise ValueError("A connected Delta account is required for live scheduling")
             if external is None:
                 cursor.execute(
@@ -318,6 +409,27 @@ class AutomationStrategyTools(Toolkit):
         signals = [signal.strip() for signal in signals_to_inspect if signal.strip()][:10]
         if not reason:
             raise ValueError("reason_for_waiting is required")
+        if self.runtime_data is not None:
+            day_start, day_end = ist_day_bounds(now)
+            return json.dumps(
+                self.runtime_data.request_sync(
+                    "runtimeAutomation:followup",
+                    {
+                        "userId": self.user_id,
+                        "runId": self.agent_run_id,
+                        "next": next_run.isoformat(),
+                        "reason": reason,
+                        "signals": signals,
+                        "fixed": next_fixed_run(now).scheduled_for.isoformat(),
+                        "previous": previous_fixed_run(now).scheduled_for.isoformat(),
+                        "dayStart": day_start.isoformat(),
+                        "dayEnd": day_end.isoformat(),
+                        "snapshotId": self.market_snapshot_id,
+                        "newsId": self.news_analysis_id,
+                    },
+                    mutation=True,
+                )
+            )
 
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("select pg_advisory_xact_lock(hashtextextended(%s, 43))", (self.user_id,))
@@ -539,6 +651,7 @@ class DropStrategyTools(Toolkit):
         self.user_id = str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.proposal_id = str(UUID(proposal_id))
+        self.runtime_data = runtime_data(settings)
         super().__init__(
             name="activation_recheck_tools",
             tools=[self.drop_strategy],
@@ -553,6 +666,22 @@ class DropStrategyTools(Toolkit):
         if not reason:
             raise ValueError("reason is required")
         requested_activation = _aware_datetime(activation_time, "activation_time")
+        if self.runtime_data is not None:
+            return json.dumps(
+                self.runtime_data.request_sync(
+                    "runtimeAutomation:recheck",
+                    {
+                        "userId": self.user_id,
+                        "runId": self.agent_run_id,
+                        "proposalId": self.proposal_id,
+                        "drop": True,
+                        "name": strategy_name,
+                        "activation": requested_activation.isoformat(),
+                        "reason": reason,
+                    },
+                    mutation=True,
+                )
+            )
         with psycopg.connect(self.database_url, row_factory=dict_row) as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -614,6 +743,18 @@ def save_market_snapshot(
     market_packet: dict[str, Any],
     account_context: dict[str, Any],
 ) -> str:
+    data = runtime_data(settings)
+    if data is not None:
+        return data.request_sync(
+            "runtimeAutomation:saveSnapshot",
+            {
+                "userId": user_id,
+                "runId": agent_run_id,
+                "marketJson": json.dumps(market_packet, default=str),
+                "accountJson": json.dumps(account_context, default=str),
+            },
+            mutation=True,
+        )
     with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -638,6 +779,22 @@ def save_market_snapshot(
 
 def read_parent_run_context(settings: NewsAgentSettings, *, user_id: str, agent_run_id: str) -> dict[str, Any] | None:
     """Read only the scheduling parent's report, never unrelated recent decisions."""
+    data = runtime_data(settings)
+    if data is not None:
+        parent = data.request_sync("runtimeAutomation:context", {"userId": user_id, "runId": agent_run_id})["parent"]
+        return (
+            {
+                "runId": parent["id"],
+                "scheduledFor": parent["scheduled_for"],
+                "startedAt": parent.get("started_at"),
+                "completedAt": parent.get("completed_at"),
+                "trigger": parent["trigger"],
+                "outcome": parent.get("outcome"),
+                "finalResponse": parent.get("report_markdown"),
+            }
+            if parent
+            else None
+        )
     with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
         row = connection.execute(
             """
@@ -655,6 +812,10 @@ def read_parent_run_context(settings: NewsAgentSettings, *, user_id: str, agent_
 
 
 def read_automation_state(settings: NewsAgentSettings, *, user_id: str, agent_run_id: str) -> dict[str, Any] | None:
+    data = runtime_data(settings)
+    if data is not None:
+        row = data.request_sync("runtimeAutomation:context", {"userId": user_id, "runId": agent_run_id})["run"]
+        return {"outcome": row.get("outcome"), "market_snapshot_id": row.get("market_snapshot_id")}
     with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
         row = connection.execute(
             "select outcome, market_snapshot_id::text from public.automation_agent_runs where id = %s and user_id = %s",
@@ -671,6 +832,18 @@ def confirm_activation_recheck(
     proposal_id: str,
 ) -> str:
     """Record the no-tool recheck outcome without reopening or changing the strategy."""
+    data = runtime_data(settings)
+    if data is not None:
+        return data.request_sync(
+            "runtimeAutomation:recheck",
+            {
+                "userId": user_id,
+                "runId": agent_run_id,
+                "proposalId": proposal_id,
+                "drop": False,
+            },
+            mutation=True,
+        )["outcome"]
     with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
         row = connection.execute(
             """
@@ -697,6 +870,14 @@ def confirm_activation_recheck(
     if not row or not row["outcome"]:
         raise RuntimeError("The activation recheck outcome could not be recorded")
     return str(row["outcome"])
+
+
+def runtime_data(settings: NewsAgentSettings) -> ConvexApplicationData | None:
+    return (
+        ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
+        if getattr(settings, "convex_runtime_enabled", False)
+        else None
+    )
 
 
 def _psycopg_url(url: str) -> str:
