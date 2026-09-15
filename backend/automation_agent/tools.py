@@ -12,6 +12,7 @@ from agno.tools import Toolkit
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from app.application_data import ConvexApplicationData
 from app.automation_schedule import (
     IST,
     fixed_session_during_minute,
@@ -47,6 +48,11 @@ class AutomationStrategyTools(Toolkit):
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
         self.news_analysis_id = news_analysis_id
+        self.application_data = (
+            ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
+            if settings.convex_library_enabled
+            else None
+        )
         super().__init__(
             name="automation_strategy_tools",
             tools=[
@@ -65,22 +71,27 @@ class AutomationStrategyTools(Toolkit):
 
     def show_available_strategy(self) -> str:
         """Return every enabled saved strategy, its immutable version, complete definition, and current availability."""
+        external = self.application_data.selection_context(self.user_id) if self.application_data else None
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                """
+            if external is None:
+                cursor.execute(
+                    """
                 select id::text, name, version, definition_json, created_at, updated_at
                 from public.saved_strategies
                 where (user_id = %s or user_id is null) and enabled_for_ai = true
                 order by name, updated_at desc
                 """,
-                (self.user_id,),
-            )
-            strategies = cursor.fetchall()
-            cursor.execute(
-                "select allocation_mode from public.capital_settings where user_id = %s",
-                (self.user_id,),
-            )
-            capital_settings = cursor.fetchone() or {"allocation_mode": "half_balance"}
+                    (self.user_id,),
+                )
+                strategies = cursor.fetchall()
+                cursor.execute(
+                    "select allocation_mode from public.capital_settings where user_id = %s",
+                    (self.user_id,),
+                )
+                capital_settings = cursor.fetchone() or {"allocation_mode": "half_balance"}
+            else:
+                rows, capital_settings = external
+                strategies = [row for row in rows if row["enabled_for_ai"]]
             maximum_slots = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
             cursor.execute(
                 """
@@ -147,6 +158,7 @@ class AutomationStrategyTools(Toolkit):
         if not reasoning_summary.strip():
             raise ValueError("reasoning_summary is required")
 
+        external = self.application_data.selection_context(self.user_id, saved_id) if self.application_data else None
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select enabled from public.automation_settings where user_id = %s for share",
@@ -155,11 +167,14 @@ class AutomationStrategyTools(Toolkit):
             automation = cursor.fetchone()
             if not automation or not automation["enabled"]:
                 raise ValueError("Automation is turned off")
-            cursor.execute(
-                "select allocation_mode from public.capital_settings where user_id = %s",
-                (self.user_id,),
-            )
-            capital_settings = cursor.fetchone() or {"allocation_mode": "half_balance"}
+            if external is None:
+                cursor.execute(
+                    "select allocation_mode from public.capital_settings where user_id = %s",
+                    (self.user_id,),
+                )
+                capital_settings = cursor.fetchone() or {"allocation_mode": "half_balance"}
+            else:
+                _, capital_settings = external
             maximum_slots = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
             cursor.execute(
                 "select 1 from public.exchange_connections where user_id = %s and status = 'connected' limit 1",
@@ -167,16 +182,20 @@ class AutomationStrategyTools(Toolkit):
             )
             if not cursor.fetchone():
                 raise ValueError("A connected Delta account is required for live scheduling")
-            cursor.execute(
-                """
+            if external is None:
+                cursor.execute(
+                    """
                 select id::text, name, version, definition_json
                 from public.saved_strategies
                 where id = %s and (user_id = %s or user_id is null) and enabled_for_ai = true
                 for share
                 """,
-                (saved_id, self.user_id),
-            )
-            strategy = cursor.fetchone()
+                    (saved_id, self.user_id),
+                )
+                strategy = cursor.fetchone()
+            else:
+                external_rows, _ = external
+                strategy = next((row for row in external_rows if row["enabled_for_ai"]), None)
             if not strategy:
                 raise ValueError("The selected strategy is missing, disabled, or belongs to another user")
             if int(strategy["version"]) != saved_strategy_version:
@@ -325,9 +344,7 @@ class AutomationStrategyTools(Toolkit):
 
             minimum = now + timedelta(minutes=int(current["minimum_follow_up_minutes"]))
             if next_run < minimum:
-                raise ValueError(
-                    f"next_run_time must be at least {current['minimum_follow_up_minutes']} minutes ahead"
-                )
+                raise ValueError(f"next_run_time must be at least {current['minimum_follow_up_minutes']} minutes ahead")
 
             cursor.execute(
                 """
