@@ -3699,6 +3699,15 @@ time,
 .appearance-option svg { width: 14px; height: 14px; }
 .appearance-option:hover { color: var(--text-1); }
 .appearance-option[aria-checked="true"] { color: var(--text-1); }
+.appearance-option:disabled { cursor: wait; opacity: 0.45; }
+
+.currency-switch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.currency-rate-note {
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
 
 .account-dropdown [role="menuitem"] {
   display: flex;
