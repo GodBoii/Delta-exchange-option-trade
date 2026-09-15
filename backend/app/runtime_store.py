@@ -53,7 +53,7 @@ class ConvexRuntimeStore:
     def __init__(self, data: ConvexApplicationData) -> None:
         self.data = data
 
-    async def select(self, table: str, params: dict[str, str]) -> list[dict[str, Any]]:
+    async def select(self, table: str, params: dict[str, str], *, raw: bool = False) -> list[dict[str, Any]]:
         split = next(
             (
                 key
@@ -72,14 +72,10 @@ class ConvexRuntimeStore:
                             self.select(
                                 table,
                                 {
-                                    **{
-                                        key: value
-                                        for key, value in params.items()
-                                        if key not in {"select", "limit", "offset"}
-                                    },
+                                    **{key: value for key, value in params.items() if key not in {"limit", "offset"}},
                                     split: f"eq.{value}",
-                                    "select": "*",
                                 },
+                                raw=True,
                             )
                             for value in values[offset : offset + 100]
                         )
@@ -91,27 +87,28 @@ class ConvexRuntimeStore:
                         self.select(
                             table,
                             {
-                                **{
-                                    key: value
-                                    for key, value in params.items()
-                                    if key not in {"select", "limit", "offset"}
-                                },
+                                **{key: value for key, value in params.items() if key not in {"limit", "offset"}},
                                 split: f"eq.{value}",
-                                "select": "*",
                             },
+                            raw=True,
                         )
                         for value in values
                     )
                 )
                 rows = [row for group in groups for row in group]
-            return self.project(rows, params)
+            return rows if raw else self.project(rows, params)
         filters = conditions(params)
         cursor = None
         rows = []
         while True:
             page = await self.data.request(
                 "runtimeRecords:select",
-                {"table": table, "conditions": filters, "paginationOpts": {"numItems": 100, "cursor": cursor}},
+                {
+                    "table": table,
+                    "conditions": filters,
+                    "columns": params.get("select", "*"),
+                    "paginationOpts": {"numItems": 100, "cursor": cursor},
+                },
             )
             rows.extend(json.loads(row) for row in page["page"])
             if page["isDone"]:
@@ -119,7 +116,7 @@ class ConvexRuntimeStore:
             if cursor == page["continueCursor"]:
                 raise AppError(503, "Record pagination did not advance", "record_scan_incomplete")
             cursor = page["continueCursor"]
-        return self.project(rows, params)
+        return rows if raw else self.project(rows, params)
 
     @staticmethod
     def project(rows: list[dict[str, Any]], params: dict[str, str]) -> list[dict[str, Any]]:
@@ -150,31 +147,31 @@ class ConvexRuntimeStore:
     async def write(self, table: str, payload: dict[str, Any], conflict: str | None = None) -> list[dict[str, Any]]:
         now = datetime.now(UTC).isoformat()
         row = {"id": str(uuid4()), "created_at": now, "updated_at": now, **payload}
+        defaults: dict[str, Any] = {}
         if table == "automation_settings":
-            row = {
+            defaults = {
                 "enabled": False,
                 "model_id": "deepseek/deepseek-v4.1-flash",
                 "minimum_follow_up_minutes": 5,
                 "maximum_agent_runs_per_day": 3,
-                **row,
-                "id": payload["user_id"],
             }
+            row["id"] = payload["user_id"]
         elif table == "automation_agent_runs":
-            row = {
+            defaults = {
                 "status": "scheduled",
                 "outcome": None,
                 "parent_agent_run_id": None,
                 "model_id": "deepseek/deepseek-v4.1-flash",
                 "signals_to_inspect": [],
-                **row,
             }
         elif table == "executions":
-            row = {"started_at": now, "completed_at": None, "error": None, **row}
+            defaults = {"started_at": now, "completed_at": None, "error": None}
         result = await self.data.request(
             "runtimeRecords:write",
             {
                 "table": table,
                 "rowJson": json.dumps(row, allow_nan=False),
+                "defaultsJson": json.dumps(defaults),
                 **({"conflict": conflict} if conflict else {}),
             },
             mutation=True,
