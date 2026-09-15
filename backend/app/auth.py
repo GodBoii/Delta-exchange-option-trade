@@ -3,6 +3,7 @@ from typing import Any
 from fastapi import Header, Request
 
 from .config import Settings
+from .credential_store import account_store
 from .delta import DeltaClient
 from .errors import AppError
 from .supabase import SupabaseAdmin
@@ -51,18 +52,24 @@ async def current_account(
             raise AppError(401, "Sign in to continue", "not_authenticated")
         return None
     user_id = str(user["id"])
-    connections = await db.select(
-        "exchange_connections",
-        {
-            "select": "id,delta_user_id,account_name,email_masked,environment,status",
-            "user_id": f"eq.{user_id}",
-            "limit": "1",
-        },
-    )
-    profiles = await db.select("profiles", {"select": "display_name,avatar_url", "id": f"eq.{user_id}", "limit": "1"})
-    connection = connections[0] if connections else None
-    profile = profiles[0] if profiles else {}
-    if not connection and required:
+    store = account_store(db)
+    if store is not None:
+        overview = await store.data.request("accounts:overview", {"userId": user_id})
+        connection, profile = overview["connection"], overview["profile"] or {}
+    else:
+        connections = await db.select(
+            "exchange_connections",
+            {
+                "select": "id,delta_user_id,account_name,email_masked,environment,status",
+                "user_id": f"eq.{user_id}",
+                "limit": "1",
+            },
+        )
+        profiles = await db.select(
+            "profiles", {"select": "display_name,avatar_url", "id": f"eq.{user_id}", "limit": "1"}
+        )
+        connection, profile = connections[0] if connections else None, profiles[0] if profiles else {}
+    if (not connection or connection.get("status") != "connected") and required:
         raise AppError(401, "Connect Delta Exchange to continue", "delta_not_connected")
     metadata = user.get("user_metadata") or {}
     return {
@@ -80,6 +87,9 @@ async def current_account(
 
 
 async def credentials_for_user(db: SupabaseAdmin, user_id: str) -> dict[str, str]:
+    store = account_store(db)
+    if store is not None:
+        return await store.read(user_id)
     result = await db.rpc("get_delta_credentials", {"p_user_id": user_id})
     row = result[0] if isinstance(result, list) and result else result if isinstance(result, dict) else None
     if not row or row.get("status") != "connected":
@@ -104,17 +114,45 @@ async def create_connection(
         profile = (await client.profile())["result"]
     finally:
         await client.close()
-    connection_id = await db.rpc(
-        "store_delta_connection",
-        {
-            "p_user_id": user_id,
-            "p_api_key": api_key.strip(),
-            "p_api_secret": api_secret.strip(),
-            "p_delta_user_id": str(profile["id"]),
-            "p_account_name": profile.get("account_name") or "Main",
-            "p_email_masked": mask_email(profile.get("email")),
-        },
-    )
+    store = account_store(db)
+    if store is not None:
+        existing = await store.data.request("accounts:overview", {"userId": user_id})
+        connection = existing["connection"]
+        if connection and connection["delta_user_id"] != str(profile["id"]):
+            active = await db.select(
+                "strategies",
+                {
+                    "select": "id",
+                    "user_id": f"eq.{user_id}",
+                    "status": "in.(active,executing_entry,executing_exit,attention)",
+                    "limit": "1",
+                },
+            )
+            if active:
+                raise AppError(
+                    409, "Resolve existing strategy runs before switching exchange accounts", "account_switch_blocked"
+                )
+        connection_id = await store.save(
+            user_id,
+            api_key.strip(),
+            api_secret.strip(),
+            {
+                **profile,
+                "email_masked": mask_email(profile.get("email")),
+            },
+        )
+    else:
+        connection_id = await db.rpc(
+            "store_delta_connection",
+            {
+                "p_user_id": user_id,
+                "p_api_key": api_key.strip(),
+                "p_api_secret": api_secret.strip(),
+                "p_delta_user_id": str(profile["id"]),
+                "p_account_name": profile.get("account_name") or "Main",
+                "p_email_masked": mask_email(profile.get("email")),
+            },
+        )
     return {
         "connectionId": str(connection_id),
         "account": {
@@ -124,3 +162,11 @@ async def create_connection(
             "environment": "production",
         },
     }
+
+
+async def remove_connection(db: SupabaseAdmin, user_id: str) -> None:
+    store = account_store(db)
+    if store is not None:
+        await store.data.request("accounts:revoke", {"userId": user_id}, mutation=True)
+    else:
+        await db.rpc("delete_delta_connection", {"p_user_id": user_id})
