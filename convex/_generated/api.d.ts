@@ -8,7 +8,14 @@
  * @module
  */
 
+import type * as applicationValidators from "../applicationValidators.js";
+import type * as exchangeFills from "../exchangeFills.js";
+import type * as fillValidators from "../fillValidators.js";
+import type * as library from "../library.js";
+import type * as orderIntents from "../orderIntents.js";
+import type * as orderValidators from "../orderValidators.js";
 import type * as signals from "../signals.js";
+import type * as tradingAuth from "../tradingAuth.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +24,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  applicationValidators: typeof applicationValidators;
+  exchangeFills: typeof exchangeFills;
+  fillValidators: typeof fillValidators;
+  library: typeof library;
+  orderIntents: typeof orderIntents;
+  orderValidators: typeof orderValidators;
   signals: typeof signals;
+  tradingAuth: typeof tradingAuth;
 }>;
 
 /**
