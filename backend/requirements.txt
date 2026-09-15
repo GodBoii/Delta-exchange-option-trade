@@ -1,5 +1,6 @@
 fastapi>=0.115,<1
 httpx>=0.28,<1
 cryptography>=46,<49
+websockets>=15,<18
 pydantic-settings>=2.7,<3
 uvicorn[standard]>=0.34,<1
