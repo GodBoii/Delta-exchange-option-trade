@@ -26,6 +26,7 @@ from app.automation_schedule import (
 )
 from app.capital import percentage_concurrency_limit
 from app.models import StrategyDefinition
+from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import NewsAgentSettings
 
 RECHECK_LEAD_TIME = timedelta(minutes=5)
@@ -97,14 +98,14 @@ class AutomationStrategyTools(Toolkit):
                             "name": row["name"],
                             "definition": row["definition_json"],
                             "currentAvailability": "unavailable"
-                            if maximum and occupied >= maximum
+                            if self.user_id != SHARED_USER_ID and maximum and occupied >= maximum
                             else "available_for_live_schedule",
                             "reasonUnavailable": ["Every account capital allocation is occupied"]
-                            if maximum and occupied >= maximum
+                            if self.user_id != SHARED_USER_ID and maximum and occupied >= maximum
                             else None,
                         }
                         for row in rows
-                        if row["enabled_for_ai"]
+                        if row["enabled_for_ai"] and (self.user_id != SHARED_USER_ID or row.get("user_id") is None)
                     ],
                     "activeSlotCount": occupied,
                     "maximumSlots": maximum or "calculated_at_entry",
@@ -215,6 +216,26 @@ class AutomationStrategyTools(Toolkit):
                 activation=activation,
                 option_context=market.get("executionOptionContext") or market.get("deltaOptionContext") or {},
             )
+            if self.user_id == SHARED_USER_ID:
+                return json.dumps(
+                    self.runtime_data.request_sync(
+                        "sharedAnalysis:publish",
+                        {
+                            "runId": self.agent_run_id,
+                            "candidates": [{"id": saved_id, "version": saved_strategy_version}],
+                            "activation": activation.isoformat(),
+                            "expiry": expiry.isoformat(),
+                            "exit": exit_at.isoformat(),
+                            "definitionJson": json.dumps(live_definition),
+                            "confidence": ai_confidence,
+                            "reasoning": reasoning_summary.strip(),
+                            "supporting": supporting_signals,
+                            "invalidation": invalidation_signals,
+                            "snapshotId": self.market_snapshot_id,
+                        },
+                        mutation=True,
+                    )
+                )
             return json.dumps(
                 self.runtime_data.request_sync(
                     "runtimeAutomation:schedule",
@@ -735,6 +756,19 @@ class DropStrategyTools(Toolkit):
         )
 
 
+def snapshot_json(value: Any) -> str:
+    """Preserve timestamp meaning without silently stringifying unsupported values."""
+
+    def encode(item: Any) -> str:
+        if isinstance(item, datetime):
+            if item.tzinfo is None or item.utcoffset() is None:
+                raise ValueError("Snapshot timestamps must include a timezone")
+            return item.isoformat()
+        raise TypeError(f"Unsupported snapshot value: {type(item).__name__}")
+
+    return json.dumps(value, default=encode, allow_nan=False)
+
+
 def save_market_snapshot(
     settings: NewsAgentSettings,
     *,
@@ -750,8 +784,8 @@ def save_market_snapshot(
             {
                 "userId": user_id,
                 "runId": agent_run_id,
-                "marketJson": json.dumps(market_packet, default=str),
-                "accountJson": json.dumps(account_context, default=str),
+                "marketJson": snapshot_json(market_packet),
+                "accountJson": snapshot_json(account_context),
             },
             mutation=True,
         )
@@ -762,7 +796,11 @@ def save_market_snapshot(
                 insert into public.automation_market_snapshots (user_id, market_json, account_json)
                 values (%s,%s,%s) returning id::text
                 """,
-                (str(UUID(user_id)), Jsonb(market_packet), Jsonb(account_context)),
+                (
+                    str(UUID(user_id)),
+                    Jsonb(market_packet, dumps=snapshot_json),
+                    Jsonb(account_context, dumps=snapshot_json),
+                ),
             )
             snapshot_id = cursor.fetchone()["id"]
             cursor.execute(
