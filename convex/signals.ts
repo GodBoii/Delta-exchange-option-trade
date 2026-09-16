@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { sharedUserId } from "./sharedAnalysis";
 
 const scope = v.union(v.literal("automation"), v.literal("strategies"));
 
@@ -8,11 +9,16 @@ export const latest = query({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
-    return await ctx.db
+    const own = await ctx.db
       .query("signals")
       .withIndex("by_user_scope_updated", q => q.eq("userId", identity.subject).eq("scope", args.scope))
       .order("desc")
       .first();
+    if (args.scope !== "automation") return own;
+    const shared = await ctx.db.query("signals")
+      .withIndex("by_user_scope_updated", q => q.eq("userId", sharedUserId).eq("scope", "automation"))
+      .order("desc").first();
+    return shared && (!own || shared.updatedAt > own.updatedAt) ? shared : own;
   },
 });
 
