@@ -1,5 +1,7 @@
 # Implementation checklist and release boundary
 
+September 16 update: [shared-analysis verification](19-shared-analysis-verification.md) supersedes the shared-scheduling status below. One common strategy, shared recheck and per-account sizing are now connected and tested. Production storage cutover remains pending.
+
 This replaces the earlier progress summaries. It distinguishes code, deployed Convex functions, migrated data and running production behaviour. Passing a unit test is not a production cutover.
 
 ## What you asked for
