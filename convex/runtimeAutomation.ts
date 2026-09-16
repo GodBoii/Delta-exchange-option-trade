@@ -3,6 +3,8 @@ import { mutation, query } from "./_generated/server";
 import { authorizeAccountReader } from "./tradingAuth";
 import { get, hydrate, ownerRows, parseRow, put, text, time } from "./runtimeRecords";
 import { newRun, uuid } from "./runtimeControl";
+import { validateMaterializedDefinition } from "./strategyDefinition";
+import { sharedUserId } from "./sharedAnalysis";
 
 export const context = query({
   args: { secret: v.string(), userId: v.string(), runId: v.string(), savedId: v.optional(v.string()) },
@@ -49,17 +51,7 @@ export const schedule = mutation({
     const saved = await ctx.db.query("savedStrategies").withIndex("by_external_id", q => q.eq("id", args.savedId)).unique();
     if (!saved || saved.deleted || !saved.enabled_for_ai || (saved.user_id !== null && saved.user_id !== args.userId) || saved.version !== args.savedVersion) throw new ConvexError("Saved strategy version unavailable");
     const source = parseRow(saved.definitionJson), materialized = parseRow(args.definitionJson);
-    const equal = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-    for (const [key, value] of Object.entries(source)) {
-      if (["entry", "legs", "acknowledgement", "selectionCriteria", "allocationMode", "capitalAmount"].includes(key)) continue;
-      if (!equal(value, materialized[key])) throw new ConvexError("AI proposal changed a strategy-owned field");
-    }
-    if (!Array.isArray(source.legs) || !Array.isArray(materialized.legs) || source.legs.length !== materialized.legs.length) throw new ConvexError("AI proposal changed strategy legs");
-    for (let index = 0; index < source.legs.length; index++) {
-      const original = parseRow(JSON.stringify(source.legs[index]));
-      const proposed = parseRow(JSON.stringify(materialized.legs[index]));
-      for (const [key, value] of Object.entries(original)) if (key !== "expiry" && !equal(value, proposed[key])) throw new ConvexError("AI proposal changed leg configuration");
-    }
+    validateMaterializedDefinition(source, materialized);
     const connection = await ctx.db.query("exchangeConnections").withIndex("by_user", q => q.eq("user_id", args.userId)).unique();
     if (!connection || connection.status !== "connected") throw new ConvexError("Delta connection required");
     const capital = await ctx.db.query("capitalSettings").withIndex("by_user", q => q.eq("user_id", args.userId)).unique();
@@ -100,13 +92,15 @@ export const recheck = mutation({
     if (state.trigger !== "activation_recheck" || state.strategy_proposal_id !== args.proposalId) throw new ConvexError("Recheck assignment mismatch");
     if (state.outcome) return { outcome: state.outcome };
     const strategy = await get(ctx, "strategies", text(proposed, "strategy_id"));
-    const valid = proposal.status === "scheduled" && strategy?.status === "scheduled";
-    if (args.drop && (!valid || text(parseRow(strategy.rowJson), "name").toLowerCase() !== args.name?.trim().toLowerCase()
+    const shared = args.userId === sharedUserId;
+    const valid = proposal.status === "scheduled" && (shared || strategy?.status === "scheduled");
+    const name = shared ? text(proposed, "name") : strategy ? text(parseRow(strategy.rowJson), "name") : "";
+    if (args.drop && (!valid || name.toLowerCase() !== args.name?.trim().toLowerCase()
         || time(proposed.activation_time) !== time(args.activation) || !args.reason?.trim())) throw new ConvexError("Drop does not match assigned strategy");
     const outcome = args.drop || !valid ? "strategy_dropped" : "strategy_reconfirmed";
-    if (args.drop && strategy) {
+    if (args.drop) {
       const message = `Dropped by activation recheck: ${args.reason}`;
-      await put(ctx, "strategies", { ...parseRow(strategy.rowJson), status: "cancelled", last_error: message }, strategy);
+      if (strategy) await put(ctx, "strategies", { ...parseRow(strategy.rowJson), status: "cancelled", last_error: message }, strategy);
       await put(ctx, "strategy_proposals", { ...proposed, status: "cancelled", rejection_reason: message }, proposal);
     }
     await put(ctx, "automation_agent_runs", { ...state, outcome }, run);
