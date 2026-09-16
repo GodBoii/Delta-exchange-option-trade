@@ -1,5 +1,7 @@
 # Final cutover commands
 
+September 16 update: SQL 021 was already verified as recorded in [SQL verification](18-sql-cutover-verification.md). Do not treat the later instruction to execute it as a pending action. See [shared-analysis verification](19-shared-analysis-verification.md) for the tested behavior and deployment boundary. Drain or cancel old per-user scheduled reviews/proposals before switching to shared analysis. Keep `SHARED_ANALYSIS_ENABLED=true` on the backend for the new flow.
+
 This is the deployment sequence for the code in this checkout. The implementation checklist is in `docs/16-implementation-checklist.md`. Do not use older progress messages as the release procedure.
 
 ## What is already in place
