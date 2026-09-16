@@ -19,7 +19,9 @@ import type * as runtimeAutomation from "../runtimeAutomation.js";
 import type * as runtimeControl from "../runtimeControl.js";
 import type * as runtimeRecords from "../runtimeRecords.js";
 import type * as runtimeTables from "../runtimeTables.js";
+import type * as sharedAnalysis from "../sharedAnalysis.js";
 import type * as signals from "../signals.js";
+import type * as strategyDefinition from "../strategyDefinition.js";
 import type * as tradingAuth from "../tradingAuth.js";
 
 import type {
@@ -40,7 +42,9 @@ declare const fullApi: ApiFromModules<{
   runtimeControl: typeof runtimeControl;
   runtimeRecords: typeof runtimeRecords;
   runtimeTables: typeof runtimeTables;
+  sharedAnalysis: typeof sharedAnalysis;
   signals: typeof signals;
+  strategyDefinition: typeof strategyDefinition;
   tradingAuth: typeof tradingAuth;
 }>;
 
