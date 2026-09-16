@@ -16,6 +16,8 @@ from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, u
 from .capital import percentage_concurrency_limit
 from .engine import TradingEngine, iso_now
 from .errors import AppError
+from .shared_analysis import SHARED_USER_ID, history_filter
+from .shared_analysis import enabled as shared_enabled
 from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,20 @@ async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
 
 
 async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str, Any]:
+    if user_id == SHARED_USER_ID:
+        fixed = next_fixed_run(datetime.now(UTC))
+        return {
+            "scope": "shared_market_analysis",
+            "nextFixedAgentRun": {
+                "trigger": fixed.trigger,
+                "scheduledForUtc": utc_text(fixed.scheduled_for),
+                "scheduledForIst": ist_text(fixed.scheduled_for),
+            },
+            "executionPolicy": (
+                "Select one built-in strategy and time for all enabled accounts. "
+                "Each account sizes independently at entry."
+            ),
+        }
     policy = await engine.capital_policy(user_id)
     fixed = next_fixed_run(datetime.now(UTC))
     active, upcoming_runs = await asyncio.gather(
@@ -110,6 +126,8 @@ async def build_activation_recheck_context(
     user_id: str,
     proposal_id: str,
 ) -> dict[str, Any]:
+    if user_id == SHARED_USER_ID:
+        return await build_shared_recheck_context(db, proposal_id)
     proposals = await db.select(
         "strategy_proposals",
         {
@@ -172,6 +190,40 @@ async def build_activation_recheck_context(
             "supportingSignals": proposal.get("supporting_signals") or [],
             "invalidationSignals": proposal.get("invalidation_signals") or [],
             "finalResponse": parent.get("report_markdown"),
+        },
+    }
+
+
+async def build_shared_recheck_context(db: SupabaseAdmin, proposal_id: str) -> dict[str, Any]:
+    proposals = await db.select("strategy_proposals", {"id": f"eq.{proposal_id}", "user_id": f"eq.{SHARED_USER_ID}"})
+    if not proposals or proposals[0]["status"] != "scheduled":
+        raise AppError(409, "Shared decision is no longer scheduled", "shared_decision_unavailable")
+    proposal = proposals[0]
+    parents = await db.select(
+        "automation_agent_runs", {"id": f"eq.{proposal['agent_run_id']}", "user_id": f"eq.{SHARED_USER_ID}"}
+    )
+    if not parents or not parents[0].get("report_markdown"):
+        raise AppError(409, "Selection report is unavailable", "selection_report_missing")
+    parent = parents[0]
+    return {
+        "proposalId": proposal_id,
+        "selectedStrategy": {
+            "id": proposal_id,
+            "name": proposal["name"],
+            "activationTime": proposal["activation_time"],
+            "exitTime": proposal["exit_at"],
+            "proposalExpiry": proposal["proposal_expiry"],
+            "definition": proposal["definition_json"],
+        },
+        "originalSelection": {
+            "runId": parent["id"],
+            "runTime": parent.get("scheduled_for"),
+            "completedAt": parent.get("completed_at"),
+            "confidence": proposal["ai_confidence"],
+            "reasoning": proposal["reasoning_summary"],
+            "supportingSignals": proposal.get("supporting_signals", []),
+            "invalidationSignals": proposal.get("invalidation_signals", []),
+            "finalResponse": parent["report_markdown"],
         },
     }
 
@@ -253,6 +305,8 @@ async def execute_automation_run(
                 ) from error
         try:
             payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Expected an analysis response object")
         except ValueError as error:
             raise AppError(
                 502, "Automation service returned an invalid response", "invalid_automation_response"
@@ -366,7 +420,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
                     "id,trigger,status,outcome,scheduled_for,started_at,completed_at,model_id,"
                     "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error"
                 ),
-                "user_id": f"eq.{user_id}",
+                "user_id": history_filter(getattr(db, "settings", None), user_id),
                 "status": "in.(running,completed,failed)",
                 "order": "started_at.desc",
                 "limit": "20",
@@ -376,7 +430,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             "automation_agent_runs",
             {
                 "select": "id,trigger,scheduled_for",
-                "user_id": f"eq.{user_id}",
+                "user_id": history_filter(getattr(db, "settings", None), user_id),
                 "status": "eq.scheduled",
                 "scheduled_for": f"gt.{iso_now()}",
                 "order": "scheduled_for.asc",
@@ -389,13 +443,16 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
                 "select": (
                     "id,saved_strategy_id,saved_strategy_version,status,activation_time,"
                     "proposal_expiry,ai_confidence,reasoning_summary"
-                ),
-                "user_id": f"eq.{user_id}",
+                )
+                + (",shared_decision_id" if shared_enabled(getattr(db, "settings", None)) else ""),
+                "user_id": history_filter(getattr(db, "settings", None), user_id),
                 "order": "created_at.desc",
                 "limit": "20",
             },
         ),
     )
+    allocated_decisions = {row["shared_decision_id"] for row in proposals if row.get("shared_decision_id")}
+    proposals = [row for row in proposals if row["id"] not in allocated_decisions]
     names = {row["id"]: row["name"] for row in strategies}
     strategies = [
         row
@@ -409,7 +466,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             {
                 "select": "id,chart_images:market_json->chartImages",
                 "id": f"in.({','.join(snapshot_ids)})",
-                "user_id": f"eq.{user_id}",
+                "user_id": history_filter(getattr(db, "settings", None), user_id),
             },
         )
         if snapshot_ids
@@ -532,6 +589,9 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     if not settings["enabled"]:
         raise AppError(409, "Turn on Automation before running the agent", "automation_disabled")
     await require_analyzer_ready()
+    if shared_enabled(db.settings):
+        row = await db.runtime.data.request("sharedAnalysis:manual", {"requestedBy": user_id}, mutation=True)
+        return {"success": True, "runId": row["id"], "status": row["status"], "shared": True}
     rows = await db.insert(
         "automation_agent_runs",
         {
@@ -615,6 +675,8 @@ class AutomationScheduler:
                     await self._enqueue_session_reviews()
                     self.last_fixed_sync = monotonic_now
                 await self._process_due_runs()
+                if shared_enabled(getattr(self.db, "settings", None)):
+                    await self._allocate_shared_decisions()
             except Exception:
                 logger.exception("Automation scheduler polling cycle failed")
             with suppress(TimeoutError):
@@ -627,8 +689,22 @@ class AutomationScheduler:
             {
                 "select": "user_id",
                 "enabled": "eq.true",
+                "user_id": f"neq.{SHARED_USER_ID}",
             },
         )
+        if shared_enabled(getattr(self.db, "settings", None)):
+            await self.db.upsert(
+                "automation_settings",
+                {
+                    "user_id": SHARED_USER_ID,
+                    "enabled": bool(settings),
+                    "model_id": MODEL_ID,
+                    "minimum_follow_up_minutes": 5,
+                    "maximum_agent_runs_per_day": 3,
+                },
+                on_conflict="user_id",
+            )
+            settings = [{"user_id": SHARED_USER_ID}] if settings else []
         fixed_runs = fixed_runs_between(now - FIXED_RUN_CATCH_UP, now + FIXED_RUN_LOOKAHEAD)
         payload = [
             {
@@ -666,13 +742,17 @@ class AutomationScheduler:
             {"select": "user_id", "enabled": "eq.true"},
         )
         enabled_users = {str(row["user_id"]) for row in enabled_rows}
+        enabled_users.discard(SHARED_USER_ID)
         if not enabled_users:
             return
+        if shared_enabled(getattr(self.db, "settings", None)):
+            enabled_users = {SHARED_USER_ID}
         due = await self.db.select(
             "automation_agent_runs",
             {
                 "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id",
                 "status": "eq.scheduled",
+                **({"user_id": f"eq.{SHARED_USER_ID}"} if shared_enabled(getattr(self.db, "settings", None)) else {}),
                 "scheduled_for": f"lte.{iso_now()}",
                 "order": "scheduled_for.asc",
                 "limit": str(max(12, available * 4)),
@@ -711,6 +791,20 @@ class AutomationScheduler:
             task.add_done_callback(self.running_tasks.discard)
             available -= 1
 
+    async def _allocate_shared_decisions(self) -> None:
+        pending = await self.db.runtime.data.request("sharedAnalysis:pendingAllocations", {})
+        # Bound concurrency so slow accounts do not serialize the entire allocation batch.
+        semaphore = asyncio.Semaphore(8)
+
+        async def allocate(item: dict[str, str]) -> None:
+            async with semaphore:
+                try:
+                    await self.db.runtime.data.request("sharedAnalysis:allocate", item, mutation=True)
+                except AppError:
+                    logger.exception("Shared allocation failed decision=%s user=%s", item["decisionId"], item["userId"])
+
+        await asyncio.gather(*(allocate(item) for item in pending))
+
     async def _execute(self, row: dict[str, Any]) -> None:
         try:
             await execute_automation_run(
@@ -724,6 +818,8 @@ class AutomationScheduler:
                 signals_to_inspect=row.get("signals_to_inspect") or [],
                 strategy_proposal_id=row.get("strategy_proposal_id"),
             )
+            if str(row["user_id"]) == SHARED_USER_ID and row["trigger"] == "activation_recheck":
+                await self._allocate_shared_decisions()
         except Exception:
             logger.exception("Scheduled automation run failed run_id=%s", row["id"])
 
