@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Path, Request
 
 from .auth import require_user
 from .errors import AppError
+from .shared_analysis import history_filter
 
 router = APIRouter(prefix="/api/news", tags=["news intelligence"])
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
@@ -33,7 +34,7 @@ async def list_news_sessions(request: Request, user: RequiredUser) -> dict[str, 
         "automation_agent_runs",
         {
             "select": "id,agno_run_id,model_id,member_responses,created_at,updated_at",
-            "user_id": f"eq.{user['id']}",
+            "user_id": history_filter(getattr(request.app.state.db, "settings", None), str(user["id"])),
             "status": "eq.completed",
             "order": "created_at.desc",
             "limit": "100",
@@ -66,7 +67,7 @@ async def get_news_session(session_id: SessionPath, request: Request, user: Requ
         {
             "select": "id,agno_run_id,model_id,member_responses,created_at",
             "id": f"eq.{session_id}",
-            "user_id": f"eq.{user['id']}",
+            "user_id": history_filter(getattr(request.app.state.db, "settings", None), str(user["id"])),
             "status": "eq.completed",
             "limit": "1",
         },
