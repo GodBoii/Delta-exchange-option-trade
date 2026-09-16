@@ -509,17 +509,19 @@ class TradingEngine:
             )
         return [{**leg, "lots": lots} for leg in resolved]
 
-    async def reserve_capital_slot(self, user_id: str, strategy_id: str, maximum_slots: int) -> dict[str, Any]:
+    async def reserve_capital_slot(
+        self, user_id: str, strategy_id: str, maximum_slots: int, *,
+        wallet: tuple[Decimal, Decimal], policy: CapitalPolicy,
+    ) -> dict[str, Any]:
         extra = {}
         if getattr(self.db, "runtime", None) is not None:
-            client = await self.client_for_user(user_id)
-            try:
-                available, total = await self.usd_capital(client)
-                policy = await self.capital_policy(user_id)
-                extra = {"p_budget": format(capital_budget(available, total, policy.allocation_mode, policy.capital_amount), "f"),
-                         "p_total_balance": format(total, "f")}
-            finally:
-                await client.close()
+            available, total = wallet
+            extra = {
+                "p_budget": format(
+                    capital_budget(available, total, policy.allocation_mode, policy.capital_amount), "f"
+                ),
+                "p_total_balance": format(total, "f"),
+            }
         reservation = await self.db.rpc(
             "reserve_strategy_capital_slot",
             {"p_user_id": user_id, "p_strategy_id": strategy_id, "p_maximum_slots": maximum_slots, **extra},
@@ -878,6 +880,13 @@ class TradingEngine:
         row = await self.strategy_by_id(strategy_id)
         if row.get("entry_execution_at"):
             raise AppError(409, "Strategy entry has already run", "already_executed")
+        if row.get("shared_decision_id"):
+            enabled_accounts = await self.db.select(
+                "automation_settings", {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true", "select": "user_id"}
+            )
+            recheck = await self.activation_recheck_states([strategy_id])
+            if not enabled_accounts or recheck[strategy_id] != "ready":
+                raise AppError(409, "Shared strategy is not authorized for entry", "activation_recheck_failed")
         definition = StrategyDefinition.model_validate(row["definition_json"])
         if self.application_data is not None and row.get("saved_strategy_id"):
             proposals = await self.db.select(
@@ -911,12 +920,16 @@ class TradingEngine:
                 policy.capital_amount,
             )
             try:
-                reservation = await self.reserve_capital_slot(str(row["user_id"]), strategy_id, maximum_slots)
+                reservation = await self.reserve_capital_slot(
+                    str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy
+                )
             except AppError as error:
                 if error.code != "capital_slots_full":
                     raise
                 await self.reconcile_attention_runs(str(row["user_id"]), client)
-                reservation = await self.reserve_capital_slot(str(row["user_id"]), strategy_id, maximum_slots)
+                reservation = await self.reserve_capital_slot(
+                    str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy
+                )
             resolved = await self.resolve_strategy(client, definition)
             validate_entry_policy(definition, resolved)
             resolved = await self.apply_automatic_lots(client, definition, resolved, policy, wallet)
@@ -2577,13 +2590,15 @@ class TradingEngine:
             return states
         proposals = await self.db.select(
             "strategy_proposals",
-            {"select": "id,strategy_id", "strategy_id": f"in.({','.join(strategy_ids)})"},
+            {"select": "*", "strategy_id": f"in.({','.join(strategy_ids)})"},
         )
         if not proposals:
             return states
-        proposal_by_id = {str(row["id"]): str(row["strategy_id"]) for row in proposals}
-        for strategy_id in proposal_by_id.values():
-            states[strategy_id] = "pending"
+        proposal_by_id: dict[str, list[str]] = {}
+        for row in proposals:
+            decision_id = str(row.get("shared_decision_id") or row["id"])
+            proposal_by_id.setdefault(decision_id, []).append(str(row["strategy_id"]))
+            states[str(row["strategy_id"])] = "pending"
         rechecks = await self.db.select(
             "automation_agent_runs",
             {
@@ -2593,17 +2608,19 @@ class TradingEngine:
             },
         )
         for recheck in rechecks:
-            strategy_id = proposal_by_id.get(str(recheck.get("strategy_proposal_id")))
-            if not strategy_id:
+            linked_strategies = proposal_by_id.get(str(recheck.get("strategy_proposal_id")))
+            if not linked_strategies:
                 continue
             if recheck.get("outcome") == "strategy_reconfirmed" and recheck.get("status") == "completed":
-                states[strategy_id] = "ready"
+                state = "ready"
             elif recheck.get("outcome") == "strategy_dropped":
-                states[strategy_id] = "dropped"
+                state = "dropped"
             elif recheck.get("status") in {"failed", "cancelled"}:
-                states[strategy_id] = "failed"
+                state = "failed"
             else:
-                states[strategy_id] = "pending"
+                state = "pending"
+            for strategy_id in linked_strategies:
+                states[strategy_id] = state
         return states
 
     async def reject_scheduled_entry(self, strategy_id: str, error: AppError) -> None:
