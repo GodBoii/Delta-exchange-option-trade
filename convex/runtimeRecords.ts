@@ -48,7 +48,8 @@ export async function put(ctx: MutationCtx, table: RuntimeTable, row: Row, exist
   const uniqueKey = table === "execution_orders" ? text(row, "client_order_id")
     : table === "automation_agent_runs" ? text(row, "run_key")
     : table === "strategy_capital_slots" ? String(row.slot_number)
-    : table === "automation_settings" ? owner : externalId;
+    : table === "automation_settings" ? owner
+    : table === "strategy_proposals" && text(row, "shared_decision_id") ? `shared:${text(row, "shared_decision_id")}` : externalId;
   if (uniqueKey) {
     const duplicate = table === "execution_orders"
       ? await ctx.db.query(table).withIndex("by_unique", q => q.eq("uniqueKey", uniqueKey)).unique()
@@ -79,7 +80,7 @@ export async function put(ctx: MutationCtx, table: RuntimeTable, row: Row, exist
     else payloadId = await ctx.db.insert("runtimePayloads", { bodyJson });
   }
   const fields = { externalId, owner, relation, status, uniqueKey,
-    created: time(row.created_at ?? row.started_at), time: time(row.scheduled_for ?? row.entry_at ?? row.started_at ?? row.created_at),
+    created: time(row.created_at ?? row.started_at), time: time(row.scheduled_for ?? row.entry_at ?? row.activation_time ?? row.started_at ?? row.created_at),
     rowJson: JSON.stringify(metadata), ...(payloadId ? { payload: payloadId } : {}) };
   if (existing) await ctx.db.patch(existing._id, fields);
   else await ctx.db.insert(table, fields);
