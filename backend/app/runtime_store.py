@@ -57,7 +57,7 @@ class ConvexRuntimeStore:
         split = next(
             (
                 key
-                for key in ("id", "execution_id", "strategy_id", "status", "client_order_id")
+                for key in ("id", "user_id", "execution_id", "strategy_id", "status", "client_order_id")
                 if params.get(key, "").startswith("in.(")
             ),
             None,
