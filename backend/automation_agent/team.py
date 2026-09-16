@@ -112,7 +112,7 @@ def run_automation_team(
             members=[news_agent],
             tools=[market_tools, strategy_tools],
             description=(
-                "Analyze BTCUSD, compare the user's saved option strategies, and schedule a suitable live trade time."
+                "Analyze BTCUSD, compare the supplied option strategy catalog, and select one strategy and trade time."
             ),
             instructions=[
                 (
@@ -120,7 +120,7 @@ def run_automation_team(
                     "bearish, breaking out, or expanding in volatility."
                 ),
                 (
-                    "The strategies were created by the user. Call show_available_strategy to receive every complete "
+                    "Call show_available_strategy to receive every available complete "
                     "definition, including category, index, price source, holding type, risk, take profit, order type, "
                     "legs, option types, and positions."
                 ),
