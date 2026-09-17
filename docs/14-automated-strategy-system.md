@@ -640,7 +640,7 @@ The latest 50 hours are available through `GET /api/market/btcusd/history`; olde
 
 The automation service reuses `fixed_runs_between` to group observations into intervals from one scheduled
 session opening to the next. Asia uses 09:00 Tokyo, London 08:00 London, pre-expiry uses 15:30 IST,
-and New York uses 09:30 New York, with
+New York uses 09:30 New York, and the midnight review uses 00:30 Asia/Kolkata, with
 their existing daylight-saving rules and weekend scheduling. These are review intervals, not overlapping
 exchange trading hours. Each fixed run receives the cycle beginning at the previous matching session
 opening through the current capture time. Manual, follow-up, and activation runs use the latest session
@@ -787,6 +787,9 @@ London review
 New York review
   09:30 America/New_York
   19:00 or 20:00 Asia/Kolkata depending on daylight saving time
+
+Midnight review
+  00:30 Asia/Kolkata
 ```
 
 Do not hardcode one permanent IST time for London and New York. Their daylight-saving changes must be converted from the session's local timezone.
@@ -865,7 +868,9 @@ Execute and monitor
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
 - Asia, London, and New York triggers use their local timezones, so daylight-saving changes convert correctly.
 - The daily `pre_expiry` review runs at 15:30 Asia/Kolkata, two hours before the 17:30 IST options expiry, including weekends. It shares the existing automation switch, per-user run lock, ten-minute lateness limit, and fixed-review follow-up boundaries. This is one daily review per enabled user, regardless of the number of positions or expiries held.
+- The daily `midnight_review` runs at 00:30 Asia/Kolkata, including weekends. It shares the same automation switch, run lock, lateness limit, and follow-up boundaries as the other fixed reviews.
 - Apply `017_pre_expiry_review.sql` before deploying the backend and news analyzer. It permits the new trigger and updates database follow-up boundaries. Scheduler synchronization creates the pending reviews without a separate cron job.
+- Apply `022_midnight_review.sql` before deploying the backend and news analyzer change that emits `midnight_review`.
 
 ## 13. Resolved defaults
 
@@ -875,7 +880,7 @@ Execute and monitor
 4. The default 50% account policy supports two reserved or active allocations. Other percentages derive their limit from the same rule.
 5. Every hold-to-expiry strategy starts with a five-minute buffer.
 6. Agent follow-ups require at least five minutes, must occur before the next fixed review, cannot chain, are limited to one between fixed reviews, and are limited to three per day.
-7. Fixed reviews are Asia, London, pre-expiry at 15:30 IST, and New York.
+7. Fixed reviews are Asia, London, pre-expiry at 15:30 IST, New York, and midnight at 00:30 IST.
 8. The AI chooses the strategy without user-configured signal thresholds.
 
 ## 14. Live execution responsibilities
