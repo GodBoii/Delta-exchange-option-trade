@@ -3,6 +3,14 @@ import { mutation } from "./_generated/server";
 import { get, ownerRows, parseRow, put, text, time, type Row } from "./runtimeRecords";
 import { authorizeTradingService } from "./tradingAuth";
 
+const fixedReviewTriggers = new Set([
+  "asia_session",
+  "london_session",
+  "new_york_session",
+  "pre_expiry",
+  "midnight_review",
+]);
+
 export function uuid() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, char => {
     const random = Math.floor(Math.random() * 16);
@@ -117,7 +125,11 @@ export const cancelRedundantFollowups = mutation({
     for (const item of pending) {
       const row = parseRow(item.rowJson);
       if (text(row, "trigger") !== "agent_follow_up") continue;
-      if (pending.some(other => other.owner === item.owner && ["asia_session", "london_session", "new_york_session", "pre_expiry"].includes(text(parseRow(other.rowJson), "trigger")) && other.time <= item.time)) {
+      const fixedReviewAlreadyFirst = pending.some(other => {
+        const trigger = text(parseRow(other.rowJson), "trigger");
+        return other.owner === item.owner && fixedReviewTriggers.has(trigger) && other.time <= item.time;
+      });
+      if (fixedReviewAlreadyFirst) {
         await put(ctx, "automation_agent_runs", { ...row, status: "cancelled", completed_at: new Date().toISOString(), error: "A fixed session review is already scheduled first" }, item); count++;
       }
     }
