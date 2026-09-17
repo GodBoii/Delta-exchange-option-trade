@@ -60,6 +60,7 @@ def test_fixed_sessions_follow_summer_timezones() -> None:
         ("london_session", datetime(2026, 8, 29, 7, 0, tzinfo=UTC)),
         ("pre_expiry", datetime(2026, 8, 29, 10, 0, tzinfo=UTC)),
         ("new_york_session", datetime(2026, 8, 29, 13, 30, tzinfo=UTC)),
+        ("midnight_review", datetime(2026, 8, 29, 19, 0, tzinfo=UTC)),
         ("asia_session", datetime(2026, 8, 30, 0, 0, tzinfo=UTC)),
     ]
 
@@ -73,6 +74,7 @@ def test_fixed_sessions_follow_winter_timezones() -> None:
         ("london_session", 8, 0),
         ("pre_expiry", 10, 0),
         ("new_york_session", 14, 30),
+        ("midnight_review", 19, 0),
     ]
 
 
@@ -83,6 +85,20 @@ def test_next_fixed_run_excludes_the_current_instant() -> None:
 
     assert fixed.trigger == "london_session"
     assert fixed.scheduled_for == datetime(2026, 8, 29, 7, 0, tzinfo=UTC)
+
+
+def test_midnight_review_runs_at_half_past_midnight_ist() -> None:
+    scheduled = datetime.fromisoformat("2026-08-30T00:30:00+05:30")
+
+    fixed = next_fixed_run(scheduled - timedelta(microseconds=1))
+
+    assert fixed.trigger == "midnight_review"
+    assert fixed.scheduled_for == datetime(2026, 8, 29, 19, 0, tzinfo=UTC)
+    assert fixed.run_key == "midnight_review:2026-08-30"
+    assert previous_fixed_run(scheduled + timedelta(microseconds=1)) == fixed
+    assert fixed_session_during_minute(scheduled + timedelta(seconds=59)) == fixed
+    assert fixed_session_during_minute(scheduled + timedelta(minutes=1)) is None
+    assert next_fixed_run(scheduled).trigger == "asia_session"
 
 
 @pytest.mark.parametrize("day", ["2026-03-08", "2026-03-29", "2026-09-12", "2026-11-01"])
@@ -155,6 +171,7 @@ async def test_scheduler_precreates_fixed_reviews_in_one_database_call() -> None
         "london_session",
         "new_york_session",
         "pre_expiry",
+        "midnight_review",
     }
     assert all(str(row["scheduled_for"]).endswith("Z") for row in database.payload)
     assert database.reconciled
