@@ -27,6 +27,7 @@ FIXED_SESSIONS = (
     # Delta daily options settle at 17:30 IST. Review two hours before settlement.
     FixedSession("pre_expiry", IST, time(15, 30)),
     FixedSession("new_york_session", ZoneInfo("America/New_York"), time(9, 30)),
+    FixedSession("midnight_review", IST, time(0, 30)),
 )
 
 
