@@ -28,7 +28,7 @@ test("strategy, proposal, recheck and terminal action commit together", async ()
   ]) await t.mutation(write, { secret: "trade", table, rowJson: JSON.stringify(row) });
   const at = Date.now() + 600000;
   const input = { secret: "research", userId: "owner", runId: "run", savedId: "saved", savedVersion: 1,
-    activation: new Date(at).toISOString(), recheck: new Date(at - 300000).toISOString(),
+    activation: new Date(at).toISOString(), recheck: new Date(at - 420000).toISOString(),
     expiry: new Date(at + 60000).toISOString(), exit: new Date(at + 3600000).toISOString(),
     definitionJson: JSON.stringify(definition), confidence: .7, reasoning: "Range", supporting: [], invalidation: [], snapshotId: "snapshot", newsId: null };
   await expect(t.mutation(schedule, { ...input, definitionJson: JSON.stringify({ ...definition, stopLossPercent: 50 }) })).rejects.toThrow("strategy-owned");
