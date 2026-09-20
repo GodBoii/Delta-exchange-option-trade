@@ -133,7 +133,8 @@ def test_market_tool_and_charts_exclude_delta():
     assert team._chart_artifacts({"deltaExecutionContext": {"openInterestHistory": [{"close": 1}] * 3}}) == []
 
 
-def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkeypatch):
+@pytest.mark.parametrize("decision", ["go", "inconclusive"])
+def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkeypatch, decision):
     captured = {}
     packet = {"source": "Binance Spot", "timeframes": {}}
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda: SimpleNamespace(
@@ -147,8 +148,7 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
     ])
     monkeypatch.setattr(team, "SupabaseChartStorage", lambda _: SimpleNamespace(upload_run_charts=lambda **_: charts))
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: "snapshot")
-    monkeypatch.setattr(team, "create_news_agent", lambda **_: pytest.fail("Recheck created a news agent"))
-    monkeypatch.setattr(team, "Team", lambda **_: pytest.fail("Recheck created a team"))
+    monkeypatch.setattr(team, "run_news_pipeline", lambda *_, **__: pytest.fail("Recheck researched news"))
 
     class Agent:
         def __init__(self, **kwargs):
@@ -156,10 +156,10 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
 
         def run(self, prompt, **kwargs):
             captured["input"] = kwargs
-            return RunOutput(content="## Decision\n\nGo.")
+            return RunOutput(content=team.RecheckAssessment(decision=decision, report="## Decision\n\nEvidence."))
 
     monkeypatch.setattr(team, "Agent", Agent)
-    result = team.run_activation_recheck(
+    kwargs = dict(
         settings=SimpleNamespace(automation_model_id="model", require_api_key=lambda: "test-key",
                                  require_database_url=lambda: "postgresql://unused"),
         user_id=USER_ID, agent_run_id=RUN_ID, session_id="test",
@@ -167,6 +167,13 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
                          "selectedStrategy": {"name": "Short strangle", "activationTime": ACTIVATION.isoformat()},
                          "originalSelection": {"finalResponse": "Exact original report"}},
     )
+    if decision == "inconclusive":
+        with pytest.raises(RuntimeError, match="did not explicitly confirm"):
+            team.run_activation_recheck(**kwargs)
+        return
+    result = team.run_activation_recheck(**kwargs)
+    assert captured["model"].reasoning_effort == "low"
+    assert captured["model"].timeout == 240
     assert "Exact original report" in captured["additional_context"]
     assert "Recheck chart instructions" in captured["additional_context"]
     assert len(captured["tools"]) == 1
