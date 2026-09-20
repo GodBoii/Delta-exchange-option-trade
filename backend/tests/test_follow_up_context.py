@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from agno.run.team import TeamRunOutput
+from agno.run.agent import RunOutput
 
 from automation_agent import team, tools
 
@@ -90,16 +90,18 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: SNAPSHOT)
     monkeypatch.setattr(team, "AutomationStrategyTools", lambda *_, **__: object())
     monkeypatch.setattr(team, "create_session_db", lambda *_, **__: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(team, "create_news_agent", lambda **_: object())
+    monkeypatch.setattr(team, "run_news_pipeline", lambda *_, **__: SimpleNamespace(
+        markdown="Current verified news", research_tools=["search_news", "build_news_dossier"],
+        report_response=RunOutput(content="Current verified news")))
 
-    class Team:
+    class Agent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-        def run(self, *_, **__):
-            return TeamRunOutput(content="## Decision\nNew decision.")
+        async def arun(self, *_, **__):
+            return RunOutput(content="## Decision\nNew decision.")
 
-    monkeypatch.setattr(team, "Team", Team)
+    monkeypatch.setattr(team, "Agent", Agent)
     account = {"activeStrategies": []}
     team.run_automation_team(
         settings=SimpleNamespace(automation_session_table="sessions", automation_model_id="model",
@@ -107,6 +109,8 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         user_id=USER, agent_run_id=CHILD, session_id="test", account_context=account,
         trigger="agent_follow_up", trigger_reason="Wait for confirmation", signals_to_inspect=["breakout"],
     )
+    assert captured["model"].reasoning_effort == "high"
+    assert "Current verified news" in captured["additional_context"]
     assert "Wait for confirmation" in captured["additional_context"]
     assert "Main chart instructions" in captured["additional_context"]
     assert "breakout" in captured["additional_context"]
