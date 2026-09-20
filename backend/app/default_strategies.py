@@ -8,13 +8,6 @@ from .models import StrategyDefinition
 
 IST = ZoneInfo("Asia/Kolkata")
 
-BUILTIN_RISK_CONTROL_OVERRIDES: dict[str, dict[str, int]] = {
-    "Short strangle": {
-        "takeProfitPercent": 90,
-        "emergencyStopLossPercent": 170,
-    },
-}
-
 
 def _schedule(now: datetime) -> tuple[str, str]:
     local_now = now.astimezone(IST)
@@ -85,9 +78,9 @@ def _base(
         "riskMode": risk_mode,
         "riskBasis": risk_basis,
         "stopLossPercent": 100,
-        "takeProfitPercent": 50,
+        "takeProfitPercent": 90,
         "combinedStopLossPercent": 100 if risk_mode == "combined_premium" else None,
-        "emergencyStopLossPercent": 300 if risk_basis != "net_debit" else None,
+        "emergencyStopLossPercent": 170 if risk_basis != "net_debit" else None,
         "emergencyExitEnabled": True,
         "trailToBreakEven": False,
         "breakEvenScope": "all_legs",
@@ -353,8 +346,5 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
                 "legs": [{**leg, "expiry": _fallback_expiry(now, "next_day")} for leg in source["legs"]],
             }
         )
-
-    for definition in definitions:
-        definition.update(BUILTIN_RISK_CONTROL_OVERRIDES.get(definition["name"], {}))
 
     return [StrategyDefinition.model_validate(definition) for definition in definitions]
