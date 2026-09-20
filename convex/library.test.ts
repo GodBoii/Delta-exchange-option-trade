@@ -10,6 +10,7 @@ const remove = makeFunctionReference<"mutation">("library:remove");
 const list = makeFunctionReference<"query">("library:list");
 const get = makeFunctionReference<"query">("library:serverGet");
 const updateDefault = makeFunctionReference<"mutation">("library:serverUpdateDefault");
+const retireDefault = makeFunctionReference<"mutation">("library:serverRetireDefault");
 const importRows = makeFunctionReference<"mutation">("library:importStrategies");
 const id = "11111111-1111-4111-8111-111111111111";
 const definition = JSON.stringify({ name: "Test strategy", enabledForAi: true, legs: [{ id: "call" }] });
@@ -100,4 +101,37 @@ test("service updates one default definition with optimistic locking", async () 
     }),
     expectedVersion: 7,
   })).rejects.toThrow("changed");
+});
+
+test("service retires a default without deleting its stored definition", async () => {
+  const t = convexTest(schema, modules);
+  const record = {
+    id,
+    user_id: null,
+    name: draft.name,
+    definitionJson: definition,
+    source_run_id: null,
+    version: 4,
+    enabled_for_ai: true,
+    created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-01T00:00:00Z",
+    deleted: false,
+  };
+  await t.run(async ctx => {
+    await ctx.db.insert("savedStrategies", record);
+  });
+
+  const retired = await t.mutation(retireDefault, {
+    secret: "secret",
+    id,
+    expectedVersion: 4,
+  });
+
+  expect(retired.deleted).toBe(true);
+  expect(retired.enabled_for_ai).toBe(false);
+  expect(retired.version).toBe(5);
+  expect(await t.query(get, { secret: "secret", userId: "owner", id })).toBeNull();
+  const stored = await t.run(async ctx => ctx.db.query("savedStrategies")
+    .withIndex("by_external_id", q => q.eq("id", id)).unique());
+  expect(stored?.definitionJson).toBe(definition);
 });
