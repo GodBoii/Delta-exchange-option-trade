@@ -1,62 +1,18 @@
 from __future__ import annotations
 
 import logging
-import time
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.models.openrouter import OpenRouter
-from agno.tools.websearch import WebSearchTools as AgnoWebSearchTools
 
+from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
+from .search import WebSearchTools
 from .tools import NewsResearchTools
 
 logger = logging.getLogger(__name__)
-
-
-class WebSearchTools(AgnoWebSearchTools):
-    """Agno web search without local time or result-count caps."""
-
-    def web_search(self, query: str, max_results: int | None = None) -> str:
-        """Search the web, returning all results unless the caller requests a count."""
-        started_at = time.perf_counter()
-        logger.debug("tool.web_search start query=%r max_results=%s", query, max_results)
-        try:
-            result = super().web_search(query, max_results=max_results)  # type: ignore[arg-type]
-            logger.debug(
-                "tool.web_search complete elapsed_ms=%d result_chars=%d",
-                round((time.perf_counter() - started_at) * 1_000),
-                len(result),
-            )
-            return result
-        except Exception:
-            logger.exception(
-                "tool.web_search failed elapsed_ms=%d query=%r",
-                round((time.perf_counter() - started_at) * 1_000),
-                query,
-            )
-            raise
-
-    def search_news(self, query: str, max_results: int | None = None) -> str:
-        """Search news, returning all results unless the caller requests a count."""
-        started_at = time.perf_counter()
-        logger.debug("tool.search_news start query=%r max_results=%s", query, max_results)
-        try:
-            result = super().search_news(query, max_results=max_results)  # type: ignore[arg-type]
-            logger.debug(
-                "tool.search_news complete elapsed_ms=%d result_chars=%d",
-                round((time.perf_counter() - started_at) * 1_000),
-                len(result),
-            )
-            return result
-        except Exception:
-            logger.exception(
-                "tool.search_news failed elapsed_ms=%d query=%r",
-                round((time.perf_counter() - started_at) * 1_000),
-                query,
-            )
-            raise
 
 
 def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRouter:
@@ -65,14 +21,17 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRou
         id=settings.model_id,
         api_key=api_key,
         supports_native_structured_outputs=False,
-        reasoning_effort="xhigh",
-        max_tokens=None,
+        reasoning_effort="low",
+        timeout=90,
+        max_retries=0,
+        max_tokens=6000,
         max_completion_tokens=None,
     )
 
 
 def _create_research_tools(settings: NewsAgentSettings) -> list:
-    return [WebSearchTools(timeout=None, fixed_max_results=None), NewsResearchTools(settings)]
+    budget = ResearchBudget()
+    return [WebSearchTools(budget), NewsResearchTools(settings, budget)]
 
 
 def create_news_agent(
@@ -160,10 +119,10 @@ def create_news_agent(
         db=session_db,
         add_history_to_context=True,
         num_history_runs=settings.history_runs,
-        max_tool_calls_from_history=None,
+        max_tool_calls_from_history=0,
         store_events=True,
         tools=tools,
-        tool_call_limit=None,
+        tool_call_limit=40,
         add_datetime_to_context=True,
         timezone_identifier="UTC",
         debug_mode=debug_mode,
