@@ -9,6 +9,7 @@ const save = makeFunctionReference<"mutation">("library:save");
 const remove = makeFunctionReference<"mutation">("library:remove");
 const list = makeFunctionReference<"query">("library:list");
 const get = makeFunctionReference<"query">("library:serverGet");
+const updateDefault = makeFunctionReference<"mutation">("library:serverUpdateDefault");
 const importRows = makeFunctionReference<"mutation">("library:importStrategies");
 const id = "11111111-1111-4111-8111-111111111111";
 const definition = JSON.stringify({ name: "Test strategy", enabledForAi: true, legs: [{ id: "call" }] });
@@ -50,4 +51,53 @@ test("import preserves old identities and refuses to overwrite changes", async (
   expect((await t.withIdentity({ subject: "owner" }).query(list, {
     defaults: true, paginationOpts: { numItems: 100, cursor: null },
   })).page[0]).toMatchObject(record);
+});
+
+test("service updates one default definition with optimistic locking", async () => {
+  const t = convexTest(schema, modules);
+  const record = {
+    id,
+    user_id: null,
+    name: draft.name,
+    definitionJson: definition,
+    source_run_id: null,
+    version: 7,
+    enabled_for_ai: true,
+    created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-01T00:00:00Z",
+    deleted: false,
+  };
+  await t.run(async ctx => {
+    await ctx.db.insert("savedStrategies", record);
+  });
+  const changedDefinition = JSON.stringify({
+    name: draft.name,
+    enabledForAi: true,
+    legs: [{ id: "call" }],
+    takeProfitPercent: 90,
+    emergencyStopLossPercent: 170,
+  });
+
+  const updated = await t.mutation(updateDefault, {
+    secret: "secret",
+    id,
+    definitionJson: changedDefinition,
+    expectedVersion: 7,
+  });
+
+  expect(updated.name).toBe(draft.name);
+  expect(updated.version).toBe(8);
+  expect(updated.definitionJson).toBe(changedDefinition);
+  await expect(t.mutation(updateDefault, {
+    secret: "secret",
+    id,
+    definitionJson: JSON.stringify({
+      name: draft.name,
+      enabledForAi: true,
+      legs: [{ id: "call" }],
+      takeProfitPercent: 80,
+      emergencyStopLossPercent: 170,
+    }),
+    expectedVersion: 7,
+  })).rejects.toThrow("changed");
 });
