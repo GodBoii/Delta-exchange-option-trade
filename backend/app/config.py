@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
     automation_scheduler_enabled: bool = True
+    automation_analysis_concurrency: int = Field(default=3, ge=1, le=32)
+    automation_recheck_concurrency: int = Field(default=4, ge=1, le=32)
     scheduler_poll_seconds: float = 2.0
     max_entry_lateness_seconds: int = 180
     exit_verify_timeout_seconds: float = 10.0
