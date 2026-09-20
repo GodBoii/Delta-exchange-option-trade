@@ -164,12 +164,12 @@ profit = entry credit - current close cost
 take profit triggers when profit >= entry credit × takeProfitPercent
 ```
 
-Example with 50% take profit:
+Example with 90% take profit:
 
 ```text
 entry credit = 200
-target profit = 100
-target close cost = 100
+target profit = 180
+target close cost = 20
 ```
 
 ### Take profit for debit strategies
@@ -179,15 +179,15 @@ profit = current liquidation value - entry debit
 take profit triggers when profit >= entry debit × takeProfitPercent
 ```
 
-Example with 50% take profit:
+Example with 90% take profit:
 
 ```text
 entry debit = 200
-target profit = 100
-target liquidation value = 300
+target profit = 180
+target liquidation value = 380
 ```
 
-The initial default may be 50%, but Strategy Builder must store it as a user-controlled parameter. Historical results may support different values for different strategies.
+The built-in default is 90%, but Strategy Builder stores it as a user-controlled parameter. Historical results may use different values.
 
 ## 6. Strategy explanations and builder definitions
 
@@ -217,7 +217,7 @@ holding mode: user selected
 expiry policy: user selected
 risk basis: net_debit
 stop loss: debit percentage, maximum 100%
-take profit: debit-return percentage
+take profit: 90% of entry debit
 allocation: account capital policy
 lots: auto
 square-off: complete
@@ -264,7 +264,7 @@ holding mode: user selected
 expiry policy: user selected
 risk basis: net_debit
 stop loss: debit percentage, maximum 100%
-take profit: debit-return percentage
+take profit: 90% of entry debit
 allocation: account capital policy
 lots: auto
 square-off: complete
@@ -307,7 +307,7 @@ holding mode: user selected
 expiry policy: user selected
 risk basis: net_debit
 stop loss: combined debit percentage, maximum 100%
-take profit: combined debit-return percentage
+take profit: 90% of combined entry debit
 allocation: account capital policy
 lots: auto and equal for both legs
 square-off: complete
@@ -356,7 +356,7 @@ holding mode: user selected
 expiry policy: user selected
 risk basis: net_debit
 stop loss: combined debit percentage, maximum 100%
-take profit: combined debit-return percentage
+take profit: 90% of combined entry debit
 allocation: account capital policy
 lots: auto and equal for both legs
 square-off: complete
@@ -405,7 +405,8 @@ expiry policy: same_day
 exit buffer: 5 minutes
 risk basis: net_credit
 combined stop loss: 100% of entry credit
-take profit: percentage of entry credit
+take profit: 90% of entry credit
+emergency stop loss: 170% loss per short leg, hosted by Delta Exchange
 allocation: account capital policy
 lots: auto and equal for both legs
 square-off: complete
