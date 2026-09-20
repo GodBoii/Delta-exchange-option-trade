@@ -84,14 +84,34 @@ export const claimAgent = mutation({
   args: { secret: v.string(), p_user_id: v.string(), p_run_id: v.string() },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
-    const running = await ctx.db.query("automation_agent_runs")
-      .withIndex("by_owner_status_created", q => q.eq("owner", args.p_user_id).eq("status", "running")).first();
-    if (running) return [];
     const run = await get(ctx, "automation_agent_runs", args.p_run_id);
     if (!run || run.owner !== args.p_user_id || run.status !== "scheduled") return [];
     const row = { ...parseRow(run.rowJson), status: "running", started_at: new Date().toISOString(), error: null };
     await put(ctx, "automation_agent_runs", row, run);
     return [row];
+  },
+});
+
+// Deployment migration for pending schedules. Running/near-entry rechecks are left intact.
+export const reschedulePendingRechecks = mutation({
+  args: { secret: v.string(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    const page = await ctx.db.query("automation_agent_runs")
+      .withIndex("by_status_time", q => q.eq("status", "scheduled"))
+      .paginate({ numItems: 100, cursor: args.cursor });
+    let updated = 0;
+    for (const run of page.page) {
+      const row = parseRow(run.rowJson);
+      if (row.trigger !== "activation_recheck") continue;
+      const proposal = await get(ctx, "strategy_proposals", text(row, "strategy_proposal_id"));
+      if (!proposal || proposal.owner !== run.owner) continue;
+      const target = time(parseRow(proposal.rowJson).activation_time) - 420000;
+      if (!Number.isFinite(target) || target <= Date.now() || run.time === target) continue;
+      await put(ctx, "automation_agent_runs", { ...row, scheduled_for: new Date(target).toISOString() }, run);
+      updated += 1;
+    }
+    return { updated, cursor: page.continueCursor, isDone: page.isDone };
   },
 });
 
