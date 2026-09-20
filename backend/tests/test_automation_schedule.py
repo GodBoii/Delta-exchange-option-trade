@@ -296,3 +296,46 @@ async def test_committed_outcome_survives_provider_timeout(monkeypatch) -> None:
 
     assert payload["outcome"] == "wait_and_run_again"
     assert any(update.get("status") == "completed" for update in database.updates)
+
+
+@pytest.mark.asyncio
+async def test_rechecks_have_capacity_while_all_analysis_slots_are_busy(monkeypatch):
+    due = [{"id": f"recheck-{i}", "user_id": "user-1", "trigger": "activation_recheck",
+            "scheduled_for": utc_text(datetime.now(UTC))} for i in range(2)]
+    claimed = []
+
+    class Database:
+        async def select(self, table, params):
+            if table == "automation_settings":
+                return [{"user_id": "user-1"}]
+            assert params["trigger"] == "eq.activation_recheck"
+            return due
+
+        async def update(self, *_):
+            return []
+
+        async def rpc(self, _, params):
+            claimed.append(params["p_run_id"])
+            return [next(row for row in due if row["id"] == params["p_run_id"])]
+
+    async def ready():
+        return None
+
+    async def execute(_):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(automation, "require_analyzer_ready", ready)
+    scheduler = AutomationScheduler(Database(), object())
+    scheduler._execute = execute
+    busy = [asyncio.create_task(asyncio.sleep(30)) for _ in range(automation.MAX_PARALLEL_AUTOMATION_RUNS)]
+    scheduler.running_tasks.update(busy)
+    try:
+        await scheduler._process_due_runs()
+        assert claimed == ["recheck-0", "recheck-1"]
+        assert len(scheduler.recheck_tasks) == 2
+        assert len(scheduler.running_tasks) == len(busy) + 2
+    finally:
+        tasks = list(scheduler.running_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
