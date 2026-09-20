@@ -170,6 +170,24 @@ def test_combined_premium_100_percent_triggers_at_twice_entry_credit():
     assert metrics["stop_value"] == Decimal("400")
 
 
+def test_credit_take_profit_90_percent_triggers_at_ten_percent_close_cost():
+    metrics = strategy_level_metrics(
+        [
+            {"side": "sell", "filled_size": 1, "entry_price": 120, "mark_price": 12, "contract_value": 1},
+            {"side": "sell", "filled_size": 1, "entry_price": 80, "mark_price": 8, "contract_value": 1},
+        ],
+        risk_basis="net_credit",
+        stop_percent=Decimal("100"),
+        take_profit_percent=Decimal("90"),
+    )
+
+    assert metrics["entry_value"] == Decimal("200")
+    assert metrics["current_value"] == Decimal("20")
+    assert metrics["profit"] == Decimal("180")
+    assert metrics["target_value"] == Decimal("20")
+    assert metrics["target_triggered"] is True
+
+
 def test_default_library_contains_the_thirteen_approved_strategies():
     definitions = default_strategy_definitions(datetime(2026, 8, 25, 8, tzinfo=UTC))
 
