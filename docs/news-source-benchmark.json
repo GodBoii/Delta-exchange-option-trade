@@ -1,0 +1,155 @@
+{
+  "measured_at": "2026-09-20T22:16:12.570537+00:00",
+  "search_ms": 1062,
+  "url_count": 15,
+  "duplicate_groups": [],
+  "measurements": [
+    {
+      "url": "https://beincrypto.com/bitcoin-80000-treasury-general-account-buybacks/",
+      "ok": false,
+      "elapsed_ms": 623,
+      "error": "Client error '403 Forbidden' for url 'https://beincrypto.com/bitcoin-80000-treasury-general-account-buybacks/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://bitcoinmagazine.com/markets/bitcoin-nears-80000-after-etf-action",
+      "ok": false,
+      "elapsed_ms": 359,
+      "error": "Client error '403 Forbidden' for url 'https://bitcoinmagazine.com/markets/bitcoin-nears-80000-after-etf-action'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://blockonomi.com/bitcoin-btc-price-sharp-rally-runs-on-less-leverage-not-more-top-analysts-say204139-2/",
+      "ok": false,
+      "elapsed_ms": 357,
+      "error": "ConnectError",
+      "error_type": "ConnectError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://blockonomi.com/massive-crypto-short-squeeze-wipes-out-4-billion-in-leveraged-positions/",
+      "ok": false,
+      "elapsed_ms": 357,
+      "error": "ConnectError",
+      "error_type": "ConnectError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://br.investing.com/crypto/bitcoin/btc-usd",
+      "ok": false,
+      "elapsed_ms": 691,
+      "error": "Client error '403 Forbidden' for url 'https://br.investing.com/crypto/bitcoin/btc-usd'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://finance.yahoo.com/markets/crypto/articles/70-binance-altcoins-recover-altcoin-113139914.html",
+      "ok": true,
+      "bytes": 1007264,
+      "fetch_ms": 1345,
+      "parse_ms": 158,
+      "serialize_ms": 0.04,
+      "result_chars": 4562,
+      "title": "70% of Binance Altcoins Recover But Altcoin Season Index Tells Another Story",
+      "text_chars": 2972
+    },
+    {
+      "url": "https://finance.yahoo.com/markets/crypto/articles/cryptos-weekend-drop-preview-monday-085931113.html",
+      "ok": true,
+      "bytes": 1074187,
+      "fetch_ms": 1583,
+      "parse_ms": 167,
+      "serialize_ms": 0.04,
+      "result_chars": 4941,
+      "title": "Is Crypto's Weekend Drop a Preview of Monday? Houthis Target Riyadh, Trump Weighs Iran",
+      "text_chars": 3356
+    },
+    {
+      "url": "https://finance.yahoo.com/markets/crypto/articles/september-bitcoin-worst-month-2-004624196.html",
+      "ok": true,
+      "bytes": 1035794,
+      "fetch_ms": 1155,
+      "parse_ms": 216,
+      "serialize_ms": 0.12,
+      "result_chars": 8767,
+      "title": "September Is Bitcoin\u2019s Worst Month and It\u2019s Up 2.7% So Far. What That Says About Q4",
+      "text_chars": 6832
+    },
+    {
+      "url": "https://finance.yahoo.com/markets/crypto/articles/wintermute-boosts-crypto-shorts-191m-111806738.html",
+      "ok": true,
+      "bytes": 1032130,
+      "fetch_ms": 1193,
+      "parse_ms": 106,
+      "serialize_ms": 0.05,
+      "result_chars": 6064,
+      "title": "Wintermute Boosts Crypto Shorts to $191M as It Moves Millions to Binance",
+      "text_chars": 4412
+    },
+    {
+      "url": "https://financefeeds.com/bitcoin-etfs-absorb-1-9-billion/",
+      "ok": false,
+      "bytes": 224316,
+      "fetch_ms": 2724,
+      "parse_ms": 44,
+      "serialize_ms": 0.02,
+      "result_chars": 1122,
+      "title": "Bitcoin ETFs Absorb $1.9 Billion in Their Best Week Since October",
+      "text_chars": 68
+    },
+    {
+      "url": "https://investor.id/market/454823/ditempa-beberapa-sentimen-ini-arah-gerak-bitcoin-btc-selanjutnya",
+      "ok": false,
+      "elapsed_ms": 623,
+      "error": "Client error '403 Forbidden' for url 'https://investor.id/market/454823/ditempa-beberapa-sentimen-ini-arah-gerak-bitcoin-btc-selanjutnya'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://invezz.com/news/2026/08/24/why-is-bitcoin-price-stuck-below-80k-after-its-explosive-rally/",
+      "ok": false,
+      "elapsed_ms": 341,
+      "error": "Client error '403 Forbidden' for url 'https://invezz.com/news/2026/08/24/why-is-bitcoin-price-stuck-below-80k-after-its-explosive-rally/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://www.benzinga.com/markets/equities/26/08/61375782/stock-market-today-sp-500-nasdaq-100-futures-slip-ahead-of-data-heavy-week-nvidia-earnings-and-jackson-hole-baba-pmi-birk-in-focus",
+      "ok": false,
+      "elapsed_ms": 456,
+      "error": "Client error '403 Forbidden' for url 'https://www.benzinga.com/markets/equities/26/08/61375782/stock-market-today-sp-500-nasdaq-100-futures-slip-ahead-of-data-heavy-week-nvidia-earnings-and-jackson-hole-baba-pmi-birk-in-focus'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    },
+    {
+      "url": "https://www.msn.com/en-us/money/general/bond-market-anxiety-raises-stakes-for-warsh-s-debut-jackson-hole-speech/ar-AA2aOkgr",
+      "ok": false,
+      "bytes": 43003,
+      "fetch_ms": 616,
+      "parse_ms": 3,
+      "serialize_ms": 0.02,
+      "result_chars": 310,
+      "title": "MSN",
+      "text_chars": 0
+    },
+    {
+      "url": "https://www.thestreet.com/crypto/markets/bitcoin-nears-80000-as-etf-inflows-hit-a-10-month-high",
+      "ok": false,
+      "elapsed_ms": 294,
+      "error": "Client error '403 Forbidden' for url 'https://www.thestreet.com/crypto/markets/bitcoin-nears-80000-as-etf-inflows-hit-a-10-month-high'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "error_type": "HTTPStatusError",
+      "title": null,
+      "text_chars": 0
+    }
+  ]
+}
