@@ -32,6 +32,7 @@ AUTOMATION_ANALYSIS_TIMEOUT_SECONDS = 45 * 60
 # Allow account-context collection and result persistence around the HTTP request.
 MAX_AUTOMATION_RUN_RUNTIME = timedelta(seconds=AUTOMATION_ANALYSIS_TIMEOUT_SECONDS, minutes=5)
 MAX_PARALLEL_AUTOMATION_RUNS = 3
+MAX_PARALLEL_RECHECK_RUNS = 4
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
@@ -263,7 +264,8 @@ async def execute_automation_run(
     strategy_proposal_id: str | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    timeout_seconds = 120 if trigger == "activation_recheck" else AUTOMATION_ANALYSIS_TIMEOUT_SECONDS
+    # The service stops recheck execution at 300s; allow its cleanup/error response to arrive.
+    timeout_seconds = 310 if trigger == "activation_recheck" else AUTOMATION_ANALYSIS_TIMEOUT_SECONDS
     try:
         if trigger == "activation_recheck":
             if not strategy_proposal_id:
@@ -610,10 +612,10 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     if not claimed:
         await db.update(
             "automation_agent_runs",
-            {"status": "cancelled", "completed_at": iso_now(), "error": "Another automation run is active"},
+            {"status": "cancelled", "completed_at": iso_now(), "error": "The analysis run could not be claimed"},
             {"id": f"eq.{run_id}", "status": "eq.scheduled"},
         )
-        raise AppError(409, "Another automation run is already active", "automation_run_active")
+        raise AppError(409, "The analysis run is no longer available to start", "automation_run_unavailable")
     payload = await execute_automation_run(
         db=db,
         engine=engine,
@@ -634,6 +636,10 @@ class AutomationScheduler:
         self.stop_event = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
         self.running_tasks: set[asyncio.Task[None]] = set()
+        self.recheck_tasks: set[asyncio.Task[None]] = set()
+        settings = getattr(db, "settings", None)
+        self.analysis_concurrency = getattr(settings, "automation_analysis_concurrency", MAX_PARALLEL_AUTOMATION_RUNS)
+        self.recheck_concurrency = getattr(settings, "automation_recheck_concurrency", MAX_PARALLEL_RECHECK_RUNS)
         self.last_fixed_sync = 0.0
         self.recovered = not getattr(getattr(db, "settings", None), "convex_runtime_enabled", False)
 
@@ -734,8 +740,9 @@ class AutomationScheduler:
             {"status": "failed", "completed_at": iso_now(), "error": "Automation run exceeded its time limit"},
             {"status": "eq.running", "started_at": f"lt.{stale_before}"},
         )
-        available = MAX_PARALLEL_AUTOMATION_RUNS - len(self.running_tasks)
-        if available <= 0:
+        analysis_available = self.analysis_concurrency - len(self.running_tasks - self.recheck_tasks)
+        recheck_available = self.recheck_concurrency - len(self.recheck_tasks)
+        if analysis_available <= 0 and recheck_available <= 0:
             return
         enabled_rows = await self.db.select(
             "automation_settings",
@@ -747,22 +754,37 @@ class AutomationScheduler:
             return
         if shared_enabled(getattr(self.db, "settings", None)):
             enabled_users = {SHARED_USER_ID}
-        due = await self.db.select(
-            "automation_agent_runs",
-            {
-                "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id",
-                "status": "eq.scheduled",
-                **({"user_id": f"eq.{SHARED_USER_ID}"} if shared_enabled(getattr(self.db, "settings", None)) else {}),
-                "scheduled_for": f"lte.{iso_now()}",
-                "order": "scheduled_for.asc",
-                "limit": str(max(12, available * 4)),
-            },
-        )
+        due = []
+        for trigger_filter, capacity in (
+            ("eq.activation_recheck", recheck_available),
+            ("neq.activation_recheck", analysis_available),
+        ):
+            if capacity <= 0:
+                continue
+            due.extend(
+                await self.db.select(
+                    "automation_agent_runs",
+                    {
+                        "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id",
+                        "status": "eq.scheduled",
+                        "trigger": trigger_filter,
+                        **(
+                            {"user_id": f"eq.{SHARED_USER_ID}"}
+                            if shared_enabled(getattr(self.db, "settings", None))
+                            else {}
+                        ),
+                        "scheduled_for": f"lte.{iso_now()}",
+                        "order": "scheduled_for.asc",
+                        "limit": str(max(12, capacity * 4)),
+                    },
+                )
+            )
         now = datetime.now(UTC)
         analyzer_ready = False
         for row in due:
-            if available <= 0:
-                break
+            is_recheck = row["trigger"] == "activation_recheck"
+            if (recheck_available if is_recheck else analysis_available) <= 0:
+                continue
             if str(row["user_id"]) not in enabled_users:
                 continue
             scheduled_for = datetime.fromisoformat(str(row["scheduled_for"]).replace("Z", "+00:00"))
@@ -789,7 +811,12 @@ class AutomationScheduler:
             task = asyncio.create_task(self._execute(claimed[0]), name=f"automation-run-{row['id']}")
             self.running_tasks.add(task)
             task.add_done_callback(self.running_tasks.discard)
-            available -= 1
+            if is_recheck:
+                self.recheck_tasks.add(task)
+                task.add_done_callback(self.recheck_tasks.discard)
+                recheck_available -= 1
+            else:
+                analysis_available -= 1
 
     async def _allocate_shared_decisions(self) -> None:
         pending = await self.db.runtime.data.request("sharedAnalysis:pendingAllocations", {})
