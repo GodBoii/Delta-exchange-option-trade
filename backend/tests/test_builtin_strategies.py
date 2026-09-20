@@ -30,6 +30,20 @@ CHAIN = [
 ]
 
 
+def test_short_strangle_has_requested_risk_controls_without_renaming_other_templates():
+    by_name = {definition.name: definition for definition in DEFINITIONS}
+
+    short_strangle = by_name["Short strangle"]
+    assert short_strangle.takeProfitPercent == 90
+    assert short_strangle.combinedStopLossPercent == 100
+    assert short_strangle.emergencyStopLossPercent == 170
+
+    next_day = by_name["Short strangle - next-day expiry"]
+    assert next_day.takeProfitPercent == 50
+    assert next_day.combinedStopLossPercent == 100
+    assert next_day.emergencyStopLossPercent == 300
+
+
 @pytest.mark.parametrize("definition", ADDED, ids=lambda definition: definition.name)
 def test_new_templates_have_no_hedge_legs_and_resolve_after_daily_expiry(definition):
     assert len({leg.position for leg in definition.legs}) == 1
@@ -110,7 +124,10 @@ async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definiti
         assert order["size"] >= 1
         assert order["reduce_only"] is False
         if order["side"] == "sell":
-            assert Decimal(order["bracket_stop_loss_price"]) == Decimal("400")
+            expected_stop = Decimal("100") * (
+                Decimal("1") + Decimal(str(definition.emergencyStopLossPercent)) / Decimal("100")
+            )
+            assert Decimal(order["bracket_stop_loss_price"]) == expected_stop
             assert order["bracket_stop_trigger_method"] == "mark_price"
         else:
             assert "bracket_stop_loss_price" not in order
