@@ -87,6 +87,36 @@ export const serverGet = query({
   },
 });
 
+export const serverUpdateDefault = mutation({
+  args: {
+    secret: v.string(),
+    id: v.string(),
+    definitionJson: v.string(),
+    expectedVersion: v.number(),
+  },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    const existing = await ctx.db.query("savedStrategies")
+      .withIndex("by_external_id", q => q.eq("id", args.id))
+      .unique();
+    if (!existing || existing.deleted || existing.user_id !== null) {
+      throw new ConvexError("Default strategy unavailable");
+    }
+    validateDefinition(existing.name, args.definitionJson, existing.enabled_for_ai);
+    if (existing.definitionJson === args.definitionJson) return existing;
+    if (existing.version !== args.expectedVersion) {
+      throw new ConvexError("Default strategy changed. Reload before updating.");
+    }
+    const update = {
+      definitionJson: args.definitionJson,
+      version: existing.version + 1,
+      updated_at: new Date().toISOString(),
+    };
+    await ctx.db.patch(existing._id, update);
+    return { ...existing, ...update };
+  },
+});
+
 export const getCapital = query({
   args: { secret: v.string(), userId: v.string() },
   handler: async (ctx, args) => {
