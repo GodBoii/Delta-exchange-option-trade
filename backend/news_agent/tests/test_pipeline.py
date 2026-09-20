@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from agno.db.in_memory import InMemoryDb
 from agno.run.agent import RunOutput
 
@@ -38,13 +39,10 @@ def test_pipeline_returns_native_markdown(monkeypatch) -> None:
     assert "https://example.com/btc" in analyst.calls[0]["prompt"]
 
 
-def test_pipeline_retries_empty_synthesis_once(monkeypatch) -> None:
-    analyst = FakeAgent([RunOutput(content=""), RunOutput(content="## Completed\n\nUncertainty remains.")])
+def test_pipeline_does_not_repeat_empty_model_inference(monkeypatch) -> None:
+    analyst = FakeAgent([RunOutput(content="")])
     monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
     monkeypatch.setattr("news_agent.pipeline._collect_live_news_context", _research_context)
-
-    result = run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice", db=InMemoryDb())
-
-    assert result.markdown == "## Completed\n\nUncertainty remains."
-    assert len(analyst.calls) == 2
-    assert "previous response was empty" in analyst.calls[1]["prompt"]
+    with pytest.raises(RuntimeError, match="no report"):
+        run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice", db=InMemoryDb())
+    assert len(analyst.calls) == 1
