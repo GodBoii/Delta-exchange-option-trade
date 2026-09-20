@@ -16,12 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from automation_agent.team import run_activation_recheck, run_automation_team
 from automation_agent.tools import confirm_activation_recheck, read_automation_state
-from news_agent.config import NewsAgentSettings
+from news_agent.config import NEWS_TIMEOUT_SECONDS, RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
 from news_agent.pipeline import run_news_pipeline
+from news_analyzer.worker import run_in_worker
 
-LOG_LEVEL_NAME = os.getenv("NEWS_LOG_LEVEL", "DEBUG").upper()
-LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.DEBUG)
+LOG_LEVEL_NAME = os.getenv("NEWS_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
 
 def _configure_logging() -> None:
@@ -304,7 +305,7 @@ def _run_analysis(body: NewsAnalysisRequest, trace_id: str = "untracked") -> dic
             session_id=stored_session_id,
             user_id=body.userId,
             db=db,
-            debug_mode=True,
+            debug_mode=False,
         )
         if result.markdown is None:
             logger.error(
@@ -595,7 +596,14 @@ async def analyze_news(body: NewsAnalysisRequest, request: Request) -> dict[str,
             "News analysis is temporarily unavailable",
             "news_database_not_configured",
         )
-    return await asyncio.to_thread(_run_analysis, body, request.state.trace_id)
+    try:
+        return await asyncio.to_thread(
+            run_in_worker, _run_analysis, body, request.state.trace_id, timeout_seconds=NEWS_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise ServiceError(504, str(exc), "news_analysis_timeout") from exc
+    except RuntimeError as exc:
+        raise ServiceError(502, "News analysis could not be completed", "news_agent_failed") from exc
 
 
 @app.post("/v1/automation/analyze")
@@ -604,4 +612,12 @@ async def analyze_automation(body: AutomationAnalysisRequest, request: Request) 
         raise ServiceError(503, "Automation analysis is temporarily unavailable", "automation_agent_not_configured")
     if not settings.supabase_db_url:
         raise ServiceError(503, "Automation storage is temporarily unavailable", "automation_database_not_configured")
-    return await asyncio.to_thread(_run_automation_analysis, body, request.state.trace_id)
+    try:
+        return await asyncio.to_thread(
+            run_in_worker, _run_automation_analysis, body, request.state.trace_id,
+            timeout_seconds=RECHECK_TIMEOUT_SECONDS if body.trigger == "activation_recheck" else 45 * 60,
+        )
+    except TimeoutError as exc:
+        raise ServiceError(504, str(exc), "automation_analysis_timeout") from exc
+    except RuntimeError as exc:
+        raise ServiceError(502, "Automation analysis could not be completed", "automation_agent_failed") from exc
