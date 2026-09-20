@@ -30,18 +30,13 @@ CHAIN = [
 ]
 
 
-def test_short_strangle_has_requested_risk_controls_without_renaming_other_templates():
-    by_name = {definition.name: definition for definition in DEFINITIONS}
-
-    short_strangle = by_name["Short strangle"]
-    assert short_strangle.takeProfitPercent == 90
-    assert short_strangle.combinedStopLossPercent == 100
-    assert short_strangle.emergencyStopLossPercent == 170
-
-    next_day = by_name["Short strangle - next-day expiry"]
-    assert next_day.takeProfitPercent == 50
-    assert next_day.combinedStopLossPercent == 100
-    assert next_day.emergencyStopLossPercent == 300
+def test_builtin_risk_controls_apply_to_every_compatible_template():
+    assert all(definition.takeProfitPercent == 90 for definition in DEFINITIONS)
+    for definition in DEFINITIONS:
+        has_short_leg = any(leg.position == "sell" for leg in definition.legs)
+        assert definition.emergencyStopLossPercent == (170 if has_short_leg else None)
+        if definition.riskMode == "combined_premium":
+            assert definition.combinedStopLossPercent == 100
 
 
 @pytest.mark.parametrize("definition", ADDED, ids=lambda definition: definition.name)
@@ -159,9 +154,9 @@ async def test_new_templates_trigger_the_existing_monitor(definition, exit_reaso
     if definition.riskBasis == "net_debit":
         copy = definition.model_copy(update={"stopLossPercent": 50})
         database.row["definition_json"] = copy.model_dump(mode="json")
-        mark = "50" if exit_reason == "stop_loss" else "150"
+        mark = "50" if exit_reason == "stop_loss" else "190"
     else:
-        mark = "200" if exit_reason == "stop_loss" else "50"
+        mark = "200" if exit_reason == "stop_loss" else "10"
     client.ticker.return_value = {"result": {"mark_price": mark}}
 
     assert await engine.monitor_combined_strategy(database.row)
