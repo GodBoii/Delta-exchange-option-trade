@@ -14,32 +14,29 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
 
     assert agent.model.id == "deepseek/deepseek-v4.1-flash"
     assert settings.automation_model_id == agent.model.id
-    assert agent.model.reasoning_effort == "xhigh"
+    assert agent.model.reasoning_effort == "low"
     assert agent.model.supports_native_structured_outputs is False
-    assert agent.model.max_tokens is None
+    assert agent.model.max_tokens == 6000
     assert agent.model.max_completion_tokens is None
     assert agent.output_schema is None
     assert agent.db is db
     assert agent.add_history_to_context is True
     assert agent.num_history_runs == settings.history_runs
-    assert agent.num_history_runs == 15
-    assert agent.max_tool_calls_from_history is None
-    assert agent.tool_call_limit is None
+    assert agent.num_history_runs == 2
+    assert agent.max_tool_calls_from_history == 0
+    assert agent.tool_call_limit == 40
     assert agent.store_events is True
     assert agent.send_media_to_model is True
     assert any("Inspect images attached to the run" in instruction for instruction in agent.instructions)
     assert [type(toolkit).__name__ for toolkit in agent.tools] == ["WebSearchTools", "NewsResearchTools"]
-    assert agent.tools[0].timeout is None
-    assert agent.tools[0].fixed_max_results is None
+    assert agent.tools[0].timeout == 10
+    assert agent.tools[0].fixed_max_results == 10
 
-    tool_names = {name for toolkit in agent.tools for name in toolkit.functions}
+    tool_names = {name for toolkit in agent.tools for name in toolkit.async_functions}
     assert tool_names == {
         "build_news_dossier",
-        "extract_news_images",
-        "inspect_news_source",
         "read_news_article",
         "search_news",
-        "search_news_images",
         "web_search",
     }
     assert not any(token in name for name in tool_names for token in ("trade", "order", "delta", "binance"))
