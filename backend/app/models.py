@@ -82,7 +82,7 @@ class StrategyDefinition(StrictModel):
     riskMode: Literal["legwise", "combined_premium", "strategy_level"] = "legwise"
     riskBasis: Literal["net_debit", "net_credit", "defined_max_loss"] = "net_credit"
     stopLossPercent: float = Field(default=100, gt=0, le=100)
-    takeProfitPercent: float = Field(default=50, gt=0, le=1_000)
+    takeProfitPercent: float = Field(default=90, gt=0, le=1_000)
     combinedStopLossPercent: float | None = Field(default=None, gt=0, le=100)
     emergencyStopLossPercent: float | None = Field(default=None, gt=0, le=5000)
     emergencyExitEnabled: bool = True
