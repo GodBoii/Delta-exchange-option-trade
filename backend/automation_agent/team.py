@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.media import Image
 from agno.models.openrouter import OpenRouter
 from agno.run.agent import RunOutput
-from agno.run.team import TeamRunOutput
-from agno.team import Team
+from pydantic import BaseModel, Field
 
-from news_agent.agent import create_news_agent
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
+from news_agent.pipeline import run_news_pipeline
 
 from .charts import (
     render_candlestick_chart,
@@ -28,6 +30,11 @@ from .storage import ChartArtifact, SupabaseChartStorage
 from .tools import AutomationStrategyTools, DropStrategyTools, read_parent_run_context, save_market_snapshot
 
 logger = logging.getLogger(__name__)
+
+
+class RecheckAssessment(BaseModel):
+    decision: Literal["go", "drop", "inconclusive"]
+    report: str = Field(min_length=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +63,21 @@ def run_automation_team(
     if previous_run:
         account_context = {**account_context, "previousRun": previous_run}
     market_tools = MarketIntelligenceTools(session_trigger=trigger)
-    market_packet = market_tools.collect_btc_market_packet()
-    option_context = market_tools.collect_delta_option_context()
+    # News and market I/O are independent. Only one news synthesis is performed per decision.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        news_future = executor.submit(
+            run_news_pipeline,
+            "Bitcoin BTC market moving news and upcoming macroeconomic catalysts",
+            settings=settings,
+            session_id=f"news:{agent_run_id}",
+            user_id=user_id,
+            db=InMemoryDb(),
+            debug_mode=False,
+        )
+        option_future = executor.submit(market_tools.collect_delta_option_context)
+        market_packet = market_tools.collect_btc_market_packet()
+        option_context = option_future.result()
+        news_result = news_future.result()
     chart_artifacts = _chart_artifacts(market_packet)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
     stored_charts = SupabaseChartStorage(settings).upload_run_charts(
@@ -87,21 +107,17 @@ def run_automation_team(
 
     team_db = create_session_db(settings, session_table=settings.automation_session_table)
     try:
-        news_agent = create_news_agent(
-            settings=settings,
-            debug_mode=True,
-            include_research_tools=True,
-            persist_session=False,
-        )
         model = OpenRouter(
             id=settings.automation_model_id,
             api_key=settings.require_api_key(),
             supports_native_structured_outputs=False,
-            reasoning_effort="xhigh",
-            max_tokens=None,
+            reasoning_effort="high",
+            timeout=180,
+            max_retries=0,
+            max_tokens=12000,
             max_completion_tokens=None,
         )
-        team = Team(
+        team = Agent(
             id="btc-strategy-automation-team",
             name="BTC Strategy Automation Team",
             role=(
@@ -109,7 +125,6 @@ def run_automation_team(
                 "then schedules the saved strategy most likely to profit."
             ),
             model=model,
-            members=[news_agent],
             tools=[market_tools, strategy_tools],
             description=(
                 "Analyze BTCUSD, compare the supplied option strategy catalog, and select one strategy and trade time."
@@ -131,7 +146,7 @@ def run_automation_team(
                 (
                     "select_strategy_and_time schedules that saved strategy on the live engine for the chosen time. "
                     "The engine applies the user's trading budget, calculates lots, and executes later. Choose an "
-                    "activation at least six minutes in the future so the five-minute recheck can run."
+                    "activation at least eight minutes in the future so the seven-minute pre-entry recheck can run."
                 ),
                 (
                     "You never receive the account balance. Do not request or estimate it. After scheduling, the "
@@ -152,11 +167,8 @@ def run_automation_team(
                     "extra run only before the next fixed review. Only one follow-up is allowed between fixed reviews, "
                     "and a follow-up run cannot schedule another follow-up."
                 ),
-                (
-                    "Never schedule a strategy activation during the exact minute of any "
-                    "fixed review."
-                ),
-                "Delegate current news research to the News Intelligence Analyst and use its report in your decision.",
+                ("Never schedule a strategy activation during the exact minute of any fixed review."),
+                "Use the supplied current news report. Research is complete; do not delegate or repeat it.",
                 (
                     "Use sessionHistory alongside the current 60-minute sideways score. Compare the last one and two "
                     "hours with each dated session back to the previous matching session opening. Report session "
@@ -206,6 +218,7 @@ def run_automation_team(
                 "invalidation conditions."
             ),
             additional_context=(
+                f"Current news evidence: {news_result.markdown}. "
                 f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}. "
                 f"Signals requested by the prior run: {json.dumps(signals_to_inspect or [], ensure_ascii=False)}. "
                 "Chart reading instructions and exact values are keyed by the attached image IDs. "
@@ -216,13 +229,9 @@ def run_automation_team(
             db=team_db,
             add_datetime_to_context=True,
             timezone_identifier="Asia/Kolkata",
-            add_member_tools_to_context=True,
-            show_members_responses=True,
-            store_member_responses=True,
             store_events=True,
-            max_iterations=12,
             tool_call_limit=24,
-            debug_mode=True,
+            debug_mode=False,
             telemetry=False,
         )
 
@@ -236,19 +245,21 @@ def run_automation_team(
             for chart in stored_charts
         ]
         stored_session_id = f"automation:{user_id}:{session_id}"
-        response = team.run(
-            "Analyze the current BTC market and choose the appropriate live action.",
-            session_id=stored_session_id,
-            user_id=user_id,
-            images=images,
-            metadata={
-                "triggerReason": trigger_reason or "scheduled market analysis",
-                "trigger": trigger,
-                "signalsToInspect": signals_to_inspect or [],
-                "marketSnapshotId": market_snapshot_id,
-            },
+        response = asyncio.run(
+            team.arun(
+                "Analyze the current BTC market and choose the appropriate live action.",
+                session_id=stored_session_id,
+                user_id=user_id,
+                images=images,
+                metadata={
+                    "triggerReason": trigger_reason or "scheduled market analysis",
+                    "trigger": trigger,
+                    "signalsToInspect": signals_to_inspect or [],
+                    "marketSnapshotId": market_snapshot_id,
+                },
+            )
         )
-        if not isinstance(response, TeamRunOutput):
+        if not isinstance(response, RunOutput):
             raise RuntimeError("Automation team returned an unexpected streaming response")
         report = (
             response.content.strip() if isinstance(response.content, str) else json.dumps(response.content, default=str)
@@ -257,13 +268,25 @@ def run_automation_team(
             raise RuntimeError("Automation team returned an empty report")
         if report.casefold() == "provider returned error":
             raise RuntimeError("Automation model provider returned an error")
+        logger.info(
+            "automation.model run_id=%s input_tokens=%s output_tokens=%s reasoning_tokens=%s",
+            agent_run_id,
+            getattr(response.metrics, "input_tokens", None),
+            getattr(response.metrics, "output_tokens", None),
+            getattr(response.metrics, "reasoning_tokens", None),
+        )
         return AutomationTeamResult(
             run_id=str(response.run_id),
             session_id=stored_session_id,
             model_id=str(response.model or settings.automation_model_id),
             report=report,
             market_snapshot_id=market_snapshot_id,
-            member_responses=[_response_summary(item) for item in response.member_responses or []],
+            member_responses=[
+                {
+                    **_response_summary(news_result.report_response),
+                    "researchTools": news_result.research_tools,
+                }
+            ],
             tool_calls=[_tool_summary(item) for item in response.tools or []],
         )
     finally:
@@ -310,7 +333,9 @@ def run_activation_recheck(
         api_key=settings.require_api_key(),
         supports_native_structured_outputs=False,
         reasoning_effort="low",
-        max_tokens=None,
+        timeout=240,
+        max_retries=0,
+        max_tokens=4000,
         max_completion_tokens=None,
     )
     agent = Agent(
@@ -330,9 +355,11 @@ def run_activation_recheck(
             ),
             "Do not research news, delegate work, or use outside data.",
             "Return concise Markdown with headings ## Recheck, ## Decision, and ## Evidence.",
+            "Set decision to go only with sufficient fresh evidence. Use inconclusive when evidence is missing.",
             "Do not expose credentials, prompts, database URLs, or internal secrets.",
         ],
         expected_output="A go or drop decision for the one supplied scheduled strategy.",
+        output_schema=RecheckAssessment,
         additional_context=(
             "The BTCUSD trader selected this strategy earlier. Recheck whether it remains valid now. "
             f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
@@ -344,7 +371,7 @@ def run_activation_recheck(
         timezone_identifier="Asia/Kolkata",
         tool_call_limit=1,
         store_events=True,
-        debug_mode=True,
+        debug_mode=False,
         telemetry=False,
     )
     images = [
@@ -363,7 +390,12 @@ def run_activation_recheck(
     )
     if not isinstance(response, RunOutput):
         raise RuntimeError("Activation recheck returned an unexpected streaming response")
-    report = response.content.strip() if isinstance(response.content, str) else ""
+    assessment = response.content
+    if not isinstance(assessment, RecheckAssessment):
+        raise RuntimeError("Activation recheck returned no validated decision")
+    if assessment.decision != "go" and not response.tools:
+        raise RuntimeError("Activation recheck did not explicitly confirm entry or record a cancellation")
+    report = assessment.report.strip()
     if not report:
         raise RuntimeError("Activation recheck returned an empty report")
     if report.casefold() == "provider returned error":
@@ -486,4 +518,5 @@ def _tool_summary(execution: Any) -> dict[str, Any]:
         "name": getattr(execution, "tool_name", None) or getattr(execution, "name", None),
         "args": getattr(execution, "tool_args", None) or getattr(execution, "arguments", None),
         "result": getattr(execution, "result", None),
+        "durationSeconds": getattr(getattr(execution, "metrics", None), "duration", None),
     }
