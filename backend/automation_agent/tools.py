@@ -27,9 +27,9 @@ from app.automation_schedule import (
 from app.capital import percentage_concurrency_limit
 from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
-from news_agent.config import NewsAgentSettings
+from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
 
-RECHECK_LEAD_TIME = timedelta(minutes=5)
+RECHECK_LEAD_TIME = timedelta(seconds=RECHECK_LEAD_SECONDS)
 
 
 class AutomationStrategyTools(Toolkit):
@@ -183,7 +183,7 @@ class AutomationStrategyTools(Toolkit):
         expiry = _future_datetime(proposal_expiry, "proposal_expiry")
         recheck_at = activation - RECHECK_LEAD_TIME
         if recheck_at <= datetime.now(UTC):
-            raise ValueError("activation_time must leave at least five minutes for the activation recheck")
+            raise ValueError("activation_time must leave more than seven minutes for the activation recheck")
         fixed_session = fixed_session_during_minute(activation)
         if fixed_session:
             raise ValueError(
