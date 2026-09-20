@@ -16,7 +16,7 @@ export const publish = mutation({
     const run = await get(ctx, "automation_agent_runs", args.runId);
     if (!run || run.owner !== sharedUserId || run.status !== "running" || parseRow(run.rowJson).outcome) throw new ConvexError("Shared run cannot choose another action");
     if (args.candidates.length !== 1 || new Set(args.candidates.map(item => item.id)).size !== args.candidates.length) throw new ConvexError("Invalid ranked candidates");
-    if (time(args.activation) < Date.now() + 300000 || time(args.expiry) <= time(args.activation)) throw new ConvexError("Invalid shared activation window");
+    if (time(args.activation) <= Date.now() + 420000 || time(args.expiry) <= time(args.activation)) throw new ConvexError("Invalid shared activation window");
     if (!Number.isFinite(args.confidence) || args.confidence < 0 || args.confidence > 1 || !args.reasoning.trim() || time(args.exit) <= time(args.activation)) throw new ConvexError("Invalid shared decision");
     const snapshot = await get(ctx, "automation_market_snapshots", args.snapshotId);
     if (!snapshot || snapshot.owner !== sharedUserId || text(parseRow(run.rowJson), "market_snapshot_id") !== args.snapshotId) throw new ConvexError("Snapshot ownership mismatch");
@@ -38,7 +38,7 @@ export const publish = mutation({
       invalidation_signals: args.invalidation, market_snapshot_id: args.snapshotId, shared_recheck_run_id: recheckId,
       created_at: new Date().toISOString() });
     await put(ctx, "automation_agent_runs", newRun({ id: recheckId, user_id: sharedUserId, trigger: "activation_recheck",
-      run_key: `shared-recheck:${id}`, scheduled_for: new Date(time(args.activation) - 300000).toISOString(),
+      run_key: `shared-recheck:${id}`, scheduled_for: new Date(time(args.activation) - 420000).toISOString(),
       strategy_proposal_id: id, reason: "Recheck the shared ranked decision before account-specific execution" }));
     await put(ctx, "automation_agent_runs", { ...parseRow(run.rowJson), outcome: "strategy_selected", shared_decision_id: id }, run);
     return { outcome: "strategy_selected", proposalId: id, activationRecheckRunId: recheckId, activationTime: args.activation,
@@ -121,13 +121,7 @@ export const manual = mutation({
     if (!sharedSettings || !parseRow(sharedSettings.rowJson).enabled) await put(ctx, "automation_settings", {
       user_id: sharedUserId, enabled: true, minimum_follow_up_minutes: 5, maximum_agent_runs_per_day: 3,
     }, sharedSettings);
-    const running = await ctx.db.query("automation_agent_runs").withIndex("by_owner_status_created", q => q.eq("owner", sharedUserId).eq("status", "running")).first();
-    if (running) return parseRow(running.rowJson);
-    const recent = await ctx.db.query("automation_agent_runs").withIndex("by_owner_time", q =>
-      q.eq("owner", sharedUserId).gte("time", Date.now() - 300000).lte("time", Date.now())).order("desc")
-      .filter(q => q.neq(q.field("status"), "cancelled")).first();
-    if (recent) return parseRow(recent.rowJson);
-    const row = newRun({ user_id: sharedUserId, trigger: "manual", run_key: `shared-manual:${Math.floor(Date.now() / 300000)}`,
+    const row = newRun({ user_id: sharedUserId, trigger: "manual", run_key: `shared-manual:${uuid()}`,
       scheduled_for: new Date().toISOString(), reason: "User requested a shared market analysis" });
     await put(ctx, "automation_agent_runs", row);
     return row;
