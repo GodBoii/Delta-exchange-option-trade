@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from agno.db.base import BaseDb
 from agno.run.agent import RunOutput
 
 from .agent import WebSearchTools, create_news_agent
+from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
 from .tools import NewsResearchTools
@@ -49,63 +52,66 @@ def _tool_names(run: RunOutput) -> list[str]:
     return names
 
 
-def _result_urls(serialized_results: str) -> list[str]:
-    try:
-        results = json.loads(serialized_results)
-    except (TypeError, json.JSONDecodeError):
-        return []
-    if not isinstance(results, list):
-        return []
-    urls: list[str] = []
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        url = item.get("url") or item.get("href")
-        if isinstance(url, str) and url.startswith(("http://", "https://")) and url not in urls:
-            urls.append(url)
-    return urls
+async def collect_live_news_context(prompt: str, settings: NewsAgentSettings) -> tuple[str, tuple[str, ...]]:
+    """Collect bounded, diverse evidence once, before one model synthesis."""
+    budget = ResearchBudget()
+    search = WebSearchTools(budget)
+    articles = NewsResearchTools(settings, budget)
+    queries = [
+        f"{prompt[:180]} latest news",
+        "Bitcoin BTC ETF regulation latest news",
+        "Federal Reserve inflation rates dollar latest news",
+    ]
+    results = await asyncio.gather(*(search.search_news(query) for query in queries))
+    rows = []
+    for result in results:
+        decoded = json.loads(result)
+        if isinstance(decoded, list):
+            rows.append(decoded)
+    tools = ["search_news"]
+    if not any(rows):
+        fallback = json.loads(await search.web_search(queries[0]))
+        rows = [fallback] if isinstance(fallback, list) else []
+        tools.append("web_search")
+    # Round robin across subjects so one large result set cannot consume every article slot.
+    candidates = []
+    seen: set[str] = set()
+    domains: dict[str, int] = {}
+    for index in range(10):
+        for group in rows:
+            if index >= len(group):
+                continue
+            row = group[index]
+            url = row["url"]
+            domain = urlsplit(url).hostname or ""
+            if url in seen or domains.get(domain, 0) >= 2:
+                continue
+            seen.add(url)
+            domains[domain] = domains.get(domain, 0) + 1
+            candidates.append(row)
+    candidates = candidates[:10]
+    dossier = json.loads(await articles.build_news_dossier([row["url"] for row in candidates]))
+    tools.append("build_news_dossier")
+    context = json.dumps(
+        {
+            "search_results": candidates,
+            "article_dossier": dossier,
+            "coverage": "Unavailable pages and copied reporting are not independent verification.",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    logger.info(
+        "news.evidence articles=%d context_chars=%d calls=%s",
+        dossier.get("successful", 0),
+        len(context),
+        dict(budget.calls),
+    )
+    return context, tuple(tools)
 
 
 def _collect_live_news_context(prompt: str, settings: NewsAgentSettings) -> tuple[str, tuple[str, ...]]:
-    """Deterministically search before synthesis so the model cannot skip current evidence collection."""
-    search_tools = WebSearchTools(timeout=None, fixed_max_results=None)
-    started_at = time.perf_counter()
-    try:
-        search_results = search_tools.search_news("Bitcoin BTC latest news", max_results=None)
-        search_tool_name = "search_news"
-        logger.info(
-            "News evidence bootstrap completed tool=search_news elapsed_ms=%d result_chars=%d",
-            round((time.perf_counter() - started_at) * 1_000),
-            len(search_results),
-        )
-    except Exception:
-        logger.exception("News evidence bootstrap search_news failed; trying web_search")
-        search_results = search_tools.web_search(f"Bitcoin BTC latest news {prompt}", max_results=None)
-        search_tool_name = "web_search"
-        logger.info(
-            "News evidence bootstrap completed tool=web_search elapsed_ms=%d result_chars=%d",
-            round((time.perf_counter() - started_at) * 1_000),
-            len(search_results),
-        )
-
-    urls = _result_urls(search_results)
-    logger.info("News evidence bootstrap opening articles count=%d", len(urls))
-    dossier = NewsResearchTools(settings).build_news_dossier(urls) if urls else json.dumps({"items": []})
-    context = json.dumps(
-        {
-            "search_results": json.loads(search_results),
-            "article_dossier": json.loads(dossier),
-        },
-        ensure_ascii=False,
-    )
-    logger.info(
-        "News evidence bootstrap dossier completed urls=%d context_chars=%d elapsed_ms=%d",
-        len(urls),
-        len(context),
-        round((time.perf_counter() - started_at) * 1_000),
-    )
-    tools = (search_tool_name, "build_news_dossier") if urls else (search_tool_name,)
-    return context, tools
+    return asyncio.run(collect_live_news_context(prompt, settings))
 
 
 def run_news_pipeline(
@@ -153,22 +159,20 @@ def run_news_pipeline(
         )
         report_response = analyst.run(research_prompt, session_id=effective_session_id, user_id=effective_user_id)
 
-        if not isinstance(report_response.content, str) or not report_response.content.strip():
-            logger.warning(
-                "News synthesis returned no Markdown; retrying once run_id=%s content=%r",
-                report_response.run_id,
-                report_response.content,
-            )
-            repair_prompt = (
-                f"{research_prompt}\n\n"
-                "Your previous response was empty. Return the completed evidence-based analysis now as normal "
-                "Markdown, with clickable source links and explicit uncertainty. Do not return JSON."
-            )
-            report_response = analyst.run(
-                repair_prompt,
-                session_id=effective_session_id,
-                user_id=effective_user_id,
-            )
+        if (
+            not isinstance(report_response.content, str)
+            or not report_response.content.strip()
+            or report_response.content.strip().casefold() == "provider returned error"
+        ):
+            raise RuntimeError("News synthesis returned no report within its output budget")
+
+        metrics = report_response.metrics
+        logger.info(
+            "news.model input_tokens=%s output_tokens=%s reasoning_tokens=%s",
+            getattr(metrics, "input_tokens", None),
+            getattr(metrics, "output_tokens", None),
+            getattr(metrics, "reasoning_tokens", None),
+        )
 
         logger.info(
             "News pipeline completed run_id=%s elapsed_ms=%d markdown=%s tools=%s",
