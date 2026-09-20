@@ -36,12 +36,31 @@ test("claim compare-and-set runs inside the mutation", async () => {
   expect(await t.mutation(update, input)).toHaveLength(0);
 });
 
-test("an account can have only one running AI review", async () => {
+test("independent reviews run concurrently but each run is claimed once", async () => {
   const t = convexTest(schema, modules);
   for (const id of ["a", "b"]) await t.mutation(write, { ...args, table: "automation_agent_runs",
     rowJson: JSON.stringify({ id, user_id: "owner", status: "scheduled", run_key: id }) });
   expect(await t.mutation(claim, { ...args, p_user_id: "owner", p_run_id: "a" })).toHaveLength(1);
-  expect(await t.mutation(claim, { ...args, p_user_id: "owner", p_run_id: "b" })).toHaveLength(0);
+  expect(await t.mutation(claim, { ...args, p_user_id: "owner", p_run_id: "b" })).toHaveLength(1);
+  expect(await t.mutation(claim, { ...args, p_user_id: "owner", p_run_id: "a" })).toHaveLength(0);
+});
+
+test("pending rechecks migrate to seven minutes without changing running runs", async () => {
+  const t = convexTest(schema, modules);
+  const activation = Date.now() + 900000;
+  await t.mutation(write, { ...args, table: "strategy_proposals",
+    rowJson: JSON.stringify({ id: "proposal", user_id: "owner", activation_time: new Date(activation).toISOString() }) });
+  for (const status of ["scheduled", "running"]) await t.mutation(write, { ...args, table: "automation_agent_runs",
+    rowJson: JSON.stringify({ id: status, user_id: "owner", status, trigger: "activation_recheck",
+      strategy_proposal_id: "proposal", scheduled_for: new Date(activation - 300000).toISOString() }) });
+  const migrate = makeFunctionReference<"mutation">("runtimeControl:reschedulePendingRechecks");
+  expect(await t.mutation(migrate, { ...args, cursor: null })).toMatchObject({ updated: 1, isDone: true });
+  await t.run(async ctx => {
+    const rows = await ctx.db.query("automation_agent_runs").collect();
+    expect(rows.find(row => row.externalId === "scheduled")?.time).toBe(activation - 420000);
+    expect(rows.find(row => row.externalId === "running")?.time).toBe(activation - 300000);
+  });
+  expect(await t.mutation(migrate, { ...args, cursor: null })).toMatchObject({ updated: 0 });
 });
 
 test("upsert preserves existing policy fields and null filters match absent fields", async () => {
