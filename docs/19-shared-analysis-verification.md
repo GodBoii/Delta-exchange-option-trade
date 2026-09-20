@@ -2,7 +2,7 @@
 
 ## Behavior implemented
 
-With the Convex runtime enabled, one global review selects one current built-in strategy and activation time. Its five-minute pre-entry recheck runs once. After that recheck completes successfully, each enabled, connected account receives its own scheduled strategy. The scheduler retries missing allocations after restart; an indexed per-user decision key prevents duplicate allocations.
+With the Convex runtime enabled, each shared review selects one current built-in strategy and activation time. Independent reviews can run concurrently. Each decision has its own recheck scheduled seven minutes before entry, with a five-minute execution deadline. After that recheck completes successfully, each enabled, connected account receives its own scheduled strategy. The scheduler retries missing allocations after restart; an indexed per-user decision key prevents duplicate allocations.
 
 Each account reads its own current wallet and capital policy at entry. Reservation and lot sizing use that same snapshot. Existing fractions and fixed-amount settings are unchanged. Lot sizing keeps the existing margin/risk calculations, two-percent allowance and minimum-lot rejection.
 
