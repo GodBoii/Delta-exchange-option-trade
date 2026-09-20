@@ -58,7 +58,7 @@ export const schedule = mutation({
     const mode = capital?.allocation_mode ?? "half_balance";
     const maximum = mode === "full_balance" ? 1 : mode === "half_balance" ? 2 : mode === "one_third_balance" ? 3 : mode === "one_quarter_balance" ? 4 : null;
     if (maximum !== null && (await ownerRows(ctx, "strategy_capital_slots", args.userId)).filter(slot => ["reserved", "active"].includes(slot.status)).length >= maximum) throw new ConvexError("No capital allocation available");
-    if (time(args.recheck) <= Date.now() || time(args.activation) - time(args.recheck) !== 300000 || time(args.exit) <= time(args.activation)
+    if (time(args.recheck) <= Date.now() || time(args.activation) - time(args.recheck) !== 420000 || time(args.exit) <= time(args.activation)
         || time(args.expiry) <= time(args.activation) || args.confidence < 0 || args.confidence > 1) throw new ConvexError("Invalid strategy schedule");
     const snapshot = await get(ctx, "automation_market_snapshots", args.snapshotId);
     if (!snapshot || snapshot.owner !== args.userId || text(parseRow(run.rowJson), "market_snapshot_id") !== args.snapshotId) throw new ConvexError("Snapshot ownership mismatch");
