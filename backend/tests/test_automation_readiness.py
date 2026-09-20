@@ -56,7 +56,9 @@ async def test_scheduled_run_waits_unclaimed_until_service_recovers(monkeypatch)
             return []
 
         async def select(self, table, _params):
-            return [{"user_id": "user-1"}] if table == "automation_settings" else [row]
+            if table == "automation_settings":
+                return [{"user_id": "user-1"}]
+            return [row] if _params.get("trigger") == "neq.activation_recheck" and row["status"] == "scheduled" else []
 
         async def rpc(self, _name, payload):
             claims.append(payload)
