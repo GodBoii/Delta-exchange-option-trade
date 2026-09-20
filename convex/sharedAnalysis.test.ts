@@ -47,6 +47,7 @@ test("one decision and recheck allocate once to three accounts with the same sch
   await t.run(async ctx => {
     const run = await ctx.db.query("automation_agent_runs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
     if (!run) throw new Error("Missing recheck");
+    expect(run.time).toBe(Date.parse(input.activation) - 420000);
     await ctx.db.patch(run._id, { status: "running", rowJson: JSON.stringify({ ...JSON.parse(run.rowJson), status: "running" }) });
   });
   expect(await t.mutation(recheck, { secret: "research", userId: sharedUserId, runId: decision.activationRecheckRunId,
@@ -69,6 +70,15 @@ test("one decision and recheck allocate once to three accounts with the same sch
   expect(strategies).toHaveLength(3);
   expect(new Set(strategies.map(row => row.owner))).toEqual(new Set(["a", "b", "c"]));
   for (const strategy of strategies) expect(JSON.parse(strategy.rowJson)).toMatchObject({ entry_at: input.activation, shared_decision_id: decision.proposalId });
+});
+
+test("manual analysis is independent of a currently running shared review", async () => {
+  const { t } = await fixture();
+  const manual = makeFunctionReference<"mutation">("sharedAnalysis:manual");
+  const first = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
+  const second = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
+  expect(first.id).not.toBe("run");
+  expect(second.id).not.toBe(first.id);
 });
 
 test("shared publication rejects private data, changed risk, and multiple strategies", async () => {
@@ -114,7 +124,7 @@ test.each(["disabled", "disconnected", "changed", "dropped", "expired"])("alloca
   expect(await t.run(ctx => ctx.db.query("strategies").collect())).toEqual([]);
 });
 
-test("manual requests from different users reuse one immediate shared analysis", async () => {
+test("manual requests create independent immediate shared analyses", async () => {
   const { t } = await fixture();
   await t.run(async ctx => {
     const old = await ctx.db.query("automation_agent_runs").first();
@@ -128,7 +138,7 @@ test("manual requests from different users reuse one immediate shared analysis",
   const manual = makeFunctionReference<"mutation">("sharedAnalysis:manual");
   const a = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
   const b = await t.mutation(manual, { secret: "trade", requestedBy: "b" });
-  expect(a.id).toBe(b.id);
+  expect(a.id).not.toBe(b.id);
   expect(a.user_id).toBe(sharedUserId);
   expect(a.id).not.toBe("future-fixed");
   expect(a.status).toBe("scheduled");
