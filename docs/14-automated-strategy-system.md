@@ -466,7 +466,8 @@ holding mode: user selected
 expiry policy: user selected
 risk basis: net_credit
 combined stop loss: 100% of entry credit
-take profit: percentage of entry credit
+take profit: 90% of entry credit
+emergency stop loss: 170% loss per short leg, hosted by Delta Exchange
 allocation: account capital policy
 lots: auto and equal for both legs
 square-off: complete
