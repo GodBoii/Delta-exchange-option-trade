@@ -27,7 +27,7 @@ class RunDatabase:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("trigger,elapsed_seconds", [("london_session", 1221), ("activation_recheck", 121)])
+@pytest.mark.parametrize("trigger,elapsed_seconds", [("london_session", 1221), ("activation_recheck", 311)])
 async def test_long_review_completes_but_recheck_keeps_its_deadline(monkeypatch, trigger, elapsed_seconds) -> None:
     started_at = datetime(2026, 9, 14, 7, 0, tzinfo=UTC)
     database = RunDatabase(started_at)
@@ -61,10 +61,10 @@ async def test_long_review_completes_but_recheck_keeps_its_deadline(monkeypatch,
         trigger=trigger, reason="Fixed review", strategy_proposal_id="proposal-1",
     )
     if trigger == "activation_recheck":
-        with pytest.raises(AppError, match="within 120 seconds"):
+        with pytest.raises(AppError, match="within 310 seconds"):
             await automation.execute_automation_run(**kwargs)
         assert database.row["status"] == "failed"
-        assert database.row["error"] == "Automation analysis did not respond within 120 seconds"
+        assert database.row["error"] == "Automation analysis did not respond within 310 seconds"
     else:
         await automation.execute_automation_run(**kwargs)
         assert database.row["status"] == "completed"
