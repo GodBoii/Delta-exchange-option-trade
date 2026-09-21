@@ -29,7 +29,7 @@ type CurrencyContextValue = {
 
 const PREFERENCE_KEY = "trade-cognition-display-currency";
 const RATE_KEY = "trade-cognition-usd-inr-rate";
-const MAX_STORED_RATE_AGE_MS = 48 * 60 * 60 * 1_000;
+const MAX_STORED_RATE_AGE_MS = 2 * 60 * 60 * 1_000;
 const CurrencyContext = createContext<CurrencyContextValue | null>(null);
 
 function isDisplayCurrency(value: unknown): value is DisplayCurrency {

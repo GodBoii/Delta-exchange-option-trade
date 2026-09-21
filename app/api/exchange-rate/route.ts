@@ -9,7 +9,7 @@ type RateResponse = {
 
 export async function GET() {
   try {
-    const response = await fetch(RATE_URL, { next: { revalidate: 21_600 } });
+    const response = await fetch(RATE_URL, { next: { revalidate: 3_600 } });
     if (!response.ok) throw new Error(`Exchange-rate provider returned ${response.status}`);
 
     const payload: unknown = await response.json();
