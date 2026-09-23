@@ -70,3 +70,5 @@ skills/
 secrets/
 
 *.ctl
+
+.vercel

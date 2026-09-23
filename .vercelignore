@@ -1,0 +1,13 @@
+/backend/
+/binance_backend/
+/reference/
+/research/
+/data/
+/docs/
+/progress/
+/supabase/
+/deploy/
+.env*
+*.log
+*.ctl
+/How to Access v2 Changelog Documentation in Markdown/
