@@ -15,7 +15,7 @@ import {
   type NoticeHandler
 } from "@/app/components/ui";
 
-export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
+export default function Automation({ onNotice, isOwner = false }: { onNotice: NoticeHandler; isOwner?: boolean }) {
   const { automation: revision } = useRealtimeSignals();
   const [overview, setOverview] = useState<AutomationOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,7 +65,7 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
         signal: null
       });
       await load(true);
-      onNotice({ tone: "ok", text: "Automation analysis completed and its decision was saved." });
+      onNotice({ tone: "ok", text: "Global analysis queued. Its result will appear for everyone." });
     } catch (runError) {
       setError(errorMessage(runError, "The automation analysis failed. No strategy was activated."));
       await load(true);
@@ -86,9 +86,9 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
             <button type="button" className="button secondary" onClick={() => void load()} disabled={loading || running}>
               <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
             </button>
-            <button type="button" className="button primary" onClick={() => void runNow()} disabled={loading || running || !overview?.settings.enabled || !overview?.enabledStrategies}>
+            {isOwner && <button type="button" className="button primary" onClick={() => void runNow()} disabled={loading || running || !overview?.enabledStrategies}>
               <Play aria-hidden="true" />{running ? <Shimmer>Analyzing market</Shimmer> : "Run analysis"}
-            </button>
+            </button>}
           </>
         }
       />
@@ -99,8 +99,8 @@ export default function Automation({ onNotice }: { onNotice: NoticeHandler }) {
         <Panel>
           <PanelHeader icon={<Bot />} title="Agent status" meta={overview?.settings.model ?? "Loading model"} />
           <Toggle
-            label="Automation"
-            description="Runs at market sessions, approved follow-up times, and before selected strategies enter."
+            label="Trade shared decisions"
+            description="Allow your Delta account to execute the global strategy decisions using your capital settings."
             checked={overview?.settings.enabled ?? false}
             onChange={enabled => { if (!loading && !saving) void updateEnabled(enabled); }}
           />

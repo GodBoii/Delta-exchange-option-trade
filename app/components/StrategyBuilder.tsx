@@ -10,6 +10,7 @@ import type { StrategyDefinition, StrategyLeg } from "@/lib/strategy-types";
 import type { SavedStrategy } from "@/lib/app-types";
 import type { SavedStrategyRow } from "@/lib/supabase/types";
 import { readStrategyLibrary, saveLibraryStrategy, deleteLibraryStrategy, definitionFingerprint as fingerprint } from "@/lib/strategy-library";
+import { cleanStrategyName } from "@/lib/strategy-name";
 import { requestJson } from "@/lib/api";
 import {
   errorMessage, formatDateTime, formatDuration, formatExpiry, relativeTime, toIso, toLocalInput
@@ -377,7 +378,8 @@ const LIBRARY_COPY: Record<LibraryState, { label: string; tone: "active" | "warn
   error: { label: "Saved strategies unavailable", tone: "negative" }
 };
 
-export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
+export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner = false }: {
+  isOwner?: boolean;
   userId: string;
   onNotice: NoticeHandler;
   /** False while the trading backend is unreachable: design and export only. */
@@ -445,7 +447,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     savedId: string | null,
     notify = false
   ): Promise<SavedStrategy | null> => {
-    const trimmedName = definition.name.trim();
+    const trimmedName = cleanStrategyName(definition.name);
     if (trimmedName.length < 2) {
       setShowIssues(true);
       setError("Enter a strategy name with at least two characters before saving.");
@@ -456,7 +458,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     setLibraryState("saving");
     try {
       const existing = savedStrategies.find(item => item.id === savedId);
-      const saved = savedStrategyFromRow(await saveLibraryStrategy(normalized, existing, userId));
+      const saved = savedStrategyFromRow(await saveLibraryStrategy(normalized, existing, isOwner));
       if (!saved) throw new Error("The library returned an invalid saved strategy.");
 
       setSavedStrategies(current => [saved, ...current.filter(item => item.id !== saved.id)]
@@ -466,7 +468,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       setLibraryState("saved");
       setError("");
       if (trimmedName !== definition.name) setStrategy(normalized);
-      if (notify) onNotice({ tone: "ok", text: `${trimmedName} saved to your strategy library.` });
+      if (notify) onNotice({ tone: "ok", text: isOwner ? `${trimmedName} published to built-in strategies.` : `${trimmedName} saved to your strategy library.` });
       return saved;
     } catch (saveError) {
       const message = `Could not save the strategy library: ${errorMessage(saveError)}`;
@@ -475,7 +477,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
       if (notify) onNotice({ tone: "error", text: message });
       return null;
     }
-  }, [onNotice, savedStrategies, userId]);
+  }, [onNotice, savedStrategies, isOwner]);
 
   // Browser recovery copy, restored before the Supabase library loads.
   useEffect(() => {
@@ -564,6 +566,10 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   // Debounced autosave of the selected definition.
   useEffect(() => {
     if (!libraryReady || !activeSavedId) return;
+    if (isOwner) {
+      setLibraryState(fingerprint(strategy) === savedFingerprint ? "saved" : "unsaved");
+      return;
+    }
     if (savedStrategies.find(item => item.id === activeSavedId)?.isDefault) {
       setLibraryState("template");
       return;
@@ -576,7 +582,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
     if (strategy.name.trim().length < 2) return;
     const timer = window.setTimeout(() => { void persist(strategy, activeSavedId); }, 900);
     return () => window.clearTimeout(timer);
-  }, [activeSavedId, libraryReady, persist, savedFingerprint, savedStrategies, strategy]);
+  }, [activeSavedId, isOwner, libraryReady, persist, savedFingerprint, savedStrategies, strategy]);
 
   /* ----------------------------- legs ----------------------------- */
 
@@ -668,12 +674,12 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
   }
 
   async function deleteStrategy() {
-    if (!activeSavedId || activeSaved?.isDefault) return;
+    if (!activeSavedId || (activeSaved?.isDefault && !isOwner)) return;
     const deletedId = activeSavedId;
     setLibraryState("saving");
     try {
       if (!activeSaved) throw new Error("Select a saved strategy before deleting");
-      await deleteLibraryStrategy(activeSaved, userId);
+      await deleteLibraryStrategy(activeSaved, isOwner);
 
       const remaining = savedStrategies.filter(item => item.id !== deletedId);
       setSavedStrategies(remaining);
@@ -1121,7 +1127,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 {saveParticles}
                 <SwapText>{libraryState === "saving"
                   ? "Saving"
-                  : activeSaved?.isDefault
+                  : isOwner
+                    ? "Save built-in"
+                    : activeSaved?.isDefault
                     ? "Save a copy"
                     : libraryState === "saved" ? "Saved" : "Save"}</SwapText>
               </button>
@@ -1132,9 +1140,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled }: {
                 type="button"
                 className="button ghost icon-only"
                 onClick={() => setConfirmDelete(true)}
-                disabled={!activeSaved || activeSaved.isDefault || busy}
+                disabled={!activeSaved || (activeSaved.isDefault && !isOwner) || busy}
                 aria-label="Delete saved strategy"
-                title={activeSaved?.isDefault ? "Built-in strategies cannot be deleted" : "Delete saved strategy"}
+                title={activeSaved?.isDefault && !isOwner ? "Built-in strategies cannot be deleted" : "Delete saved strategy"}
               >
                 <Trash2 aria-hidden="true" />
               </button>

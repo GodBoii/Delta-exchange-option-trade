@@ -40,7 +40,7 @@ const Automation = dynamic(() => import("@/app/components/Automation"), {
 type BackendStatus = "checking" | "online" | "offline";
 
 const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation"];
-const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news"];
+const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news", "automation"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
 /** Cheap enough to run alongside the run list without straining rate limits. */
@@ -265,12 +265,12 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "connect" && backendOnline && !connected && (
         <ConnectView user={user} onConnected={onConnected} onSignOut={onSignOut} embedded />
       )}
-      {tab === "builder" && <StrategyBuilder userId={userId} onNotice={onNotice} liveEnabled={connected} />}
+      {tab === "builder" && <StrategyBuilder isOwner={user.userType === "owner"} userId={userId} onNotice={onNotice} liveEnabled={connected} />}
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
       {tab === "market" && <BtcMarketChart />}
       {tab === "news" && backendOnline && <NewsAnalysis request={requestJson} />}
-      {tab === "automation" && connected && <Automation onNotice={onNotice} />}
+      {tab === "automation" && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
     </PageEnter>
   );
 }

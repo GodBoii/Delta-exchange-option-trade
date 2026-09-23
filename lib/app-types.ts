@@ -13,6 +13,8 @@ export type AppUser = {
   id: string;
   email?: string | null;
   displayName?: string | null;
+  userType?: "owner" | "user";
+  phoneNumber?: string | null;
   avatarUrl?: string | null;
 };
 
