@@ -4,14 +4,15 @@ A client-facing Delta Exchange India options strategy workstation with a Next.js
 
 ## Architecture
 
-- **Frontend:** Next.js on Vercel at `https://www.tradecognition.online`.
-- **Authentication:** Supabase email/password and optional Google OAuth.
-- **Persistence:** Supabase Postgres with Row Level Security.
-- **Delta credentials:** Supabase Vault, accessed only with the server-side service role.
-- **Trading API and scheduler:** Python FastAPI in the `Delta-exchange` container, published through Cloudflare Tunnel at `https://api.tradecognition.online`.
-- **BTC spot analysis:** A separate read-only FastAPI service in the `Binace` container, published through the same tunnel at `https://market-api.tradecognition.online`. It never places orders.
-- **News analysis:** Agno and OpenRouter run only in the private `news-analyzer` container. Agno stores sessions directly in Supabase PostgreSQL through `PostgresDb`; the trading API is only an authenticated gateway.
-- **Realtime UI invalidation:** Convex carries small authenticated change signals for automation and strategy status. Supabase remains authoritative for every trade, execution, setting, and report.
+- Next.js runs on Vercel at `https://www.tradecognition.online`.
+- Supabase provides Auth, profiles, AI reports, Agno sessions and private chart storage.
+- Convex stores account settings, encrypted Delta credentials, the strategy catalog, global analysis jobs and trading state.
+- The Ubuntu FastAPI backend owns exchange execution. The private Agno service runs one shared research workflow per review event.
+- Public Binance and Delta market data is collected once and shared with clients.
+- Account balances, position sizing, exchange orders and fills remain private to each account.
+
+The current storage and deployment contract is in [Global analysis cutover](docs/22-global-analysis-cutover.md).
+Earlier migration instructions below describe the original installation. Do not replay them against the cut-over database.
 
 The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
 
