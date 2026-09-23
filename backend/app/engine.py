@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -510,8 +511,13 @@ class TradingEngine:
         return [{**leg, "lots": lots} for leg in resolved]
 
     async def reserve_capital_slot(
-        self, user_id: str, strategy_id: str, maximum_slots: int, *,
-        wallet: tuple[Decimal, Decimal], policy: CapitalPolicy,
+        self,
+        user_id: str,
+        strategy_id: str,
+        maximum_slots: int,
+        *,
+        wallet: tuple[Decimal, Decimal],
+        policy: CapitalPolicy,
     ) -> dict[str, Any]:
         extra = {}
         if getattr(self.db, "runtime", None) is not None:
@@ -2506,6 +2512,30 @@ class TradingEngine:
         finally:
             await client.close()
 
+    async def _dispatch_accounts(
+        self, rows: list[dict[str, Any]], operation: Callable[[dict[str, Any]], Awaitable[None]]
+    ) -> None:
+        if not rows:
+            return
+        if not getattr(self.settings, "convex_runtime_enabled", False):
+            for row in rows:
+                await operation(row)
+            return
+        identities = await self.application_data.request("accounts:executionGroups", {})
+        accounts = {item["userId"]: item["accountId"] for item in identities}
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            user_id = str(row["user_id"])
+            grouped.setdefault(accounts.get(user_id, user_id), []).append(row)
+        semaphore = asyncio.Semaphore(8)
+
+        async def execute_account(items: list[dict[str, Any]]) -> None:
+            async with semaphore:
+                for item in items:
+                    await operation(item)
+
+        await asyncio.gather(*(execute_account(items) for items in grouped.values()))
+
     async def process_due_strategies(self) -> None:
         monotonic_now = time.monotonic()
         reconcile_attention = monotonic_now - self.last_attention_reconcile >= ATTENTION_RECONCILE_SECONDS
@@ -2516,7 +2546,7 @@ class TradingEngine:
         due_entries, due_exits = await asyncio.gather(
             self.strategy_pages(
                 {
-                    "select": "id,entry_at",
+                    "select": "id,user_id,entry_at",
                     "status": "eq.scheduled",
                     "entry_execution_at": "is.null",
                     "entry_at": f"lte.{now_iso}",
@@ -2525,7 +2555,7 @@ class TradingEngine:
             ),
             self.strategy_pages(
                 {
-                    "select": "id",
+                    "select": "id,user_id",
                     "status": "eq.active",
                     "exit_execution_at": "is.null",
                     "exit_at": f"lte.{now_iso}",
@@ -2533,21 +2563,25 @@ class TradingEngine:
                 },
             ),
         )
-        for row in due_exits:
+
+        async def exit_one(row: dict[str, Any]) -> None:
             try:
                 await self.execute_exit(str(row["id"]))
             except Exception:
                 logger.exception("Scheduled exit failed for strategy %s", row["id"])
+
+        await self._dispatch_accounts(due_exits, exit_one)
         await self.process_active_risks()
         if reconcile_attention:
             await self.reconcile_attention_runs()
         recheck_states = await self.activation_recheck_states([str(row["id"]) for row in due_entries])
-        for row in due_entries:
+
+        async def enter_one(row: dict[str, Any]) -> None:
             entry_at = datetime.fromisoformat(str(row["entry_at"]).replace("Z", "+00:00"))
-            lateness = (now - entry_at).total_seconds()
+            lateness = (utc_now() - entry_at).total_seconds()
             recheck_state = recheck_states[str(row["id"])]
             if recheck_state == "pending" and lateness <= self.settings.max_entry_lateness_seconds:
-                continue
+                return
             if recheck_state in {"failed", "dropped"}:
                 await self.reject_scheduled_entry(
                     str(row["id"]),
@@ -2557,7 +2591,7 @@ class TradingEngine:
                         "activation_recheck_failed",
                     ),
                 )
-                continue
+                return
             if lateness > self.settings.max_entry_lateness_seconds:
                 await self.reject_scheduled_entry(
                     str(row["id"]),
@@ -2567,7 +2601,7 @@ class TradingEngine:
                         "entry_window_expired",
                     ),
                 )
-                continue
+                return
             try:
                 await self.execute_entry(str(row["id"]))
             except AppError as error:
@@ -2579,10 +2613,12 @@ class TradingEngine:
                         error.code,
                         error.message,
                     )
-                    continue
+                    return
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
             except Exception:
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
+
+        await self._dispatch_accounts(due_entries, enter_one)
 
     async def activation_recheck_states(self, strategy_ids: list[str]) -> dict[str, str]:
         states = dict.fromkeys(strategy_ids, "ready")
