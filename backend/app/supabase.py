@@ -8,6 +8,7 @@ import httpx
 from .application_data import ConvexApplicationData
 from .config import Settings
 from .errors import AppError
+from .report_store import REPORT_FIELDS, ReportStore
 from .runtime_store import TABLES, ConvexRuntimeStore
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ class SupabaseAdmin:
             "Content-Type": "application/json",
         }
         self.signal_tasks: set[asyncio.Task[None]] = set()
+        self.reports = ReportStore(self)
 
     async def close(self) -> None:
         if self.signal_tasks:
@@ -50,7 +52,13 @@ class SupabaseAdmin:
 
     async def select(self, table: str, params: dict[str, str]) -> list[dict[str, Any]]:
         if self.runtime is not None and table in TABLES:
-            return await self.runtime.select(table, params)
+            if table == "automation_market_snapshots":
+                return await self.reports.snapshots(params)
+            # Preserve identifiers while joining large reports from Supabase.
+            columns = params.get("select", "*")
+            runtime_params = {**params, "select": "*"} if table == "automation_agent_runs" else params
+            rows = await self.runtime.select(table, runtime_params)
+            return await self.reports.hydrate(rows, columns) if table == "automation_agent_runs" else rows
         response = await self.client.get(
             f"{self.settings.supabase_url}/rest/v1/{table}", headers=self.admin_headers, params=params
         )
@@ -91,6 +99,11 @@ class SupabaseAdmin:
 
     async def update(self, table: str, payload: dict[str, Any], params: dict[str, str]) -> list[dict[str, Any]]:
         if self.runtime is not None and table in TABLES:
+            if table == "automation_agent_runs" and any(key in REPORT_FIELDS for key in payload):
+                rows = await self.runtime.select(table, {**params, "select": "id"})
+                for row in rows:
+                    await self.reports.save(row["id"], payload)
+                payload = {key: value for key, value in payload.items() if key not in REPORT_FIELDS}
             return await self.runtime.update(table, payload, params)
         response = await self.client.patch(
             f"{self.settings.supabase_url}/rest/v1/{table}",

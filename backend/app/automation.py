@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
-from .auth import current_account, require_user
+from .auth import current_account, require_owner, require_user
 from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
 from .capital import percentage_concurrency_limit
 from .engine import TradingEngine, iso_now
@@ -586,14 +586,16 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     db: SupabaseAdmin = request.app.state.db
     engine: TradingEngine = request.app.state.engine
     user_id = str(user["id"])
+    await require_owner(db, user)
+    if shared_enabled(db.settings):
+        await require_analyzer_ready()
+        row = await db.runtime.data.request("sharedAnalysis:manual", {"requestedBy": user_id}, mutation=True)
+        return {"success": True, "runId": row["id"], "status": row["status"], "shared": True}
     await current_account(db, user, required=True)
     settings = await ensure_settings(db, user_id)
     if not settings["enabled"]:
         raise AppError(409, "Turn on Automation before running the agent", "automation_disabled")
     await require_analyzer_ready()
-    if shared_enabled(db.settings):
-        row = await db.runtime.data.request("sharedAnalysis:manual", {"requestedBy": user_id}, mutation=True)
-        return {"success": True, "runId": row["id"], "status": row["status"], "shared": True}
     rows = await db.insert(
         "automation_agent_runs",
         {
@@ -699,18 +701,8 @@ class AutomationScheduler:
             },
         )
         if shared_enabled(getattr(self.db, "settings", None)):
-            await self.db.upsert(
-                "automation_settings",
-                {
-                    "user_id": SHARED_USER_ID,
-                    "enabled": bool(settings),
-                    "model_id": MODEL_ID,
-                    "minimum_follow_up_minutes": 5,
-                    "maximum_agent_runs_per_day": 3,
-                },
-                on_conflict="user_id",
-            )
-            settings = [{"user_id": SHARED_USER_ID}] if settings else []
+            global_settings = await self.db.select("automation_settings", {"user_id": f"eq.{SHARED_USER_ID}"})
+            settings = [{"user_id": SHARED_USER_ID}] if global_settings and global_settings[0]["enabled"] else []
         fixed_runs = fixed_runs_between(now - FIXED_RUN_CATCH_UP, now + FIXED_RUN_LOOKAHEAD)
         payload = [
             {
@@ -749,11 +741,12 @@ class AutomationScheduler:
             {"select": "user_id", "enabled": "eq.true"},
         )
         enabled_users = {str(row["user_id"]) for row in enabled_rows}
-        enabled_users.discard(SHARED_USER_ID)
+        if shared_enabled(getattr(self.db, "settings", None)):
+            enabled_users = {SHARED_USER_ID} if SHARED_USER_ID in enabled_users else set()
+        else:
+            enabled_users.discard(SHARED_USER_ID)
         if not enabled_users:
             return
-        if shared_enabled(getattr(self.db, "settings", None)):
-            enabled_users = {SHARED_USER_ID}
         due = []
         for trigger_filter, capacity in (
             ("eq.activation_recheck", recheck_available),

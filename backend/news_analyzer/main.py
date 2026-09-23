@@ -88,7 +88,7 @@ class NewsAnalysisRequest(BaseModel):
 class AutomationAnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    userId: str = Field(pattern=r"^[A-Fa-f0-9-]{36}$")
+    userId: str = Field(pattern=r"^(global|[A-Fa-f0-9-]{36})$")
     agentRunId: str = Field(pattern=r"^[A-Fa-f0-9-]{36}$")
     sessionId: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     accountContext: dict[str, Any]

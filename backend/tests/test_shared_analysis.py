@@ -51,7 +51,7 @@ async def test_reservation_uses_the_same_wallet_and_policy_as_sizing():
 async def test_three_users_produce_one_fixed_review_per_session():
     db = SimpleNamespace(
         settings=SimpleNamespace(convex_runtime_enabled=True, shared_analysis_enabled=True),
-        select=AsyncMock(return_value=[{"user_id": user} for user in ("a", "b", "c")]),
+        select=AsyncMock(side_effect=[[{"user_id": user} for user in ("a", "b", "c")], [{"user_id": SHARED_USER_ID, "enabled": True}]]),
         upsert=AsyncMock(),
         rpc=AsyncMock(),
     )

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from ipaddress import ip_address
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -55,6 +56,14 @@ async def lifespan(app: FastAPI):
     app.state.engine = engine
     app.state.scheduler = scheduler
     app.state.automation_scheduler = automation_scheduler
+    if settings.convex_runtime_enabled:
+        try:
+            response = await db.client.get("https://api.ipify.org", timeout=5)
+            response.raise_for_status()
+            outbound_ip = str(ip_address(response.text.strip()))
+            await db.runtime.data.request("accounts:updateOutboundIp", {"ip": outbound_ip}, mutation=True)
+        except Exception:
+            logger.exception("Could not refresh the server outbound IP")
     if not settings.scheduler_enabled:
         await engine.recover_interrupted_states()
     scheduler.start()
@@ -144,6 +153,8 @@ async def session(request: Request, user: OptionalUser) -> dict[str, Any]:
             "email": account["app_email"],
             "displayName": account["display_name"],
             "avatarUrl": account["avatar_url"],
+            "userType": account["user_type"],
+            "phoneNumber": account["phone_number"],
         }
         if account
         else None,

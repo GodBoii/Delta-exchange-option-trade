@@ -29,6 +29,8 @@ from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
 
+from .report_data import ResearchData
+
 RECHECK_LEAD_TIME = timedelta(seconds=RECHECK_LEAD_SECONDS)
 
 
@@ -46,7 +48,7 @@ class AutomationStrategyTools(Toolkit):
         **kwargs: Any,
     ) -> None:
         self.database_url = _psycopg_url(settings.require_database_url())
-        self.user_id = str(UUID(user_id))
+        self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
         self.news_analysis_id = news_analysis_id
@@ -685,7 +687,7 @@ class DropStrategyTools(Toolkit):
         **kwargs: Any,
     ) -> None:
         self.database_url = _psycopg_url(settings.require_database_url())
-        self.user_id = str(UUID(user_id))
+        self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.proposal_id = str(UUID(proposal_id))
         self.runtime_data = runtime_data(settings)
@@ -928,7 +930,7 @@ def confirm_activation_recheck(
 
 def runtime_data(settings: NewsAgentSettings) -> ConvexApplicationData | None:
     return (
-        ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
+        ResearchData(settings.convex_url, settings.convex_trading_secret, settings.require_database_url())
         if getattr(settings, "convex_runtime_enabled", False)
         else None
     )

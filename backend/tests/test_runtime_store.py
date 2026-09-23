@@ -42,9 +42,13 @@ async def test_projection_happens_after_all_pages_and_ordering():
     assert result == [{"id": "b"}]
 
 
-async def test_upsert_sends_defaults_separately_from_changed_fields():
-    data = SimpleNamespace(request=AsyncMock(return_value=['{"id":"owner","user_id":"owner","enabled":false}']))
+async def test_settings_update_preserves_existing_limits_in_user_record():
+    data = SimpleNamespace(request=AsyncMock(side_effect=[
+        [{"user_id": "owner", "enabled": True, "maximum_agent_runs_per_day": 2}],
+        {"user_id": "owner", "enabled": False, "maximum_agent_runs_per_day": 2},
+    ]))
     await ConvexRuntimeStore(data).write("automation_settings", {"user_id": "owner", "enabled": False}, "user_id")
-    args = data.request.call_args.args[1]
-    assert "maximum_agent_runs_per_day" not in json.loads(args["rowJson"])
-    assert json.loads(args["defaultsJson"])["maximum_agent_runs_per_day"] == 3
+    assert data.request.call_args.args[0] == "settings:saveAutomation"
+    value = data.request.call_args.args[1]["value"]
+    assert value["maximum_agent_runs_per_day"] == 2
+    assert value["enabled"] is False

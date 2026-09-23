@@ -31,6 +31,12 @@ async def require_user(request: Request, authorization: str | None = Header(defa
     return user
 
 
+async def require_owner(db: SupabaseAdmin, user: dict[str, Any]) -> None:
+    rows = await db.select("profiles", {"id": f"eq.{user['id']}", "select": "user_type", "limit": "1"})
+    if not rows or rows[0].get("user_type") != "owner":
+        raise AppError(403, "Only the owner can perform this action", "owner_required")
+
+
 def mask_email(email: str | None) -> str | None:
     if not email or "@" not in email:
         return None
@@ -55,7 +61,10 @@ async def current_account(
     store = account_store(db)
     if store is not None:
         overview = await store.data.request("accounts:overview", {"userId": user_id})
-        connection, profile = overview["connection"], overview["profile"] or {}
+        profiles = await db.select("profiles", {
+            "select": "display_name,avatar_url,phone_number,user_type", "id": f"eq.{user_id}", "limit": "1",
+        })
+        connection, profile = overview["connection"], profiles[0] if profiles else {}
     else:
         connections = await db.select(
             "exchange_connections",
@@ -82,6 +91,8 @@ async def current_account(
         "status": connection.get("status") if connection else None,
         "app_email": user.get("email"),
         "display_name": profile.get("display_name") or user_name(user),
+        "user_type": profile.get("user_type", "user"),
+        "phone_number": profile.get("phone_number"),
         "avatar_url": profile.get("avatar_url") or metadata.get("avatar_url"),
     }
 

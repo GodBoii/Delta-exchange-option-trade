@@ -54,6 +54,16 @@ class ConvexRuntimeStore:
         self.data = data
 
     async def select(self, table: str, params: dict[str, str], *, raw: bool = False) -> list[dict[str, Any]]:
+        if table == "automation_settings":
+            rows = await self.data.request("settings:listAutomation", {})
+            for field, expression in params.items():
+                if field in OPTIONS:
+                    continue
+                op, _, value = expression.partition(".")
+                if op not in {"eq", "neq"}:
+                    raise AppError(500, "Unsupported settings filter", "unsupported_record_query")
+                rows = [row for row in rows if (str(row.get(field)).lower() == value.lower()) == (op == "eq")]
+            return rows if raw else self.project(rows, params)
         split = next(
             (
                 key
@@ -104,7 +114,7 @@ class ConvexRuntimeStore:
             page = await self.data.request(
                 "runtimeRecords:select",
                 {
-                    "table": table,
+                    "table": "analysisJobs" if table == "automation_agent_runs" else table,
                     "conditions": filters,
                     "columns": params.get("select", "*"),
                     "paginationOpts": {"numItems": 100, "cursor": cursor},
@@ -145,6 +155,26 @@ class ConvexRuntimeStore:
         return rows
 
     async def write(self, table: str, payload: dict[str, Any], conflict: str | None = None) -> list[dict[str, Any]]:
+        if table == "automation_settings":
+            current = await self.select(table, {"user_id": f"eq.{payload['user_id']}"})
+            value = {
+                "enabled": False,
+                "model_id": "xiaomi/mimo-v2.6-pro",
+                "minimum_follow_up_minutes": 5,
+                "maximum_agent_runs_per_day": 3,
+                **(current[0] if current else {}),
+                **payload,
+            }
+            fields = ("enabled", "model_id", "minimum_follow_up_minutes", "maximum_agent_runs_per_day")
+            row = await self.data.request(
+                "settings:saveAutomation",
+                {
+                    "userId": payload["user_id"],
+                    "value": {key: value[key] for key in fields},
+                },
+                mutation=True,
+            )
+            return [row]
         now = datetime.now(UTC).isoformat()
         row = {"id": str(uuid4()), "created_at": now, "updated_at": now, **payload}
         defaults: dict[str, Any] = {}
@@ -169,7 +199,7 @@ class ConvexRuntimeStore:
         result = await self.data.request(
             "runtimeRecords:write",
             {
-                "table": table,
+                "table": "analysisJobs" if table == "automation_agent_runs" else table,
                 "rowJson": json.dumps(row, allow_nan=False),
                 "defaultsJson": json.dumps(defaults),
                 **({"conflict": conflict} if conflict else {}),
@@ -190,7 +220,7 @@ class ConvexRuntimeStore:
             result = await self.data.request(
                 "runtimeRecords:update",
                 {
-                    "table": table,
+                    "table": "analysisJobs" if table == "automation_agent_runs" else table,
                     "ids": [row["id"] for row in rows[offset : offset + 100]],
                     "conditions": conditions(params),
                     "patchJson": json.dumps(payload, allow_nan=False),

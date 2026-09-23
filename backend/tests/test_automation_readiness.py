@@ -84,7 +84,7 @@ async def test_scheduled_run_waits_unclaimed_until_service_recovers(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_manual_run_does_not_create_a_failed_run_while_service_starts(monkeypatch) -> None:
-    db = SimpleNamespace(insert=AsyncMock())
+    db = SimpleNamespace(insert=AsyncMock(), select=AsyncMock(return_value=[{"user_type": "owner"}]), settings=SimpleNamespace(convex_runtime_enabled=False))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=db, engine=object())))
     monkeypatch.setattr(automation, "current_account", AsyncMock())
     monkeypatch.setattr(automation, "ensure_settings", AsyncMock(return_value={"enabled": True}))
