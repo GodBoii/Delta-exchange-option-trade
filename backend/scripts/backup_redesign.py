@@ -64,7 +64,8 @@ with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
  put('deployment/commit.txt',subprocess.check_output(['git','rev-parse','HEAD'],cwd=workdir))
  put('deployment/source.tar',subprocess.check_output(['git','archive','HEAD'],cwd=workdir))
  put('deployment/working.patch',subprocess.check_output(['git','diff','--binary','HEAD'],cwd=workdir))
- for name in subprocess.check_output(['git','ls-files','--others','--exclude-standard'],cwd=workdir,text=True).splitlines():
+ untracked=subprocess.check_output(['git','ls-files','--others','--exclude-standard'],cwd=workdir,text=True)
+ for name in untracked.splitlines():
   path=os.path.join(workdir,name)
   if os.path.isfile(path):
    with open(path,'rb') as source: put('deployment/untracked/'+name,source.read())

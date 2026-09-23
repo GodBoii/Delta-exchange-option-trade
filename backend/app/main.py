@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from ipaddress import ip_address
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Query, Request
