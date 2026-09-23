@@ -31,7 +31,7 @@ CHAIN = [
 
 
 def test_builtin_risk_controls_apply_to_every_compatible_template():
-    assert all(definition.takeProfitPercent == 90 for definition in DEFINITIONS)
+    assert all(definition.takeProfitPercent == 80 for definition in DEFINITIONS)
     for definition in DEFINITIONS:
         has_short_leg = any(leg.position == "sell" for leg in definition.legs)
         assert definition.emergencyStopLossPercent == (170 if has_short_leg else None)
@@ -118,6 +118,7 @@ async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definiti
         order = call.args[0]
         assert order["size"] >= 1
         assert order["reduce_only"] is False
+        assert order["order_type"] == "market_order"
         if order["side"] == "sell":
             expected_stop = Decimal("100") * (
                 Decimal("1") + Decimal(str(definition.emergencyStopLossPercent)) / Decimal("100")

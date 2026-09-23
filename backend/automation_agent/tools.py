@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -176,8 +176,18 @@ class AutomationStrategyTools(Toolkit):
         reasoning_summary: str,
         supporting_signals: list[str],
         invalidation_signals: list[str],
+        holding_policy: Literal["saved", "intraday", "overnight", "positional", "hold_to_expiry"] = "saved",
+        planned_exit_time: str | None = None,
+        expiry_policy: Literal["same_day", "next_day", "7_day", "30_day"] | None = None,
     ) -> str:
-        """Schedule one enabled saved strategy for live execution at a future time."""
+        """Schedule a saved strategy with a holding period supported by the market evidence.
+
+        holding_policy: saved preserves the template; intraday, overnight and positional
+        require planned_exit_time as an aware ISO timestamp. hold_to_expiry exits before
+        expiry using the saved safety buffer. Stops and profit targets remain active.
+        expiry_policy: optionally choose a listed expiry horizon. Risk, legs and sizing
+        remain owned by the saved strategy. Explain the holding choice in reasoning_summary.
+        """
         saved_id = str(UUID(saved_strategy_id))
         activation = _future_datetime(activation_time, "activation_time")
         expiry = _future_datetime(proposal_expiry, "proposal_expiry")
@@ -215,6 +225,9 @@ class AutomationStrategyTools(Toolkit):
                 strategy["definition_json"],
                 activation=activation,
                 option_context=market.get("executionOptionContext") or market.get("deltaOptionContext") or {},
+                holding_policy=holding_policy,
+                planned_exit_time=planned_exit_time,
+                expiry_policy=expiry_policy,
             )
             if self.user_id == SHARED_USER_ID:
                 return json.dumps(
@@ -337,6 +350,9 @@ class AutomationStrategyTools(Toolkit):
                 strategy["definition_json"],
                 activation=activation,
                 option_context=option_context,
+                holding_policy=holding_policy,
+                planned_exit_time=planned_exit_time,
+                expiry_policy=expiry_policy,
             )
             self._claim_terminal_outcome(cursor, "strategy_selected")
             cursor.execute(
@@ -944,10 +960,24 @@ def materialize_live_definition(
     *,
     activation: datetime,
     option_context: dict[str, Any],
+    holding_policy: Literal["saved", "intraday", "overnight", "positional", "hold_to_expiry"] = "saved",
+    planned_exit_time: str | None = None,
+    expiry_policy: Literal["same_day", "next_day", "7_day", "30_day"] | None = None,
 ) -> tuple[dict[str, Any], datetime]:
-    """Resolve the saved expiry policy and schedule without changing strategy-owned risk or legs."""
+    """Resolve a holding decision without changing the saved definition, risk or leg structure."""
+    if holding_policy not in {"saved", "intraday", "overnight", "positional", "hold_to_expiry"}:
+        raise ValueError("Unsupported holding policy")
+    timed = holding_policy in {"intraday", "overnight", "positional"}
+    if timed != (planned_exit_time is not None):
+        raise ValueError("A planned exit time is required only for an explicit timed holding policy")
+    if activation.utcoffset() is None:
+        raise ValueError("Activation must include a timezone")
     live = deepcopy(definition)
     live.pop("selectionCriteria", None)
+    if expiry_policy is not None:
+        if expiry_policy not in {"same_day", "next_day", "7_day", "30_day"}:
+            raise ValueError("Unsupported expiry policy")
+        live["expiryPolicy"] = expiry_policy
     expiry = resolve_option_expiry(
         policy=str(live.get("expiryPolicy") or "same_day"),
         activation=activation,
@@ -958,6 +988,9 @@ def materialize_live_definition(
         leg["expiry"] = expiry_date
 
     entry = live.get("entry") if isinstance(live.get("entry"), dict) else {}
+    if holding_policy != "saved":
+        live["holdingMode"] = "hold_to_expiry" if holding_policy == "hold_to_expiry" else "intraday"
+        entry["strategyType"] = {"overnight": "btst", "positional": "positional"}.get(holding_policy, "intraday")
     try:
         old_entry = datetime.fromisoformat(str(entry.get("entryAt")).replace("Z", "+00:00"))
         old_exit = datetime.fromisoformat(str(entry.get("exitAt")).replace("Z", "+00:00"))
@@ -966,12 +999,25 @@ def materialize_live_definition(
         duration = timedelta(hours=7)
 
     expiry_exit = expiry - timedelta(minutes=int(live.get("exitMinutesBeforeExpiry") or 5))
-    if str(live.get("holdingMode")) == "hold_to_expiry":
+    if timed:
+        exit_at = _aware_datetime(planned_exit_time, "planned_exit_time")
+        if exit_at > expiry_exit:
+            raise ValueError("Planned exit exceeds the selected contract expiry safety buffer")
+        entry_day = activation.astimezone(IST).date()
+        exit_day = exit_at.astimezone(IST).date()
+        if holding_policy == "intraday" and exit_day != entry_day:
+            raise ValueError("Intraday exit must be on the entry date in Asia/Kolkata")
+        if holding_policy == "overnight" and exit_day != entry_day + timedelta(days=1):
+            raise ValueError("Overnight exit must be on the following date in Asia/Kolkata")
+    elif str(live.get("holdingMode")) == "hold_to_expiry":
         exit_at = expiry_exit
     else:
         exit_at = min(activation + duration, expiry_exit)
     if exit_at <= activation:
         raise ValueError("The resolved option expiry does not leave enough time to run this strategy")
+    if holding_policy == "hold_to_expiry":
+        days_held = (exit_at.astimezone(IST).date() - activation.astimezone(IST).date()).days
+        entry["strategyType"] = "intraday" if days_held == 0 else "btst" if days_held == 1 else "positional"
 
     entry["entryAt"] = activation.isoformat()
     entry["exitAt"] = exit_at.isoformat()

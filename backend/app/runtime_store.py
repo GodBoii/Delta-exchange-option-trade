@@ -151,7 +151,7 @@ class ConvexRuntimeStore:
         if table == "automation_settings":
             defaults = {
                 "enabled": False,
-                "model_id": "deepseek/deepseek-v4.1-flash",
+                "model_id": "xiaomi/mimo-v2.6-pro",
                 "minimum_follow_up_minutes": 5,
                 "maximum_agent_runs_per_day": 3,
             }
@@ -161,7 +161,7 @@ class ConvexRuntimeStore:
                 "status": "scheduled",
                 "outcome": None,
                 "parent_agent_run_id": None,
-                "model_id": "deepseek/deepseek-v4.1-flash",
+                "model_id": "xiaomi/mimo-v2.6-pro",
                 "signals_to_inspect": [],
             }
         elif table == "executions":

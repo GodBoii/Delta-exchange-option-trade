@@ -140,8 +140,18 @@ def run_automation_team(
                     "legs, option types, and positions."
                 ),
                 (
-                    "Use each strategy exactly as saved. Decide which one can profit in the current market and when "
-                    "to enter."
+                    "Preserve the saved option legs, strike rules, size policy, stops, profit target and order types. "
+                    "Choose entry time, holding_policy and expiry_policy to match the market thesis. Saved holding "
+                    "durations are defaults, not a seven-hour cap. Choose intraday, overnight or positional with an "
+                    "explicit planned_exit_time, or hold_to_expiry with the saved expiry safety buffer. Intraday "
+                    "means an exit on the same IST date; overnight means the next IST date. A positional exit can "
+                    "span several days but must precede the chosen expiry buffer. Use saved to retain the template. "
+                    "Explain the exact entry, exit, expiry and holding rationale in the report. Template descriptions "
+                    "may describe the old seven-hour default; your explicit holding selection overrides that duration. "
+                    "Do not extend naked shorts simply to avoid realizing a loss. Consider event timing, executable "
+                    "option liquidity, time decay, volatility, and short-strike distance over the entire hold. "
+                    "Stops and profit targets can close any holding policy early. If evidence cannot support the "
+                    "proposed horizon, choose a shorter supported hold or no trade."
                 ),
                 (
                     "select_strategy_and_time schedules that saved strategy on the live engine for the chosen time. "
@@ -346,6 +356,8 @@ def run_activation_recheck(
         tools=[drop_tools],
         instructions=[
             "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
+            "Assess the selected strategy's actual entry, exit and expiry timestamps. Its explicit holding policy "
+            "overrides a historical seven-hour default in its description. Do not change the schedule during recheck.",
             "Use the fresh Binance Spot packet and charts to judge whether BTC direction or structure changed.",
             "Compare the supplied dated sessionHistory and recent averages; do not treat missing observations as zero.",
             "The earlier agent's complete report is evidence from selection time, not a current market reading.",

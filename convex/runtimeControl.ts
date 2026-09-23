@@ -20,7 +20,7 @@ export function uuid() {
 export function newRun(value: Row): Row {
   const now = new Date().toISOString();
   return { id: uuid(), created_at: now, updated_at: now, status: "scheduled", outcome: null, parent_agent_run_id: null,
-    model_id: "deepseek/deepseek-v4.1-flash", signals_to_inspect: [], ...value };
+    model_id: "xiaomi/mimo-v2.6-pro", signals_to_inspect: [], ...value };
 }
 
 export const reserveCapital = mutation({

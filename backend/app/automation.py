@@ -23,7 +23,7 @@ from .supabase import SupabaseAdmin
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automation", tags=["automation"])
 news_analyzer_url = "http://news-analyzer:8002"
-MODEL_ID = "deepseek/deepseek-v4.1-flash"
+MODEL_ID = "xiaomi/mimo-v2.6-pro"
 FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
 FIXED_RUN_CATCH_UP = timedelta(minutes=5)
 FIXED_RUN_SYNC_SECONDS = 60.0

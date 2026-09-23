@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = BACKEND_DIR / ".env"
 
-MODEL_ID = "deepseek/deepseek-v4.1-flash"
+MODEL_ID = "xiaomi/mimo-v2.6-pro"
 AUTOMATION_MODEL_ID = MODEL_ID
 AUTOMATION_SESSION_TABLE = "automation_agent_sessions"
 SESSION_TABLE = "news_agent_sessions"

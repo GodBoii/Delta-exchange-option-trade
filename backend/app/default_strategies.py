@@ -78,7 +78,7 @@ def _base(
         "riskMode": risk_mode,
         "riskBasis": risk_basis,
         "stopLossPercent": 100,
-        "takeProfitPercent": 90,
+        "takeProfitPercent": 80,
         "combinedStopLossPercent": 100 if risk_mode == "combined_premium" else None,
         "emergencyStopLossPercent": 170 if risk_basis != "net_debit" else None,
         "emergencyExitEnabled": True,
