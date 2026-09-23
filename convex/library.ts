@@ -3,8 +3,11 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { savedStrategyRecord, capitalRecord } from "./applicationValidators";
 import { authorizeTradingService, authorizeAccountReader } from "./tradingAuth";
+import { ensureUser, findUser, systemConfig } from "./userRecords";
+import { cleanStrategyName } from "../lib/strategy-name";
 
 function validateDefinition(name: string, definitionJson: string, enabled: boolean) {
+  if (name !== cleanStrategyName(name)) throw new ConvexError("Keep version numbers out of strategy names");
   if (name.trim().length < 2 || name.length > 80 || definitionJson.length > 262144) {
     throw new ConvexError("Invalid strategy name or definition size");
   }
@@ -36,10 +39,11 @@ export const save = mutation({
     if (!identity) throw new ConvexError("Sign in to save a strategy");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.id)) throw new ConvexError("Invalid strategy ID");
     validateDefinition(args.name, args.definitionJson, args.enabled);
+    const owner = (await systemConfig(ctx))?.ownerUserId === identity.subject;
     const existing = await ctx.db.query("savedStrategies").withIndex("by_external_id", q => q.eq("id", args.id)).unique();
     const now = new Date().toISOString();
     if (existing) {
-      if (existing.user_id !== identity.subject || existing.deleted) throw new ConvexError("Strategy unavailable");
+      if ((existing.user_id !== identity.subject && !(owner && existing.user_id === null)) || existing.deleted) throw new ConvexError("Strategy unavailable");
       if (existing.name === args.name && existing.definitionJson === args.definitionJson && existing.enabled_for_ai === args.enabled) return existing;
       if (args.expectedVersion !== existing.version) throw new ConvexError("Strategy changed in another session. Reload before saving.");
       const update = { name: args.name, definitionJson: args.definitionJson, enabled_for_ai: args.enabled,
@@ -48,7 +52,7 @@ export const save = mutation({
       return { ...existing, ...update };
     }
     if (args.expectedVersion !== null) throw new ConvexError("Strategy no longer exists");
-    const value = { id: args.id, user_id: identity.subject, name: args.name, definitionJson: args.definitionJson,
+    const value = { id: args.id, user_id: owner ? null : identity.subject, name: args.name, definitionJson: args.definitionJson,
       enabled_for_ai: args.enabled, version: 1, source_run_id: null, created_at: now, updated_at: now, deleted: false };
     await ctx.db.insert("savedStrategies", value);
     return value;
@@ -61,7 +65,8 @@ export const remove = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to delete a strategy");
     const existing = await ctx.db.query("savedStrategies").withIndex("by_external_id", q => q.eq("id", args.id)).unique();
-    if (!existing || existing.user_id !== identity.subject) throw new ConvexError("Strategy unavailable");
+    const owner = (await systemConfig(ctx))?.ownerUserId === identity.subject;
+    if (!existing || (existing.user_id !== identity.subject && !(owner && existing.user_id === null))) throw new ConvexError("Strategy unavailable");
     if (existing.deleted) return;
     if (existing.version !== args.expectedVersion) throw new ConvexError("Strategy changed. Reload before deleting.");
     await ctx.db.patch(existing._id, { deleted: true, enabled_for_ai: false, updated_at: new Date().toISOString() });
@@ -148,8 +153,7 @@ export const getCapital = query({
   args: { secret: v.string(), userId: v.string() },
   handler: async (ctx, args) => {
     authorizeAccountReader(args.secret);
-    return await ctx.db.query("capitalSettings").withIndex("by_user", q => q.eq("user_id", args.userId)).unique()
-      ?? { user_id: args.userId, allocation_mode: "half_balance", capital_amount: null };
+    return { user_id: args.userId, ...((await findUser(ctx, args.userId))?.capital ?? { allocation_mode: "half_balance", capital_amount: null }) };
   },
 });
 
@@ -161,9 +165,8 @@ export const setCapital = mutation({
     if (args.value.allocation_mode === "fixed_amount") {
       if (amount === null || !/^[0-9]+(?:\.[0-9]+)?$/.test(amount) || !(Number(amount) > 0) || !Number.isFinite(Number(amount))) throw new ConvexError("Invalid capital amount");
     } else if (amount !== null) throw new ConvexError("Percentage allocation cannot have a fixed amount");
-    const existing = await ctx.db.query("capitalSettings").withIndex("by_user", q => q.eq("user_id", args.value.user_id)).unique();
-    if (existing) await ctx.db.patch(existing._id, args.value);
-    else await ctx.db.insert("capitalSettings", args.value);
+    const user = await ensureUser(ctx, args.value.user_id);
+    await ctx.db.patch(user._id, { capital: { allocation_mode: args.value.allocation_mode, capital_amount: amount }, updatedAt: new Date().toISOString() });
     return args.value;
   },
 });
@@ -182,22 +185,6 @@ export const importStrategies = mutation({
           throw new ConvexError("Import conflicts with an existing strategy");
         }
       } else await ctx.db.insert("savedStrategies", { ...record, deleted: false });
-    }
-  },
-});
-
-export const importCapital = mutation({
-  args: { secret: v.string(), records: v.array(capitalRecord) },
-  handler: async (ctx, args) => {
-    authorizeTradingService(args.secret);
-    if (process.env.CONVEX_IMPORT_ENABLED !== "true" || args.records.length > 100) throw new ConvexError("Import disabled or batch too large");
-    for (const record of args.records) {
-      const existing = await ctx.db.query("capitalSettings").withIndex("by_user", q => q.eq("user_id", record.user_id)).unique();
-      if (existing) {
-        if (existing.allocation_mode !== record.allocation_mode || existing.capital_amount !== record.capital_amount) {
-          throw new ConvexError("Import conflicts with an existing capital policy");
-        }
-      } else await ctx.db.insert("capitalSettings", record);
     }
   },
 });

@@ -2,19 +2,20 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { orderContext, orderOutcome } from "./orderValidators";
 import { exchangeFill } from "./fillValidators";
-import { savedStrategyRecord, capitalRecord, profileRecord, connectionRecord } from "./applicationValidators";
+import { savedStrategyRecord } from "./applicationValidators";
+import { userRecord, automationPreferences } from "./userRecords";
 import { runtimeTables } from "./runtimeTables";
 
 export default defineSchema({
-  runtimePayloads: defineTable({ bodyJson: v.string() }),
   ...runtimeTables,
-  profiles: defineTable(profileRecord).index("by_user", ["id"]),
-  exchangeConnections: defineTable(connectionRecord).index("by_user", ["user_id"]).index("by_delta_account", ["delta_user_id"]),
+  users: defineTable(userRecord).index("by_user", ["userId"]).index("by_delta_account", ["connection.delta_user_id"]),
+  systemSettings: defineTable({
+    key: v.literal("main"), ownerUserId: v.string(), outboundIp: v.union(v.string(), v.null()),
+    ipCheckedAt: v.union(v.string(), v.null()), analysis: automationPreferences,
+  }).index("by_key", ["key"]),
   savedStrategies: defineTable({ ...savedStrategyRecord.fields, deleted: v.boolean() })
     .index("by_external_id", ["id"])
     .index("by_owner_deleted", ["user_id", "deleted"]),
-  capitalSettings: defineTable(capitalRecord)
-    .index("by_user", ["user_id"]),
   exchangeFills: defineTable({ accountId: v.string(), ...exchangeFill.fields })
     .index("by_account_fill", ["accountId", "fillId"])
     .index("by_account_product_time", ["accountId", "productId", "occurredAt"]),

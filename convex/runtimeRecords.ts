@@ -10,7 +10,10 @@ export type Row = Record<string, unknown>;
 export function parseRow(text: string): Row {
   const value: unknown = JSON.parse(text);
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ConvexError("Expected a record");
-  return Object.fromEntries(Object.entries(value));
+  const row = Object.fromEntries(Object.entries(value));
+  // The compatibility API supplies a scope key to old callers. Global records
+  // themselves have no owning user or synthetic Auth identity.
+  return row.scope === "global" ? { ...row, user_id: "global" } : row;
 }
 export function text(row: Row, key: string): string { return typeof row[key] === "string" ? row[key] : ""; }
 export function time(value: unknown): number {
@@ -23,8 +26,7 @@ export async function get(ctx: QueryCtx | MutationCtx, table: RuntimeTable, id: 
 }
 const largeFields = ["market_json", "account_json", "report_markdown", "member_responses", "tool_calls"];
 export async function hydrate(ctx: QueryCtx | MutationCtx, record: NonNullable<Awaited<ReturnType<typeof get>>>) {
-  const payload = record.payload ? await ctx.db.get(record.payload) : null;
-  return { ...parseRow(record.rowJson), ...(payload ? parseRow(payload.bodyJson) : {}) };
+  return parseRow(record.rowJson);
 }
 export async function ownerRows(ctx: QueryCtx | MutationCtx, table: RuntimeTable, owner: string) {
   // Control-plane transactions only. Larger accounts must paginate through select.
@@ -46,9 +48,8 @@ export async function put(ctx: MutationCtx, table: RuntimeTable, row: Row, exist
   if (!owner || (existing && existing.owner !== owner)) throw new ConvexError("Record owner cannot change");
   if (existing && ["executions", "execution_orders"].includes(table) && existing.relation !== relation) throw new ConvexError("Execution parent cannot change");
   const uniqueKey = table === "execution_orders" ? text(row, "client_order_id")
-    : table === "automation_agent_runs" ? text(row, "run_key")
+    : table === "analysisJobs" ? text(row, "run_key")
     : table === "strategy_capital_slots" ? String(row.slot_number)
-    : table === "automation_settings" ? owner
     : table === "strategy_proposals" && text(row, "shared_decision_id") ? `shared:${text(row, "shared_decision_id")}` : externalId;
   if (uniqueKey) {
     const duplicate = table === "execution_orders"
@@ -59,32 +60,20 @@ export async function put(ctx: MutationCtx, table: RuntimeTable, row: Row, exist
   const status = text(row, "status") || text(row, "state");
   const allowed = table === "strategies" ? ["draft", "scheduled", "executing_entry", "active", "executing_exit", "completed", "attention", "cancelled"]
     : table === "executions" ? ["running", "completed", "partial_or_failed"]
-    : table === "automation_agent_runs" ? ["scheduled", "running", "completed", "failed", "cancelled"]
+    : table === "analysisJobs" ? ["scheduled", "running", "completed", "failed", "cancelled"]
     : table === "strategy_capital_slots" ? ["available", "reserved", "active"] : null;
   if (allowed && !allowed.includes(status)) throw new ConvexError("Invalid lifecycle state");
   if (table === "execution_orders" && (!Number.isInteger(row.size) || Number(row.size) <= 0 || !["buy", "sell"].includes(text(row, "side")))) throw new ConvexError("Invalid order quantity or side");
-  const large = Object.fromEntries(Object.entries(row).filter(([key]) => largeFields.includes(key)));
-  const metadata = Object.fromEntries(Object.entries(row).filter(([key]) => !largeFields.includes(key)));
-  let payloadId = existing?.payload;
-  let body: Row = {};
-  if (payloadId) {
-    const payload = await ctx.db.get(payloadId);
-    if (!payload) throw new ConvexError("Record payload missing");
-    body = parseRow(payload.bodyJson);
-  }
-  if (Object.keys(large).length) {
-    body = { ...body, ...large };
-    const bodyJson = JSON.stringify(body);
-    if (bodyJson.length > 900000) throw new ConvexError("Report payload exceeds supported size");
-    if (payloadId) await ctx.db.patch(payloadId, { bodyJson });
-    else payloadId = await ctx.db.insert("runtimePayloads", { bodyJson });
-  }
+  if (Object.keys(row).some(key => largeFields.includes(key))) throw new ConvexError("Research payloads belong in Supabase");
+  const metadata = owner === "global"
+    ? { ...Object.fromEntries(Object.entries(row).filter(([key]) => key !== "user_id")), scope: "global" }
+    : row;
   const fields = { externalId, owner, relation, status, uniqueKey,
     created: time(row.created_at ?? row.started_at), time: time(row.scheduled_for ?? row.entry_at ?? row.activation_time ?? row.started_at ?? row.created_at),
-    rowJson: JSON.stringify(metadata), ...(payloadId ? { payload: payloadId } : {}) };
+    rowJson: JSON.stringify(metadata) };
   if (existing) await ctx.db.patch(existing._id, fields);
   else await ctx.db.insert(table, fields);
-  if (table === "strategies" || table === "automation_agent_runs") {
+  if (table === "strategies" || table === "analysisJobs") {
     const scope = table === "strategies" ? "strategies" : "automation";
     const signal = await ctx.db.query("signals").withIndex("by_scope_entity", q => q.eq("scope", scope).eq("entityId", externalId)).unique();
     const outcome = text(row, "outcome");
@@ -100,7 +89,7 @@ export async function put(ctx: MutationCtx, table: RuntimeTable, row: Row, exist
       reserved_at: null, released_at: new Date().toISOString(),
     }, slot);
   }
-  return JSON.stringify({ ...metadata, ...body });
+  return JSON.stringify(row);
 }
 
 const condition = v.object({ field: v.string(), op: v.union(v.literal("eq"), v.literal("neq"), v.literal("in"),
@@ -140,7 +129,7 @@ export const select = query({
     if (id) {
       const record = await get(ctx, args.table, String(JSON.parse(id.valueJson)));
       return { page: record && matches(parseRow(record.rowJson), args.conditions)
-        ? [includePayload ? JSON.stringify(await hydrate(ctx, record)) : record.rowJson] : [], isDone: true, continueCursor: "" };
+        ? [includePayload ? JSON.stringify(await hydrate(ctx, record)) : JSON.stringify(parseRow(record.rowJson))] : [], isDone: true, continueCursor: "" };
     }
     const owner = equal("user_id");
     const status = equal("status");
@@ -153,9 +142,9 @@ export const select = query({
       : owner ? base.withIndex("by_owner_created", q => q.eq("owner", String(JSON.parse(owner.valueJson))))
       : status ? base.withIndex("by_status_created", q => q.eq("status", String(JSON.parse(status.valueJson))))
       : base.withIndex("by_external");
-    const page = await indexed.paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, includePayload ? 4 : 100) });
+    const page = await indexed.paginate({ ...args.paginationOpts, numItems: Math.min(args.paginationOpts.numItems, 100) });
     const matched = page.page.filter(item => matches(parseRow(item.rowJson), args.conditions));
-    return { ...page, page: await Promise.all(matched.map(async item => includePayload ? JSON.stringify(await hydrate(ctx, item)) : item.rowJson)) };
+    return { ...page, page: await Promise.all(matched.map(async item => includePayload ? JSON.stringify(await hydrate(ctx, item)) : JSON.stringify(parseRow(item.rowJson)))) };
   },
 });
 
@@ -188,6 +177,25 @@ export const write = mutation({
   },
 });
 
+export const importBatch = mutation({
+  args: { secret: v.string(), table: runtimeTableName, rows: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    if (process.env.CONVEX_IMPORT_ENABLED !== "true" || args.rows.length > 25) throw new ConvexError("Import disabled or batch too large");
+    for (const value of args.rows) {
+      const row = parseRow(value);
+      const existing = await get(ctx, args.table, text(row, "id"));
+      if (existing) {
+        const current = parseRow(existing.rowJson);
+        if (Object.entries(row).some(([key, item]) => JSON.stringify(current[key]) !== JSON.stringify(item))) {
+          throw new ConvexError("Import conflicts with current data");
+        }
+      } else await put(ctx, args.table, row);
+    }
+    return args.rows.length;
+  },
+});
+
 export const update = mutation({
   args: { secret: v.string(), table: runtimeTableName, ids: v.array(v.string()), conditions: v.array(condition), patchJson: v.string(), remove: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
@@ -211,8 +219,7 @@ export const update = mutation({
           for (const execution of executions) {
             const orders = await ctx.db.query("execution_orders").withIndex("by_relation", q => q.eq("relation", execution.externalId)).take(1001);
             if (orders.length > 1000) throw new ConvexError("Order deletion exceeds transaction capacity");
-            for (const order of orders) { if (order.payload) await ctx.db.delete(order.payload); await ctx.db.delete(order._id); }
-            if (execution.payload) await ctx.db.delete(execution.payload);
+            for (const order of orders) { await ctx.db.delete(order._id); }
             await ctx.db.delete(execution._id);
           }
           const links = await ctx.db.query("strategy_proposals").withIndex("by_relation", q => q.eq("relation", id)).collect();
@@ -221,8 +228,7 @@ export const update = mutation({
           for (const slot of slots) await put(ctx, "strategy_capital_slots", { ...parseRow(slot.rowJson), status: "available", strategy_id: null, proposal_id: null, reserved_at: null, released_at: new Date().toISOString() }, slot);
         }
         await ctx.db.delete(existing._id);
-        if (existing.payload) await ctx.db.delete(existing.payload);
-        if (args.table === "strategies" || args.table === "automation_agent_runs") {
+        if (args.table === "strategies" || args.table === "analysisJobs") {
           const scope = args.table === "strategies" ? "strategies" : "automation";
           const signal = await ctx.db.query("signals").withIndex("by_scope_entity", q => q.eq("scope", scope).eq("entityId", id)).unique();
           if (signal) await ctx.db.patch(signal._id, { status: "deleted", updatedAt: Date.now() });

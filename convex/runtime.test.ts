@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import schema from "./schema";
+import { defaultAutomation } from "./userRecords";
 
 const modules = import.meta.glob(["./**/*.ts", "./**/*.js", "!./**/*.test.ts"]);
 const write = makeFunctionReference<"mutation">("runtimeRecords:write");
@@ -16,8 +17,8 @@ afterEach(() => vi.unstubAllEnvs());
 
 test("capital cannot be reserved twice or beyond account capacity", async () => {
   const t = convexTest(schema, modules);
-  await t.run(async ctx => { await ctx.db.insert("exchangeConnections", { id: "connection", user_id: "owner", delta_user_id: "account",
-    account_name: "Main", email_masked: null, environment: "production", status: "connected", ciphertext: "encrypted", fingerprint: "fp", updated_at: "date" }); });
+  await t.run(async ctx => { await ctx.db.insert("users", { userId: "owner", capital: { allocation_mode: "half_balance", capital_amount: null }, automation: { ...defaultAutomation, enabled: true }, createdAt: "date", updatedAt: "date", connection: { id: "connection", user_id: "owner", delta_user_id: "account",
+    account_name: "Main", email_masked: null, environment: "production", status: "connected", ciphertext: "encrypted", fingerprint: "fp", updated_at: "date" } }); });
   for (const id of ["first", "second"]) await t.mutation(write, { ...args, table: "strategies", rowJson: JSON.stringify({ id, user_id: "owner", status: "scheduled" }) });
   const request = { ...args, p_user_id: "owner", p_strategy_id: "first", p_maximum_slots: 1, p_budget: "50", p_total_balance: "100" };
   expect((await t.mutation(reserve, request)).created).toBe(true);
@@ -38,7 +39,7 @@ test("claim compare-and-set runs inside the mutation", async () => {
 
 test("independent reviews run concurrently but each run is claimed once", async () => {
   const t = convexTest(schema, modules);
-  for (const id of ["a", "b"]) await t.mutation(write, { ...args, table: "automation_agent_runs",
+  for (const id of ["a", "b"]) await t.mutation(write, { ...args, table: "analysisJobs",
     rowJson: JSON.stringify({ id, user_id: "owner", status: "scheduled", run_key: id }) });
   expect(await t.mutation(claim, { ...args, p_user_id: "owner", p_run_id: "a" })).toHaveLength(1);
   expect(await t.mutation(claim, { ...args, p_user_id: "owner", p_run_id: "b" })).toHaveLength(1);
@@ -50,38 +51,30 @@ test("pending rechecks migrate to seven minutes without changing running runs", 
   const activation = Date.now() + 900000;
   await t.mutation(write, { ...args, table: "strategy_proposals",
     rowJson: JSON.stringify({ id: "proposal", user_id: "owner", activation_time: new Date(activation).toISOString() }) });
-  for (const status of ["scheduled", "running"]) await t.mutation(write, { ...args, table: "automation_agent_runs",
+  for (const status of ["scheduled", "running"]) await t.mutation(write, { ...args, table: "analysisJobs",
     rowJson: JSON.stringify({ id: status, user_id: "owner", status, trigger: "activation_recheck",
       strategy_proposal_id: "proposal", scheduled_for: new Date(activation - 300000).toISOString() }) });
   const migrate = makeFunctionReference<"mutation">("runtimeControl:reschedulePendingRechecks");
   expect(await t.mutation(migrate, { ...args, cursor: null })).toMatchObject({ updated: 1, isDone: true });
   await t.run(async ctx => {
-    const rows = await ctx.db.query("automation_agent_runs").collect();
+    const rows = await ctx.db.query("analysisJobs").collect();
     expect(rows.find(row => row.externalId === "scheduled")?.time).toBe(activation - 420000);
     expect(rows.find(row => row.externalId === "running")?.time).toBe(activation - 300000);
   });
   expect(await t.mutation(migrate, { ...args, cursor: null })).toMatchObject({ updated: 0 });
 });
 
-test("upsert preserves existing policy fields and null filters match absent fields", async () => {
+test("null filters match absent fields", async () => {
   const t = convexTest(schema, modules);
-  await t.mutation(write, { ...args, table: "automation_settings", rowJson: '{"id":"owner","user_id":"owner","maximum_agent_runs_per_day":2,"enabled":true}' });
-  await t.mutation(write, { ...args, table: "automation_settings", conflict: "user_id", rowJson: '{"id":"owner","user_id":"owner","enabled":false}', defaultsJson: '{"maximum_agent_runs_per_day":3}' });
-  const result = await t.query(select, { ...args, table: "automation_settings", conditions: [{ field: "missing", op: "is", valueJson: "null" }], paginationOpts: { numItems: 100, cursor: null } });
-  expect(JSON.parse(result.page[0])).toMatchObject({ maximum_agent_runs_per_day: 2, enabled: false });
+  await t.mutation(write, { ...args, table: "strategies", rowJson: '{"id":"test","user_id":"owner","status":"scheduled"}' });
+  const result = await t.query(select, { ...args, table: "strategies", conditions: [{ field: "missing", op: "is", valueJson: "null" }], paginationOpts: { numItems: 100, cursor: null } });
+  expect(result.page).toHaveLength(1);
 });
 
-test("large reports are excluded from scheduling scans and preserved on status updates", async () => {
+test("research payloads cannot accidentally be duplicated into Convex", async () => {
   const t = convexTest(schema, modules);
-  const report = "r".repeat(550000);
-  await t.mutation(write, { ...args, table: "automation_agent_runs", rowJson: JSON.stringify({ id: "large", user_id: "owner", status: "running", report_markdown: report }) });
-  await t.mutation(update, { ...args, table: "automation_agent_runs", ids: ["large"], conditions: [], patchJson: '{"status":"completed"}' });
-  const input = { ...args, table: "automation_agent_runs", conditions: [], paginationOpts: { numItems: 100, cursor: null } };
-  const metadata = await t.query(select, { ...input, columns: "id,status" });
-  expect(metadata.page[0].length).toBeLessThan(1000);
-  const full = await t.query(select, { ...input, columns: "*" });
-  expect(JSON.parse(full.page[0]).report_markdown).toBe(report);
-  expect(JSON.parse(full.page[0]).status).toBe("completed");
+  await expect(t.mutation(write, { ...args, table: "analysisJobs", rowJson: JSON.stringify({ id: "large", user_id: "global", status: "running", report_markdown: "report" }) })).rejects.toThrow("Supabase");
+  expect(await t.run(ctx => ctx.db.query("analysisJobs").collect())).toEqual([]);
 });
 
 test("import does not rewrite source data or overwrite a newer record", async () => {

@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { get, ownerRows, parseRow, put, text, time, type Row } from "./runtimeRecords";
 import { authorizeTradingService } from "./tradingAuth";
+import { findUser } from "./userRecords";
 
 const fixedReviewTriggers = new Set([
   "asia_session",
@@ -40,12 +41,12 @@ export const reserveCapital = mutation({
       const [whole, fraction = ""] = value.split(".");
       return BigInt(whole) * 10n ** 30n + BigInt(fraction.padEnd(30, "0"));
     };
-    const connection = await ctx.db.query("exchangeConnections").withIndex("by_user", q => q.eq("user_id", args.p_user_id)).unique();
+    const connection = (await findUser(ctx, args.p_user_id))?.connection;
     if (!connection || connection.status !== "connected") throw new ConvexError("Delta account required");
-    const aliases = await ctx.db.query("exchangeConnections").withIndex("by_delta_account", q => q.eq("delta_user_id", connection.delta_user_id)).collect();
+    const aliases = await ctx.db.query("users").withIndex("by_delta_account", q => q.eq("connection.delta_user_id", connection.delta_user_id)).collect();
     let reserved = 0n;
     for (const alias of aliases) {
-      for (const item of await ownerRows(ctx, "strategy_capital_slots", alias.user_id)) {
+      for (const item of await ownerRows(ctx, "strategy_capital_slots", alias.userId)) {
         if (["reserved", "active"].includes(item.status)) reserved += fixed(parseRow(item.rowJson).reserved_budget);
       }
     }
@@ -84,10 +85,10 @@ export const claimAgent = mutation({
   args: { secret: v.string(), p_user_id: v.string(), p_run_id: v.string() },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
-    const run = await get(ctx, "automation_agent_runs", args.p_run_id);
+    const run = await get(ctx, "analysisJobs", args.p_run_id);
     if (!run || run.owner !== args.p_user_id || run.status !== "scheduled") return [];
     const row = { ...parseRow(run.rowJson), status: "running", started_at: new Date().toISOString(), error: null };
-    await put(ctx, "automation_agent_runs", row, run);
+    await put(ctx, "analysisJobs", row, run);
     return [row];
   },
 });
@@ -97,7 +98,7 @@ export const reschedulePendingRechecks = mutation({
   args: { secret: v.string(), cursor: v.union(v.string(), v.null()) },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
-    const page = await ctx.db.query("automation_agent_runs")
+    const page = await ctx.db.query("analysisJobs")
       .withIndex("by_status_time", q => q.eq("status", "scheduled"))
       .paginate({ numItems: 100, cursor: args.cursor });
     let updated = 0;
@@ -108,7 +109,7 @@ export const reschedulePendingRechecks = mutation({
       if (!proposal || proposal.owner !== run.owner) continue;
       const target = time(parseRow(proposal.rowJson).activation_time) - 420000;
       if (!Number.isFinite(target) || target <= Date.now() || run.time === target) continue;
-      await put(ctx, "automation_agent_runs", { ...row, scheduled_for: new Date(target).toISOString() }, run);
+      await put(ctx, "analysisJobs", { ...row, scheduled_for: new Date(target).toISOString() }, run);
       updated += 1;
     }
     return { updated, cursor: page.continueCursor, isDone: page.isDone };
@@ -123,11 +124,11 @@ export const ensureFixedRuns = mutation({
     if (args.p_runs.length > 1000) throw new ConvexError("Fixed-run batch too large");
     let count = 0;
     for (const item of args.p_runs) {
-      const existing = await ctx.db.query("automation_agent_runs")
+      const existing = await ctx.db.query("analysisJobs")
         .withIndex("by_owner_unique", q => q.eq("owner", item.user_id).eq("uniqueKey", item.run_key)).unique();
-      if (!existing) { await put(ctx, "automation_agent_runs", newRun(item)); count++; }
+      if (!existing) { await put(ctx, "analysisJobs", newRun(item)); count++; }
       else if (existing.status === "cancelled" && time(item.scheduled_for) > Date.now()) {
-        await put(ctx, "automation_agent_runs", { ...parseRow(existing.rowJson), status: "scheduled", completed_at: null,
+        await put(ctx, "analysisJobs", { ...parseRow(existing.rowJson), status: "scheduled", completed_at: null,
           error: null, outcome: null, scheduled_for: item.scheduled_for }, existing); count++;
       }
     }
@@ -139,7 +140,7 @@ export const cancelRedundantFollowups = mutation({
   args: { secret: v.string() },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
-    const pending = await ctx.db.query("automation_agent_runs").withIndex("by_status_created", q => q.eq("status", "scheduled")).take(1001);
+    const pending = await ctx.db.query("analysisJobs").withIndex("by_status_created", q => q.eq("status", "scheduled")).take(1001);
     if (pending.length > 1000) throw new ConvexError("Pending-review scan exceeds transaction limit");
     let count = 0;
     for (const item of pending) {
@@ -150,7 +151,7 @@ export const cancelRedundantFollowups = mutation({
         return other.owner === item.owner && fixedReviewTriggers.has(trigger) && other.time <= item.time;
       });
       if (fixedReviewAlreadyFirst) {
-        await put(ctx, "automation_agent_runs", { ...row, status: "cancelled", completed_at: new Date().toISOString(), error: "A fixed session review is already scheduled first" }, item); count++;
+        await put(ctx, "analysisJobs", { ...row, status: "cancelled", completed_at: new Date().toISOString(), error: "A fixed session review is already scheduled first" }, item); count++;
       }
     }
     return count;

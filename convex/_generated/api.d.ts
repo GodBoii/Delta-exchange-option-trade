@@ -13,16 +13,19 @@ import type * as applicationValidators from "../applicationValidators.js";
 import type * as exchangeFills from "../exchangeFills.js";
 import type * as fillValidators from "../fillValidators.js";
 import type * as library from "../library.js";
+import type * as migration from "../migration.js";
 import type * as orderIntents from "../orderIntents.js";
 import type * as orderValidators from "../orderValidators.js";
 import type * as runtimeAutomation from "../runtimeAutomation.js";
 import type * as runtimeControl from "../runtimeControl.js";
 import type * as runtimeRecords from "../runtimeRecords.js";
 import type * as runtimeTables from "../runtimeTables.js";
+import type * as settings from "../settings.js";
 import type * as sharedAnalysis from "../sharedAnalysis.js";
 import type * as signals from "../signals.js";
 import type * as strategyDefinition from "../strategyDefinition.js";
 import type * as tradingAuth from "../tradingAuth.js";
+import type * as userRecords from "../userRecords.js";
 
 import type {
   ApiFromModules,
@@ -36,16 +39,19 @@ declare const fullApi: ApiFromModules<{
   exchangeFills: typeof exchangeFills;
   fillValidators: typeof fillValidators;
   library: typeof library;
+  migration: typeof migration;
   orderIntents: typeof orderIntents;
   orderValidators: typeof orderValidators;
   runtimeAutomation: typeof runtimeAutomation;
   runtimeControl: typeof runtimeControl;
   runtimeRecords: typeof runtimeRecords;
   runtimeTables: typeof runtimeTables;
+  settings: typeof settings;
   sharedAnalysis: typeof sharedAnalysis;
   signals: typeof signals;
   strategyDefinition: typeof strategyDefinition;
   tradingAuth: typeof tradingAuth;
+  userRecords: typeof userRecords;
 }>;
 
 /**

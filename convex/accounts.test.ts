@@ -15,14 +15,14 @@ afterEach(() => vi.unstubAllEnvs());
 test("research can read account metadata but cannot access encrypted credentials", async () => {
   const t = convexTest(schema, modules);
   await t.mutation(save, { secret: "trading", expectedFingerprint: null, value: {
-    id: "connection", user_id: "owner", delta_user_id: "account", account_name: "Main", email_masked: null,
+    id: "connection", user_id: "11111111-1111-4111-8111-111111111111", delta_user_id: "account", account_name: "Main", email_masked: null,
     environment: "production", status: "connected", ciphertext: "encrypted", fingerprint: "fingerprint", updated_at: "date",
   } });
-  const result = await t.query(overview, { secret: "research", userId: "owner" });
+  const result = await t.query(overview, { secret: "research", userId: "11111111-1111-4111-8111-111111111111" });
   expect(result.connection.status).toBe("connected");
   expect(result.connection.ciphertext).toBeUndefined();
-  await expect(t.query(credentials, { secret: "research", userId: "owner" })).rejects.toThrow("Unauthorized");
-  await expect(t.mutation(revoke, { secret: "research", userId: "owner" })).rejects.toThrow("Unauthorized");
-  await t.mutation(revoke, { secret: "trading", userId: "owner" });
-  expect((await t.query(credentials, { secret: "trading", userId: "owner" })).ciphertext).toBeNull();
+  await expect(t.query(credentials, { secret: "research", userId: "11111111-1111-4111-8111-111111111111" })).rejects.toThrow("Unauthorized");
+  await expect(t.mutation(revoke, { secret: "research", userId: "11111111-1111-4111-8111-111111111111" })).rejects.toThrow("Unauthorized");
+  await t.mutation(revoke, { secret: "trading", userId: "11111111-1111-4111-8111-111111111111" });
+  expect((await t.query(credentials, { secret: "trading", userId: "11111111-1111-4111-8111-111111111111" })).ciphertext).toBeNull();
 });

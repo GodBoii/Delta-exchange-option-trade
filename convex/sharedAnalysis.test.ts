@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import schema from "./schema";
+import { defaultAutomation } from "./userRecords";
 import { sharedUserId } from "./sharedAnalysis";
 
 const modules = import.meta.glob(["./**/*.ts", "./**/*.js", "!./**/*.test.ts"]);
@@ -24,14 +25,13 @@ async function fixture() {
     await ctx.db.insert("savedStrategies", { id: "saved", user_id: null, name: definition.name,
       definitionJson: JSON.stringify(definition), source_run_id: null, version: 1, enabled_for_ai: true,
       created_at: "date", updated_at: "date", deleted: false });
-    for (const user of ["a", "b", "c"]) await ctx.db.insert("exchangeConnections", { id: user, user_id: user,
+    for (const user of ["a", "b", "c"]) await ctx.db.insert("users", { userId: user, capital: { allocation_mode: "half_balance", capital_amount: null }, automation: { ...defaultAutomation, enabled: true }, createdAt: "date", updatedAt: "date", connection: { id: user, user_id: user,
       delta_user_id: `delta-${user}`, account_name: user, email_masked: null, environment: "production",
-      status: "connected", ciphertext: "test", fingerprint: user, updated_at: "date" });
+      status: "connected", ciphertext: "test", fingerprint: user, updated_at: "date" } });
+    await ctx.db.insert("systemSettings", { key: "main", ownerUserId: "a", outboundIp: null, ipCheckedAt: null, analysis: { ...defaultAutomation, enabled: true } });
   });
   const rows = [
-    ["automation_agent_runs", { id: "run", user_id: sharedUserId, status: "running", market_snapshot_id: "snapshot" }],
-    ["automation_market_snapshots", { id: "snapshot", user_id: sharedUserId, market_json: {} }],
-    ...["a", "b", "c"].map(user => ["automation_settings", { id: user, user_id: user, enabled: true }]),
+    ["analysisJobs", { id: "run", user_id: sharedUserId, status: "running", market_snapshot_id: "snapshot" }],
   ];
   for (const [table, row] of rows) await t.mutation(write, { secret: "trade", table, rowJson: JSON.stringify(row) });
   const input = { secret: "research", runId: "run", candidates: [{ id: "saved", version: 1 }], activation, expiry: exit,
@@ -45,7 +45,7 @@ test("one decision and recheck allocate once to three accounts with the same sch
   const args = { secret: "trade", decisionId: decision.proposalId, userId: "a" };
   await expect(t.mutation(allocate, args)).rejects.toThrow("not confirmed");
   await t.run(async ctx => {
-    const run = await ctx.db.query("automation_agent_runs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
+    const run = await ctx.db.query("analysisJobs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
     if (!run) throw new Error("Missing recheck");
     expect(run.time).toBe(Date.parse(input.activation) - 420000);
     await ctx.db.patch(run._id, { status: "running", rowJson: JSON.stringify({ ...JSON.parse(run.rowJson), status: "running" }) });
@@ -55,7 +55,7 @@ test("one decision and recheck allocate once to three accounts with the same sch
   // An outcome alone is insufficient until the backend records completion.
   await expect(t.mutation(allocate, args)).rejects.toThrow("not confirmed");
   await t.run(async ctx => {
-    const run = await ctx.db.query("automation_agent_runs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
+    const run = await ctx.db.query("analysisJobs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
     if (!run) throw new Error("Missing recheck");
     await ctx.db.patch(run._id, { status: "completed", rowJson: JSON.stringify({ ...JSON.parse(run.rowJson), status: "completed" }) });
   });
@@ -72,13 +72,13 @@ test("one decision and recheck allocate once to three accounts with the same sch
   for (const strategy of strategies) expect(JSON.parse(strategy.rowJson)).toMatchObject({ entry_at: input.activation, shared_decision_id: decision.proposalId });
 });
 
-test("manual analysis is independent of a currently running shared review", async () => {
+test("owner manual requests reuse a currently running shared review", async () => {
   const { t } = await fixture();
   const manual = makeFunctionReference<"mutation">("sharedAnalysis:manual");
   const first = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
   const second = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
-  expect(first.id).not.toBe("run");
-  expect(second.id).not.toBe(first.id);
+  expect(first.id).toBe("run");
+  expect(second.id).toBe(first.id);
 });
 
 test("shared publication rejects private data, changed risk, and multiple strategies", async () => {
@@ -95,19 +95,19 @@ test.each(["disabled", "disconnected", "changed", "dropped", "expired"])("alloca
   const { t, input } = await fixture();
   const decision = await t.mutation(publish, input);
   await t.run(async ctx => {
-    const run = await ctx.db.query("automation_agent_runs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
+    const run = await ctx.db.query("analysisJobs").withIndex("by_external", q => q.eq("externalId", decision.activationRecheckRunId)).unique();
     if (!run) throw new Error("Missing recheck");
     await ctx.db.patch(run._id, { status: "completed", rowJson: JSON.stringify({ ...JSON.parse(run.rowJson), status: "completed",
       outcome: state === "dropped" ? "strategy_dropped" : "strategy_reconfirmed" }) });
     if (state === "disabled") {
-      const row = await ctx.db.query("automation_settings").withIndex("by_external", q => q.eq("externalId", "a")).unique();
+      const row = await ctx.db.query("users").withIndex("by_user", q => q.eq("userId", "a")).unique();
       if (!row) throw new Error("Missing account");
-      await ctx.db.patch(row._id, { rowJson: JSON.stringify({ ...JSON.parse(row.rowJson), enabled: false }) });
+      await ctx.db.patch(row._id, { automation: { ...row.automation, enabled: false } });
     }
     if (state === "disconnected") {
-      const row = await ctx.db.query("exchangeConnections").withIndex("by_user", q => q.eq("user_id", "a")).unique();
+      const row = await ctx.db.query("users").withIndex("by_user", q => q.eq("userId", "a")).unique();
       if (!row) throw new Error("Missing connection");
-      await ctx.db.delete(row._id);
+      await ctx.db.patch(row._id, { connection: null });
     }
     if (state === "changed") {
       const row = await ctx.db.query("savedStrategies").first();
@@ -124,21 +124,22 @@ test.each(["disabled", "disconnected", "changed", "dropped", "expired"])("alloca
   expect(await t.run(ctx => ctx.db.query("strategies").collect())).toEqual([]);
 });
 
-test("manual requests create independent immediate shared analyses", async () => {
+test("manual requests are owner-only and reuse a pending immediate analysis", async () => {
   const { t } = await fixture();
   await t.run(async ctx => {
-    const old = await ctx.db.query("automation_agent_runs").first();
+    const old = await ctx.db.query("analysisJobs").first();
     if (!old) throw new Error("Missing old run");
     await ctx.db.patch(old._id, { status: "completed", rowJson: JSON.stringify({ ...JSON.parse(old.rowJson), status: "completed" }) });
   });
-  await t.mutation(write, { secret: "trade", table: "automation_agent_runs", rowJson: JSON.stringify({
+  await t.mutation(write, { secret: "trade", table: "analysisJobs", rowJson: JSON.stringify({
     id: "future-fixed", user_id: sharedUserId, status: "scheduled", created_at: new Date().toISOString(),
     scheduled_for: new Date(Date.now() + 3600000).toISOString(), run_key: "future-fixed",
   }) });
   const manual = makeFunctionReference<"mutation">("sharedAnalysis:manual");
   const a = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
-  const b = await t.mutation(manual, { secret: "trade", requestedBy: "b" });
-  expect(a.id).not.toBe(b.id);
+  await expect(t.mutation(manual, { secret: "trade", requestedBy: "b" })).rejects.toThrow("Owner");
+  const repeated = await t.mutation(manual, { secret: "trade", requestedBy: "a" });
+  expect(repeated.id).toBe(a.id);
   expect(a.user_id).toBe(sharedUserId);
   expect(a.id).not.toBe("future-fixed");
   expect(a.status).toBe("scheduled");

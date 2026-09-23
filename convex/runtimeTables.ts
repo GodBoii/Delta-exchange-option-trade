@@ -4,14 +4,13 @@ import { v } from "convex/values";
 export const runtimeTableName = v.union(
   v.literal("strategies"), v.literal("executions"), v.literal("execution_orders"),
   v.literal("strategy_capital_slots"), v.literal("strategy_proposals"),
-  v.literal("automation_settings"), v.literal("automation_agent_runs"), v.literal("automation_market_snapshots"),
+  v.literal("analysisJobs"),
 );
 
 function recordTable() {
   return defineTable({
     externalId: v.string(), owner: v.string(), status: v.string(), relation: v.string(), uniqueKey: v.string(),
     created: v.number(), time: v.number(), rowJson: v.string(),
-    payload: v.optional(v.id("runtimePayloads")),
   }).index("by_external", ["externalId"])
     .index("by_owner_unique", ["owner", "uniqueKey"])
     .index("by_unique", ["uniqueKey"])
@@ -26,5 +25,5 @@ function recordTable() {
 export const runtimeTables = {
   strategies: recordTable(), executions: recordTable(), execution_orders: recordTable(),
   strategy_capital_slots: recordTable(), strategy_proposals: recordTable(),
-  automation_settings: recordTable(), automation_agent_runs: recordTable(), automation_market_snapshots: recordTable(),
+  analysisJobs: recordTable(),
 };
