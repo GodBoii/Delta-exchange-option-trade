@@ -26,6 +26,30 @@ services:
       start_period: 15s
       retries: 3
 
+  delta-exchange-reader:
+    profiles: [read-replicas]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env.local
+      - ./backend/.env
+    environment:
+      TRADING_WRITER_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      AUTOMATION_SCHEDULER_ENABLED: "false"
+      DELTA_EVENTS_ENABLED: "false"
+    expose:
+      - "8000"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: [CMD, python, -c, "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)); assert d['success'] and not d['scheduler']['enabled']"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
   news-analyzer:
     container_name: bitcoin-agent
     build:
