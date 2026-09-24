@@ -397,6 +397,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
   const [savedFingerprint, setSavedFingerprint] = useState("");
   const [libraryState, setLibraryState] = useState<LibraryState>("loading");
   const [confirmNew, setConfirmNew] = useState(false);
+  const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const importInput = useRef<HTMLInputElement>(null);
@@ -540,7 +541,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
         setActiveSavedId(selected.id);
         setStrategy(definition);
         setExpandedLeg(definition.legs[0]?.id ?? null);
-        setSavedFingerprint(fingerprint(selected.definition));
+        setSavedFingerprint(fingerprint(isOwner ? definition : selected.definition));
         setLibraryState(selected.isDefault
           ? "template"
           : fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
@@ -555,7 +556,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
 
     void loadLibrary();
     return () => { cancelled = true; };
-  }, [draftReady, onNotice, userId]);
+  }, [draftReady, isOwner, onNotice, userId]);
 
   useEffect(() => {
     if (!draftReady) return;
@@ -567,7 +568,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
   useEffect(() => {
     if (!libraryReady || !activeSavedId) return;
     if (isOwner) {
-      setLibraryState(fingerprint(strategy) === savedFingerprint ? "saved" : "unsaved");
+      setLibraryState(fingerprint(strategy) === savedFingerprint ? "template" : "unsaved");
       return;
     }
     if (savedStrategies.find(item => item.id === activeSavedId)?.isDefault) {
@@ -638,25 +639,38 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
   /* --------------------------- commands --------------------------- */
 
   async function startNewStrategy() {
-    if (activeSavedId && !activeSaved?.isDefault && fingerprint(strategy) !== savedFingerprint) {
+    if (!isOwner && activeSavedId && !activeSaved?.isDefault && fingerprint(strategy) !== savedFingerprint) {
       if (!await persist(strategy, activeSavedId)) return;
     }
     const fresh = initialStrategy();
-    const saved = await persist(fresh, null);
-    if (!saved) return;
+    if (isOwner) {
+      setActiveSavedId(null);
+      setSavedFingerprint("");
+      setLibraryState("unsaved");
+    } else {
+      const saved = await persist(fresh, null);
+      if (!saved) return;
+    }
     setStrategy(fresh);
     setExpandedLeg(fresh.legs[0]?.id ?? null);
     setShowIssues(false);
     setError("");
     setConfirmNew(false);
-    onNotice({ tone: "ok", text: "New strategy created and saved. Strategy names can be reused." });
+    onNotice({ tone: "ok", text: isOwner
+      ? "New draft ready. Save built-in when it is complete."
+      : "New strategy created and saved. Strategy names can be reused." });
   }
 
-  async function switchStrategy(savedId: string) {
+  async function switchStrategy(savedId: string, discardUnsaved = false) {
     if (savedId === activeSavedId) return;
-    if (activeSavedId && !activeSaved?.isDefault && fingerprint(strategy) !== savedFingerprint) {
+    const ownerHasUnsavedEdits = !activeSavedId || fingerprint(strategy) !== savedFingerprint;
+    if (isOwner && ownerHasUnsavedEdits && !discardUnsaved) {
+      setPendingSwitchId(savedId);
+      return;
+    }
+    if (!isOwner && activeSavedId && !activeSaved?.isDefault && fingerprint(strategy) !== savedFingerprint) {
       if (!await persist(strategy, activeSavedId)) return;
-    } else if (!activeSavedId && strategy.name.trim().length >= 2) {
+    } else if (!isOwner && !activeSavedId && strategy.name.trim().length >= 2) {
       if (!await persist(strategy, null)) return;
     }
     const selected = savedStrategies.find(item => item.id === savedId);
@@ -667,7 +681,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
     setExpandedLeg(definition.legs[0]?.id ?? null);
     setShowIssues(false);
     setError("");
-    setSavedFingerprint(fingerprint(selected.definition));
+    setSavedFingerprint(fingerprint(isOwner ? definition : selected.definition));
     setLibraryState(selected.isDefault
       ? "template"
       : fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
@@ -689,7 +703,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
         setActiveSavedId(next.id);
         setStrategy(definition);
         setExpandedLeg(definition.legs[0]?.id ?? null);
-        setSavedFingerprint(fingerprint(next.definition));
+        setSavedFingerprint(fingerprint(isOwner ? definition : next.definition));
         setLibraryState(fingerprint(definition) === fingerprint(next.definition) ? "saved" : "unsaved");
       } else {
         const fresh = initialStrategy();
@@ -1231,11 +1245,28 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
         <ConfirmModal
           tone="neutral"
           title="Create a new strategy?"
-          description="The current strategy is kept. A new short-straddle strategy with fresh entry and exit times is added to your saved strategies."
+          description={isOwner
+            ? "A new draft opens. Unsaved changes in the current editor will be replaced."
+            : "The current strategy is kept. A new short-straddle strategy with fresh entry and exit times is added to your saved strategies."}
           cancel="Keep editing"
-          confirm="Create strategy"
+          confirm={isOwner ? "Create draft" : "Create strategy"}
           onClose={() => setConfirmNew(false)}
           onConfirm={() => void startNewStrategy()}
+        />
+      )}
+
+      {pendingSwitchId && (
+        <ConfirmModal
+          title="Discard unsaved changes?"
+          description="Your current edits have not been published to built-in strategies."
+          cancel="Keep editing"
+          confirm="Discard and switch"
+          onClose={() => setPendingSwitchId(null)}
+          onConfirm={() => {
+            const nextId = pendingSwitchId;
+            setPendingSwitchId(null);
+            void switchStrategy(nextId, true);
+          }}
         />
       )}
 
