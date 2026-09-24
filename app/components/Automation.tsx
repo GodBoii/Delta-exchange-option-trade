@@ -167,7 +167,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
                 <summary>
                   <span>
                     <strong>{titleCase(run.trigger)}</strong>
-                    <small>{formatDateTime(run.scheduledFor)}</small>
+                    <small>{formatDateTime(run.scheduledFor)} · {run.scope === "shared" ? "Shared" : "Earlier account run"}</small>
                   </span>
                   <StatusChip tone={run.status === "failed" ? "negative" : run.status === "completed" ? "positive" : "active"}>
                     {titleCase(run.outcome ?? run.status)}
@@ -207,7 +207,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
               <tbody>
                 {overview.proposals.map(proposal => (
                   <tr key={proposal.id}>
-                    <th scope="row">{proposal.strategyName} <small>v{proposal.strategyVersion}</small></th>
+                    <th scope="row">{proposal.strategyName}</th>
                     <td data-label="Status"><StatusChip tone={proposal.status === "rejected" ? "negative" : "active"}>{titleCase(proposal.status)}</StatusChip></td>
                     <td data-label="Activation">{formatDateTime(proposal.activationTime)}</td>
                     <td data-label="Confidence">{percent(proposal.confidence * 100, 0)}</td>
