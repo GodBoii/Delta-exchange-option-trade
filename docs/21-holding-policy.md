@@ -1,7 +1,9 @@
 # Agent holding decisions
 
 The saved seven-hour interval is a fallback, not a scheduler limit. The scheduling
-tool can now select `holding_policy` and optionally `expiry_policy`.
+tool takes a short `strategy_ref` from `show_available_strategy`, chooses
+`holding_policy` and optionally `expiry_policy`, and derives proposal expiry
+server-side.
 
 | Policy | Required exit | Schedule |
 | --- | --- | --- |
@@ -28,15 +30,15 @@ strategy. The agent explains its horizon in the existing reasoning summary. It
 must justify the entire hold using available market evidence, including event
 risk, liquidity, volatility and distance from short strikes.
 
-New built-in and builder defaults use an 80% take-profit target. Credit strategies
-target a buyback cost at 20% of entry credit; debit strategies target a sale value
-at 180% of entry debit. These are mark-based gross thresholds, before fees and
+New built-in and builder defaults use a 50% take-profit target. Credit strategies
+target a buyback cost at 50% of entry credit; debit strategies target a sale value
+at 150% of entry debit. These are mark-based gross thresholds, before fees and
 execution slippage. Built-in entry legs use market orders. Engine exits already
 use reduce-only market orders. Custom manual limit orders remain supported.
 
-Apply migration 025 to the active PostgreSQL library to update saved shared
-templates. On a Convex-owned library, use `library:serverUpdateDefault` with the
-current expected version instead; do not migrate a retired PostgreSQL copy.
+Use `python -m scripts.set_take_profit --apply` from `backend` to update the
+Convex-owned shared library with version checks. The command refuses to write
+while a strategy run is open and can be rerun safely.
 Existing scheduled, active and historical run snapshots are not rewritten.
 The agent tool and prompt changes require a backend deployment; Convex runtime
 users also require the updated materialized-definition validator.

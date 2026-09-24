@@ -16,6 +16,7 @@ from app.default_strategies import default_strategy_definitions
 from app.delta import DeltaClient
 from app.engine import TradingEngine, capital_budget
 from app.errors import AppError
+from automation_agent import tools as strategy_tools_module
 from automation_agent.charts import (
     render_candlestick_chart,
     render_order_book_chart,
@@ -33,10 +34,14 @@ def option_context(*expiries: datetime) -> dict:
 
 
 def test_verified_action_precedes_unexecuted_model_suggestion():
-    report = "## Decision\n\nSelected: Short OTM put."
+    report = (
+        "## Market regime\n\nSideways.\n\n## Decision\n\n"
+        "Selected: Short OTM put.\n\n## Invalidation\n\nRange break."
+    )
     rendered = verified_decision_report("no_trade_for_current_window", report, shared=False)
     assert rendered.startswith("## Verified action\n\nNo strategy was scheduled during this review.")
-    assert report in rendered
+    assert "Selected: Short OTM put" not in rendered
+    assert "Sideways." in rendered and "Range break." in rendered
     shared = verified_decision_report("strategy_selected", report, shared=True)
     assert "still requires recheck and allocation" in shared.split("## Decision")[0]
 
@@ -64,16 +69,173 @@ def test_strategy_activation_rejects_a_fixed_session_minute() -> None:
     tool = object.__new__(AutomationStrategyTools)
 
     with pytest.raises(ValueError, match="cannot be during the fixed"):
-        tool.select_strategy_and_time(
-            saved_strategy_id="11111111-1111-4111-8111-111111111111",
+        tool._select_strategy_and_time(
+            saved_id="11111111-1111-4111-8111-111111111111",
             saved_strategy_version=1,
             activation_time=activation.isoformat(),
-            proposal_expiry=(activation + timedelta(hours=1)).isoformat(),
             ai_confidence=0.8,
             reasoning_summary="Confirmed setup",
             supporting_signals=["price"],
             invalidation_signals=["volume"],
+            holding_policy="saved",
+            planned_exit_time=None,
+            expiry_policy=None,
         )
+
+
+def test_strategy_catalog_uses_short_references() -> None:
+    tool = object.__new__(AutomationStrategyTools)
+    tool.user_id = "global"
+    tool.agent_run_id = "22222222-2222-4222-8222-222222222222"
+    tool.application_data = SimpleNamespace(
+        selection_context=lambda _user_id: (
+            [{
+                "id": "11111111-1111-4111-8111-111111111111",
+                "version": 7,
+                "name": "Short strangle",
+                "definition_json": {"takeProfitPercent": 50},
+                "enabled_for_ai": True,
+                "user_id": None,
+            }],
+            {"allocation_mode": "half_balance"},
+        )
+    )
+    tool.runtime_data = SimpleNamespace(request_sync=lambda *_args, **_kwargs: {"occupied": 0})
+
+    result = json.loads(tool.show_available_strategy())
+
+    assert result["strategies"][0]["strategyRef"] == "S01"
+    assert "id" not in result["strategies"][0]
+    assert tool.strategy_references["S01"] == ("11111111-1111-4111-8111-111111111111", 7)
+
+
+def test_agent_schedule_schema_uses_short_reference_and_no_proposal_expiry() -> None:
+    toolkit = AutomationStrategyTools(
+        NewsAgentSettings.load(),
+        user_id="global",
+        agent_run_id="22222222-2222-4222-8222-222222222222",
+        market_snapshot_id="33333333-3333-4333-8333-333333333333",
+    )
+    schedule = toolkit.functions["select_strategy_and_time"]
+    schedule.process_entrypoint()
+    properties = schedule.parameters["properties"]
+
+    assert "strategy_ref" in properties
+    assert "saved_strategy_id" not in properties
+    assert "saved_strategy_version" not in properties
+    assert "proposal_expiry" not in properties
+
+
+def test_strategy_tool_retries_rejection_then_reports_duplicate(monkeypatch) -> None:
+    tool = object.__new__(AutomationStrategyTools)
+    tool.settings = object()
+    tool.user_id = "global"
+    tool.agent_run_id = "22222222-2222-4222-8222-222222222222"
+    tool.strategy_references = {"S01": ("11111111-1111-4111-8111-111111111111", 7)}
+    state = {"outcome": None}
+    monkeypatch.setattr(strategy_tools_module, "read_automation_state", lambda *_args, **_kwargs: state)
+    attempts = []
+
+    def schedule(**kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise ValueError("activation_time must leave more than seven minutes for the activation recheck")
+        state["outcome"] = "strategy_selected"
+        return json.dumps({"outcome": "strategy_selected", "proposalId": "proposal-1"})
+
+    monkeypatch.setattr(tool, "_select_strategy_and_time", schedule)
+    args = {
+        "strategy_ref": "s01", "activation_time": "2026-09-26T05:00:00Z", "ai_confidence": 0.7,
+        "reasoning_summary": "Confirmed range", "supporting_signals": ["range"],
+        "invalidation_signals": ["breakout"],
+    }
+
+    rejected = json.loads(tool.select_strategy_and_time(**args))
+    committed = json.loads(tool.select_strategy_and_time(**args))
+    duplicate = json.loads(tool.select_strategy_and_time(**args))
+
+    assert rejected["status"] == "rejected" and rejected["canRetry"] is True
+    assert rejected["strategyScheduled"] is False
+    assert committed["status"] == "committed" and committed["sharedProposalRecorded"] is True
+    assert committed["strategyScheduled"] is False and committed["accountSchedulingPending"] is True
+    assert duplicate["status"] == "already_committed" and duplicate["canRetry"] is False
+    assert len(attempts) == 2
+    assert attempts[0]["saved_strategy_version"] == 7
+
+
+def test_follow_up_tool_confirms_schedule_and_blocks_second_action(monkeypatch) -> None:
+    tool = object.__new__(AutomationStrategyTools)
+    tool.settings = object()
+    tool.user_id = "11111111-1111-4111-8111-111111111111"
+    tool.agent_run_id = "22222222-2222-4222-8222-222222222222"
+    state = {"outcome": None}
+    monkeypatch.setattr(strategy_tools_module, "read_automation_state", lambda *_args, **_kwargs: state)
+    attempts = []
+
+    def schedule(*_args):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ValueError("Follow-up is too soon")
+        state["outcome"] = "wait_and_run_again"
+        return json.dumps({"outcome": "wait_and_run_again", "scheduledRunId": "run-2"})
+
+    monkeypatch.setattr(tool, "_schedule_next_agent_run", schedule)
+    args = ("2026-09-26T05:00:00Z", "Check breakout", ["volume"])
+    rejected = json.loads(tool.scheduled_next_agent_run(*args))
+    committed = json.loads(tool.scheduled_next_agent_run(*args))
+    duplicate = json.loads(tool.scheduled_next_agent_run(*args))
+
+    assert rejected["status"] == "rejected" and rejected["agentRunScheduled"] is False
+    assert committed["status"] == "committed" and committed["agentRunScheduled"] is True
+    assert duplicate["status"] == "already_committed" and duplicate["canRetry"] is False
+    assert len(attempts) == 2
+
+
+def test_tool_recovers_commit_after_response_is_lost(monkeypatch) -> None:
+    tool = object.__new__(AutomationStrategyTools)
+    tool.settings = object()
+    tool.user_id = "11111111-1111-4111-8111-111111111111"
+    tool.agent_run_id = "22222222-2222-4222-8222-222222222222"
+    tool.strategy_references = {"S01": ("11111111-1111-4111-8111-111111111111", 7)}
+    state = {"outcome": None}
+    monkeypatch.setattr(strategy_tools_module, "read_automation_state", lambda *_args, **_kwargs: state)
+
+    def schedule(**_kwargs):
+        state["outcome"] = "strategy_selected"
+        raise RuntimeError("Response lost after commit")
+
+    monkeypatch.setattr(tool, "_select_strategy_and_time", schedule)
+    result = json.loads(tool.select_strategy_and_time(
+        strategy_ref="S01", activation_time="2026-09-26T05:00:00Z", ai_confidence=0.7,
+        reasoning_summary="Confirmed range", supporting_signals=["range"],
+        invalidation_signals=["breakout"],
+    ))
+
+    assert result["status"] == "already_committed"
+    assert result["strategyScheduled"] is True and result["canRetry"] is False
+
+
+def test_tool_does_not_claim_rejection_when_commit_status_cannot_be_read(monkeypatch) -> None:
+    tool = object.__new__(AutomationStrategyTools)
+    tool.settings = object()
+    tool.user_id = "11111111-1111-4111-8111-111111111111"
+    tool.agent_run_id = "22222222-2222-4222-8222-222222222222"
+    tool.strategy_references = {"S01": ("11111111-1111-4111-8111-111111111111", 7)}
+    reads = iter([{"outcome": None}, ConnectionError("state unavailable")])
+    monkeypatch.setattr(strategy_tools_module, "read_automation_state", lambda *_args, **_kwargs: next(reads))
+
+    def schedule(**_kwargs):
+        raise ValueError("Response could not be decoded")
+
+    monkeypatch.setattr(tool, "_select_strategy_and_time", schedule)
+    result = json.loads(tool.select_strategy_and_time(
+        strategy_ref="S01", activation_time="2026-09-26T05:00:00Z", ai_confidence=0.7,
+        reasoning_summary="Confirmed range", supporting_signals=["range"],
+        invalidation_signals=["breakout"],
+    ))
+
+    assert result["status"] == "unconfirmed"
+    assert result["strategyScheduled"] is None and result["canRetry"] is True
 
 
 @pytest.mark.asyncio

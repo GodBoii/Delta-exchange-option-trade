@@ -135,7 +135,7 @@ def run_automation_team(
                     "bearish, breaking out, or expanding in volatility."
                 ),
                 (
-                    "Call show_available_strategy to receive every available complete "
+                    "Call show_available_strategy to receive short strategyRef values and every available complete "
                     "definition, including category, index, price source, holding type, risk, take profit, order type, "
                     "legs, option types, and positions."
                 ),
@@ -154,9 +154,10 @@ def run_automation_team(
                     "proposed horizon, choose a shorter supported hold or no trade."
                 ),
                 (
-                    "select_strategy_and_time schedules that saved strategy on the live engine for the chosen time. "
-                    "The engine applies the user's trading budget, calculates lots, and executes later. Choose an "
-                    "activation at least eight minutes in the future so the seven-minute pre-entry recheck can run."
+                    "To select a trade, call select_strategy_and_time with a strategyRef from show_available_strategy. "
+                    "The tool derives proposal expiry and resolves the saved UUID and version. Choose an activation "
+                    "at least eight minutes in the future so the seven-minute pre-entry recheck can run. The engine "
+                    "applies the trading budget, calculates lots, and executes later."
                 ),
                 (
                     "You never receive the account balance. Do not request or estimate it. After scheduling, the "
@@ -164,7 +165,8 @@ def run_automation_team(
                     "the minimum contract cannot fit."
                 ),
                 (
-                    "If the market is unclear, record no trade. Use scheduled_next_agent_run only when a specific, "
+                    "If the market is unclear, record no trade. To request a future agent review, call "
+                    "scheduled_next_agent_run. Use it only when a specific, "
                     "time-bound catalyst or confirmation is due before the next fixed session and fresh evidence at "
                     "that exact time could change the decision. Do not schedule routine or speculative rechecks."
                 ),
@@ -210,13 +212,19 @@ def run_automation_team(
                     "select a strategy."
                 ),
                 (
-                    "select_strategy_and_time schedules the selected saved strategy on the existing live engine. "
-                    "Orders are submitted later by that engine at the activation time, never inside the tool call."
+                    "A tool result with success=true and status=committed confirms the named action. "
+                    "In shared analysis, "
+                    "select_strategy_and_time records a proposal and recheck; account strategies are scheduled only "
+                    "after recheck and allocation. Orders are submitted later, never inside the tool call."
                 ),
                 (
-                    "Treat the tool result as the source of truth. Say a strategy was selected only if "
-                    "select_strategy_and_time returned strategy_selected. If no scheduling tool committed, "
-                    "report no trade, even if you identified a promising setup."
+                    "If a scheduling tool returns status=rejected, read its message, correct the inputs, and call the "
+                    "same tool again if the market case remains valid. If status=unconfirmed, retry so the tool can "
+                    "read the committed outcome. If status=committed or already_committed, do not call another "
+                    "scheduling tool in this run. Confirm scheduling in the report only from a result with "
+                    "success=true "
+                    "and outcome=strategy_selected; call it a shared proposal when accountSchedulingPending=true. "
+                    "If no action committed, report no trade even if a setup looked promising."
                 ),
                 (
                     "Use Asia/Kolkata for customer-facing times. Tool timestamps must use timezone-aware ISO-8601: "
@@ -281,8 +289,8 @@ def run_automation_team(
         )
         if not report:
             raise RuntimeError("Automation team returned an empty report")
-        if report.casefold() == "provider returned error":
-            raise RuntimeError("Automation model provider returned an error")
+        if report.casefold() in {"provider returned error", "request timed out.", "request timed out"}:
+            raise RuntimeError("Automation model provider did not return a decision report")
         logger.info(
             "automation.model run_id=%s input_tokens=%s output_tokens=%s reasoning_tokens=%s",
             agent_run_id,

@@ -40,6 +40,7 @@ def test_scheduling_persists_parent_in_the_same_transaction(monkeypatch, path):
 
     connection = SimpleNamespace(cursor=lambda: nullcontext(Cursor()), commit=lambda: commits.append(True))
     toolkit = tools.AutomationStrategyTools(SETTINGS, user_id=USER, agent_run_id=PARENT, market_snapshot_id=SNAPSHOT)
+    monkeypatch.setattr(tools, "read_automation_state", lambda *_args, **_kwargs: {"outcome": None})
     monkeypatch.setattr(toolkit, "_connect", lambda: nullcontext(connection))
     monkeypatch.setattr(tools, "next_fixed_run", lambda _: SimpleNamespace(scheduled_for=now + timedelta(hours=1)))
     monkeypatch.setattr(tools, "previous_fixed_run", lambda _: SimpleNamespace(scheduled_for=now - timedelta(hours=1)))

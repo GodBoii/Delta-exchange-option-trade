@@ -31,7 +31,7 @@ CHAIN = [
 
 
 def test_builtin_risk_controls_apply_to_every_compatible_template():
-    assert all(definition.takeProfitPercent == 80 for definition in DEFINITIONS)
+    assert all(definition.takeProfitPercent == 50 for definition in DEFINITIONS)
     for definition in DEFINITIONS:
         has_short_leg = any(leg.position == "sell" for leg in definition.legs)
         assert definition.emergencyStopLossPercent == (170 if has_short_leg else None)

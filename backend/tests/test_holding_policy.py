@@ -19,7 +19,7 @@ def materialize(**kwargs):
         expiry_policy="next_day", **kwargs,
     )
     assert definition == original
-    assert result[0]["takeProfitPercent"] == 80
+    assert result[0]["takeProfitPercent"] == 50
     assert all(leg["orderType"] == "market_order" for leg in result[0]["legs"])
     return result
 
