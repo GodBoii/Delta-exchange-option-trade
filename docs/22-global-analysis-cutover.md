@@ -75,6 +75,15 @@ the encrypted Convex replacements passed decryption and live account checks.
 - Both accounts returned the same next global analysis ID.
 - No funded orders or paid AI analysis were triggered as tests.
 
+At the first live 05:30 IST Asia review on September 24, the scheduler completed
+one global analysis. The older per-account jobs for that time remained cancelled.
+The global decision selected one strategy, and both account allocations activated
+the same entry schedule at 06:00 IST. This was normal live trading, not a test order.
+
+The later audit kept owner builder drafts local until an explicit Save built-in,
+labelled older private reports in the run list, hid revision numbers beside strategy
+names, and widened browser connection timeouts after a 9.3-second cold health request.
+
 Historical data comparison and authenticated API checks do not prove 100-account
 exchange throughput. That still requires a controlled execution benchmark.
 The global scheduler and normal trading operation resume after deployment.
