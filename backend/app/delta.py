@@ -194,6 +194,9 @@ class DeltaClient:
     async def product(self, symbol: str) -> dict[str, Any]:
         return await self.request("GET", f"/v2/products/{encode_symbol(symbol)}")
 
+    async def order_leverage(self, product_id: int) -> dict[str, Any]:
+        return await self.request("GET", f"/v2/products/{product_id}/orders/leverage", authenticated=True)
+
     async def ticker(self, symbol: str) -> dict[str, Any]:
         return await self.request("GET", f"/v2/tickers/{encode_symbol(symbol)}")
 

@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -12,6 +13,7 @@ from app.automation import automation_overview, build_account_context
 from app.automation_schedule import next_fixed_run
 from app.capital import CapitalPolicy
 from app.default_strategies import default_strategy_definitions
+from app.delta import DeltaClient
 from app.engine import TradingEngine, capital_budget
 from app.errors import AppError
 from automation_agent.charts import (
@@ -265,6 +267,51 @@ async def test_short_straddle_margin_estimate_matches_half_balance_example() -> 
     sized = await engine.apply_automatic_lots(Client(), definition, resolved)  # type: ignore[arg-type]
 
     assert {leg["lots"] for leg in sized} == {1}
+
+
+@pytest.mark.parametrize("leverage,expected_lots", [("200", 122), ("50", 30)])
+async def test_live_option_sizing_uses_selected_exchange_leverage(leverage, expected_lots):
+    definition = default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC))[6]
+    engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
+    engine.product_spec = AsyncMock(return_value={"contract_value": "0.001", "initial_margin": "0.5"})
+    client = DeltaClient(SimpleNamespace(delta_production_url="https://api.india.delta.exchange"))
+    client.order_leverage = AsyncMock(return_value={"result": {"product_id": 123, "leverage": leverage}})
+    try:
+        sized = await engine.apply_automatic_lots(
+            client,
+            definition,
+            [{
+                "productId": 123, "productSymbol": "P-BTC-79000-250926", "bestBid": "100",
+                "markPrice": "100", "spotPrice": "80000", "position": "sell", "optionType": "put",
+            }],
+            wallet=(Decimal("100"), Decimal("100")),
+        )
+    finally:
+        await client.close()
+    assert sized[0]["lots"] == expected_lots
+    client.order_leverage.assert_awaited_once_with(123)
+
+
+async def test_live_option_sizing_rejects_unknown_account_leverage():
+    definition = default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC))[6]
+    engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
+    engine.product_spec = AsyncMock(return_value={"contract_value": "0.001", "initial_margin": "0.5"})
+    client = DeltaClient(SimpleNamespace(delta_production_url="https://api.india.delta.exchange"))
+    client.order_leverage = AsyncMock(return_value={"result": {"product_id": 999, "leverage": "200"}})
+    try:
+        with pytest.raises(AppError) as caught:
+            await engine.apply_automatic_lots(
+                client,
+                definition,
+                [{
+                    "productId": 123, "productSymbol": "P-BTC-79000-250926", "bestBid": "100",
+                    "markPrice": "100", "spotPrice": "80000", "position": "sell", "optionType": "put",
+                }],
+                wallet=(Decimal("100"), Decimal("100")),
+            )
+    finally:
+        await client.close()
+    assert caught.value.code == "order_leverage_unavailable"
 
 
 def test_capital_budget_supports_fraction_and_fixed_caps() -> None:

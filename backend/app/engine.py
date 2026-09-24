@@ -445,13 +445,35 @@ class TradingEngine:
             policy.capital_amount,
         )
         usable_capital = allocation * Decimal("0.98")
-        products = await asyncio.gather(*(self.product_spec(client, str(leg["productSymbol"])) for leg in resolved))
+        product_task = asyncio.gather(*(self.product_spec(client, str(leg["productSymbol"])) for leg in resolved))
+        short_legs = [(index, leg) for index, leg in enumerate(resolved) if leg["position"] == "sell"]
+        leverage_task = (
+            asyncio.gather(*(client.order_leverage(int(leg["productId"])) for _, leg in short_legs))
+            if isinstance(client, DeltaClient) and short_legs
+            else None
+        )
+        account_leverages: list[Decimal | None] = [None] * len(resolved)
+        if leverage_task is None:
+            products = await product_task
+        else:
+            products, leverage_responses = await asyncio.gather(product_task, leverage_task)
+            for (index, leg), response in zip(short_legs, leverage_responses, strict=True):
+                result = response.get("result")
+                selected = optional_decimal(result.get("leverage")) if isinstance(result, dict) else None
+                if (
+                    selected is None or selected <= 0
+                    or str(result.get("product_id")) != str(leg["productId"])
+                ):
+                    raise AppError(502, "Delta order leverage is unavailable", "order_leverage_unavailable")
+                account_leverages[index] = selected
         contract_values = [decimal_value(product.get("contract_value")) for product in products]
 
         signed_premium = Decimal("0")
         estimated_order_margin = Decimal("0")
         estimated_entry_fees = Decimal("0")
-        for leg, multiplier, product in zip(resolved, contract_values, products, strict=True):
+        for leg, multiplier, product, selected_leverage in zip(
+            resolved, contract_values, products, account_leverages, strict=True
+        ):
             quantity = Decimal(str(leg["lots"])) if definition.lotsMode == "manual" else Decimal("1")
             executable_price = optional_decimal(leg.get("bestAsk") if leg["position"] == "buy" else leg.get("bestBid"))
             if definition.riskBasis == "defined_max_loss" and (executable_price is None or executable_price <= 0):
@@ -480,6 +502,8 @@ class TradingEngine:
             else:
                 spot = decimal_value(leg.get("spotPrice"))
                 initial_margin_percent = decimal_value(product.get("initial_margin"))
+                if selected_leverage is not None:
+                    initial_margin_percent = max(initial_margin_percent, Decimal("100") / selected_leverage)
                 if (
                     not spot.is_finite()
                     or spot <= 0
