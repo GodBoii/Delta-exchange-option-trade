@@ -39,7 +39,12 @@ The owner can request manual analysis and publish built-ins. Manual requests reu
 
 Global jobs have an explicit global scope rather than a synthetic Auth account. The compatibility API supplies a scope key to older internal callers. Existing private analysis history remains private and is shown alongside new shared results.
 
-Up to 100 Convex users are supported. Execution dispatch runs up to eight account groups concurrently and serializes aliases of the same Delta account. This does not guarantee simultaneous fills across accounts.
+There is no configured account-count ceiling. Account settings and decision allocations
+are fetched in pages, with bounded work per Convex function. Execution dispatch
+serializes aliases of the same Delta account and runs independent account groups
+concurrently. The default is eight groups; deployment settings can raise it after
+measuring host resources and exchange latency. This does not guarantee simultaneous
+fills across accounts.
 
 ## Migration evidence
 
@@ -91,6 +96,44 @@ no account balances or private positions.
 Historical data comparison and authenticated API checks do not prove 100-account
 exchange throughput. That still requires a controlled execution benchmark.
 The global scheduler and normal trading operation resume after deployment.
+
+## Scaling boundary
+
+The original 100-account test was a test fixture, not a product limit. Settings,
+due-account identity lookup, allocation and entry recheck now process users in
+pages of 100. A 250-account fixture verifies multiple pages. Empty allocation
+windows do not scan all users. The global analysis scheduler reads its one
+system setting instead of enumerating enabled accounts on each poll.
+Once a complete allocation pass succeeds, the
+decision is marked complete so later polls do not reread every account. Accounts
+must be enabled and connected when allocation runs after the global recheck.
+Normal risk checks still run on every scheduler pass, while unchanged display
+snapshots are persisted at most once per ten seconds by default. Failed account
+allocations leave the pass incomplete and are retried.
+
+The current trading backend remains one writer. Its filesystem lock prevents two
+writers sharing the Ubuntu state volume, but is not a distributed lease. API and
+market-data readers may be replicated; multiple trading writers on separate hosts
+must not be started until account leases with fencing are in place. Convex, Supabase
+and Delta impose service and exchange limits beyond our CPU and RAM.
+
+In a 151-second Convex log sample, 408 of 640 calls were generic record reads,
+87 read credentials, 86 updated records, and four checked pending allocations.
+About 359 responses were marked cached. The measured pressure was in repeated
+record access, so batching entry checks and reducing unchanged risk writes is
+more useful now than adding Redis. Redis would need its own persistence, failover,
+invalidation rules, metrics and credentials. It would not replace Convex's
+transactional order journal or account allocations. Reconsider it only after
+measuring a repeated market-data or cross-process cache workload that Convex's
+query cache and the current in-process caches cannot serve.
+
+Convex's [query cache](https://docs.convex.dev/realtime) can reuse identical
+query results. Its [limits](https://docs.convex.dev/production/state/limits)
+still apply to each function and deployment, so pages and bounded workers are
+required even when the Ubuntu machine has spare memory. The trading writer can
+scale vertically. Horizontally scaling execution requires a separate deployment
+step with durable account leases, fencing before order submission, and routing
+manual trade requests to the account's current writer.
 
 Do not flip storage flags back to Supabase. The old trading tables are gone.
 Recovery requires stopping writers and reconciling new Convex activity against
