@@ -263,6 +263,8 @@ class TradingEngine:
         self.synced_fills: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.sessions: dict[str, AccountSession] = {}
         self.account_budgets: dict[str, RequestBudget] = {}
+        self.account_groups: dict[str, str] = {}
+        self.account_groups_refresh_at = 0.0
         self.session_lock = asyncio.Lock()
         self.wake = asyncio.Event()
         self.risk_errors: dict[str, str] = {}
@@ -2530,20 +2532,27 @@ class TradingEngine:
                 await operation(row)
             return
         user_ids = list({str(row["user_id"]) for row in rows})
-        groups = await asyncio.gather(
-            *(
-                self.application_data.request(
-                    "accounts:executionGroupsForUsers", {"userIds": user_ids[start : start + 100]}
+        now = time.monotonic()
+        if now >= self.account_groups_refresh_at:
+            self.account_groups.clear()
+            self.account_groups_refresh_at = now + getattr(self.settings, "account_group_cache_seconds", 30)
+        missing = [user_id for user_id in user_ids if user_id not in self.account_groups]
+        if missing:
+            groups = await asyncio.gather(
+                *(
+                    self.application_data.request(
+                        "accounts:executionGroupsForUsers", {"userIds": missing[start : start + 100]}
+                    )
+                    for start in range(0, len(missing), 100)
                 )
-                for start in range(0, len(user_ids), 100)
             )
-        )
-        identities = [item for group in groups for item in group]
-        accounts = {item["userId"]: item["accountId"] for item in identities}
+            self.account_groups.update(
+                (item["userId"], item["accountId"]) for group in groups for item in group
+            )
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             user_id = str(row["user_id"])
-            grouped.setdefault(accounts.get(user_id, user_id), []).append(row)
+            grouped.setdefault(self.account_groups.get(user_id, user_id), []).append(row)
         semaphore = asyncio.Semaphore(getattr(self.settings, "execution_account_concurrency", 8))
 
         async def execute_account(items: list[dict[str, Any]]) -> None:

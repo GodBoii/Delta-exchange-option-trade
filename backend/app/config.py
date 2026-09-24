@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     execution_account_concurrency: int = Field(default=8, ge=1, le=128)
     shared_allocation_concurrency: int = Field(default=8, ge=1, le=128)
     risk_state_persist_seconds: float = Field(default=10, ge=2, le=60)
+    account_group_cache_seconds: float = Field(default=30, ge=0, le=300)
     scheduler_poll_seconds: float = 2.0
     max_entry_lateness_seconds: int = 180
     exit_verify_timeout_seconds: float = 10.0

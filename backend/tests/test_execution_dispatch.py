@@ -32,3 +32,8 @@ async def test_dispatch_bounds_parallel_accounts_and_serializes_exchange_aliases
     assert 1 < high_water <= 8
     assert len(completed) == len(set(completed)) == 250
     assert engine.application_data.request.await_count == 3
+    await engine._dispatch_accounts(rows, operation)
+    assert engine.application_data.request.await_count == 3
+    engine.account_groups_refresh_at = 0
+    await engine._dispatch_accounts(rows, operation)
+    assert engine.application_data.request.await_count == 6
