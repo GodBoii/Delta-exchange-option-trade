@@ -163,3 +163,34 @@ async def test_new_templates_trigger_the_existing_monitor(definition, exit_reaso
     assert await engine.monitor_combined_strategy(database.row)
     assert database.row["risk_state"]["exitReason"] == exit_reason
     assert database.row["status"] == "executing_exit"
+
+
+async def test_risk_checks_continue_between_persisted_snapshots():
+    definition = ADDED[0]
+    database = Database(definition)
+    database.row["status"] = "active"
+    database.row["risk_monitor_at"] = datetime.now(UTC).isoformat()
+    database.update = AsyncMock(wraps=database.update)
+    client = SimpleNamespace(
+        ticker=AsyncMock(return_value={"result": {"mark_price": "100"}}),
+        close=AsyncMock(),
+    )
+    engine = TradingEngine(database, SimpleNamespace(risk_state_persist_seconds=10))
+    engine.client_for_user = AsyncMock(return_value=client)
+    engine.contract_value = AsyncMock(return_value=Decimal("0.001"))
+    orders = [
+        {
+            "leg_id": leg.id, "product_symbol": f"product-{leg.id}", "side": leg.position,
+            "size": 1, "filled_size": 1, "average_fill_price": "100",
+        }
+        for leg in definition.legs
+    ]
+    engine.entry_orders = AsyncMock(return_value=orders)
+    engine.reconcile_entry_fills = AsyncMock(return_value=orders)
+    assert not await engine.monitor_combined_strategy(database.row)
+    client.ticker.assert_awaited()
+    database.update.assert_not_awaited()
+
+    database.row["risk_monitor_at"] = (datetime.now(UTC) - timedelta(seconds=11)).isoformat()
+    assert not await engine.monitor_combined_strategy(database.row)
+    assert database.update.await_count == 1

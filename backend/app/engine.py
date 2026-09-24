@@ -2173,15 +2173,21 @@ class TradingEngine:
                     "pricedAt": iso_now(),
                 }
             )
-            await self.db.update(
-                "strategies",
-                {"risk_state": risk_state, "risk_monitor_at": iso_now()},
-                {"id": f"eq.{row['id']}", "status": "eq.active"},
-            )
             trigger_reason = (
                 "stop_loss" if metrics["stop_triggered"] else "take_profit" if metrics["target_triggered"] else None
             )
             if not trigger_reason:
+                last_report = row.get("risk_monitor_at")
+                last_report_at = (
+                    datetime.fromisoformat(str(last_report).replace("Z", "+00:00")) if last_report else None
+                )
+                interval = getattr(self.settings, "risk_state_persist_seconds", 10)
+                if last_report_at is None or (utc_now() - last_report_at).total_seconds() >= interval:
+                    await self.db.update(
+                        "strategies",
+                        {"risk_state": risk_state, "risk_monitor_at": iso_now()},
+                        {"id": f"eq.{row['id']}", "status": "eq.active"},
+                    )
                 return False
             return await self.claim_risk_exit(str(row["id"]), risk_state, trigger_reason)
         finally:
@@ -2202,13 +2208,13 @@ class TradingEngine:
     async def process_active_risks(self) -> None:
         active = await self.strategy_pages(
             {
-                "select": "id,user_id,definition_json,risk_state,entry_execution_at",
+                "select": "id,user_id,definition_json,risk_state,risk_monitor_at,entry_execution_at",
                 "status": "eq.active",
                 "combined_stop_triggered_at": "is.null",
                 "limit": "25",
             },
         )
-        for row in active:
+        async def monitor_one(row: dict[str, Any]) -> None:
             try:
                 if await self.monitor_combined_strategy(row):
                     await self.execute_exit(str(row["id"]), preclaimed=True)
@@ -2226,6 +2232,8 @@ class TradingEngine:
                     {"status": "attention"},
                     {"id": f"eq.{row['id']}", "status": "eq.executing_exit", "exit_execution_at": "is.null"},
                 )
+
+        await self._dispatch_accounts(active, monitor_one)
 
     async def strategy_pages(self, params: dict[str, str]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -2521,13 +2529,22 @@ class TradingEngine:
             for row in rows:
                 await operation(row)
             return
-        identities = await self.application_data.request("accounts:executionGroups", {})
+        user_ids = list({str(row["user_id"]) for row in rows})
+        groups = await asyncio.gather(
+            *(
+                self.application_data.request(
+                    "accounts:executionGroupsForUsers", {"userIds": user_ids[start : start + 100]}
+                )
+                for start in range(0, len(user_ids), 100)
+            )
+        )
+        identities = [item for group in groups for item in group]
         accounts = {item["userId"]: item["accountId"] for item in identities}
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             user_id = str(row["user_id"])
             grouped.setdefault(accounts.get(user_id, user_id), []).append(row)
-        semaphore = asyncio.Semaphore(8)
+        semaphore = asyncio.Semaphore(getattr(self.settings, "execution_account_concurrency", 8))
 
         async def execute_account(items: list[dict[str, Any]]) -> None:
             async with semaphore:
@@ -2624,6 +2641,18 @@ class TradingEngine:
         states = dict.fromkeys(strategy_ids, "ready")
         if not strategy_ids:
             return states
+        runtime = getattr(self.db, "runtime", None)
+        if runtime is not None:
+            groups = await asyncio.gather(
+                *(
+                    runtime.data.request(
+                        "runtimeControl:recheckStates",
+                        {"strategyIds": strategy_ids[start : start + 100]},
+                    )
+                    for start in range(0, len(strategy_ids), 100)
+                )
+            )
+            return {strategy_id: state for group in groups for strategy_id, state in group.items()}
         proposals = await self.db.select(
             "strategy_proposals",
             {"select": "*", "strategy_id": f"in.({','.join(strategy_ids)})"},
