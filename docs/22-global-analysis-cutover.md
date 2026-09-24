@@ -115,6 +115,12 @@ The backend caches the Delta account grouping used for concurrent dispatch for
 exchange connection while a strategy is active remains blocked, so this cache
 does not change ownership during a live strategy. The cache is local and
 discarded on restart.
+Accounts share one bounded HTTP connection pool but keep separate request
+signatures and rate budgets. Public Delta option marks are subscribed once
+per group of 256 distinct symbols on the trading host, and account risk checks
+read the same fresh mark. Each account still has its own authenticated private
+stream. Public mark groups idle for 15 minutes are closed; stale or missing
+marks still fall back to Delta REST.
 
 The current trading backend remains one writer. Its filesystem lock prevents two
 writers sharing the Ubuntu state volume, but is not a distributed lease. API and
