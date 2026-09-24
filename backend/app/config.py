@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     trading_lock_path: str = "/app/state/trading.lock"
     delta_production_url: str = "https://api.india.delta.exchange"
     scheduler_enabled: bool = True
+    trading_writer_enabled: bool = True
     automation_scheduler_enabled: bool = True
     automation_analysis_concurrency: int = Field(default=3, ge=1, le=32)
     automation_recheck_concurrency: int = Field(default=4, ge=1, le=32)

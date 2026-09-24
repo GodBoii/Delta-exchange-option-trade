@@ -45,18 +45,28 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    instance_lock = InstanceLock(settings.trading_lock_path) if settings.convex_runtime_enabled else None
+    instance_lock = (
+        InstanceLock(settings.trading_lock_path)
+        if settings.trading_writer_enabled and settings.convex_runtime_enabled
+        else None
+    )
     if instance_lock is not None:
         instance_lock.acquire()
     db = SupabaseAdmin(settings)
-    engine = TradingEngine(db, settings)
-    scheduler = Scheduler(engine, settings.scheduler_poll_seconds, settings.scheduler_enabled)
+    engine_settings = settings if settings.trading_writer_enabled else settings.model_copy(
+        update={"delta_events_enabled": False}
+    )
+    engine = TradingEngine(db, engine_settings)
+    scheduler = Scheduler(
+        engine, settings.scheduler_poll_seconds,
+        settings.scheduler_enabled and settings.trading_writer_enabled,
+    )
     automation_scheduler = AutomationScheduler(db, engine)
     app.state.db = db
     app.state.engine = engine
     app.state.scheduler = scheduler
     app.state.automation_scheduler = automation_scheduler
-    if settings.convex_runtime_enabled:
+    if settings.trading_writer_enabled and settings.convex_runtime_enabled:
         try:
             response = await db.client.get("https://api.ipify.org", timeout=5)
             response.raise_for_status()
@@ -64,10 +74,10 @@ async def lifespan(app: FastAPI):
             await db.runtime.data.request("accounts:updateOutboundIp", {"ip": outbound_ip}, mutation=True)
         except Exception:
             logger.exception("Could not refresh the server outbound IP")
-    if not settings.scheduler_enabled:
+    if settings.trading_writer_enabled and not settings.scheduler_enabled:
         await engine.recover_interrupted_states()
     scheduler.start()
-    if settings.automation_scheduler_enabled:
+    if settings.trading_writer_enabled and settings.automation_scheduler_enabled:
         automation_scheduler.start()
     try:
         yield
@@ -87,6 +97,21 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def require_trading_writer(request: Request, call_next):
+    if not settings.trading_writer_enabled and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "error": {
+                "code": "read_replica",
+                "message": "This API replica only serves reads; route changes to the trading writer",
+            }},
+        )
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
