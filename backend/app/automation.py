@@ -693,17 +693,18 @@ class AutomationScheduler:
 
     async def _enqueue_session_reviews(self) -> None:
         now = datetime.now(UTC)
-        settings = await self.db.select(
-            "automation_settings",
-            {
-                "select": "user_id",
-                "enabled": "eq.true",
-                "user_id": f"neq.{SHARED_USER_ID}",
-            },
-        )
         if shared_enabled(getattr(self.db, "settings", None)):
             global_settings = await self.db.select("automation_settings", {"user_id": f"eq.{SHARED_USER_ID}"})
             settings = [{"user_id": SHARED_USER_ID}] if global_settings and global_settings[0]["enabled"] else []
+        else:
+            settings = await self.db.select(
+                "automation_settings",
+                {
+                    "select": "user_id",
+                    "enabled": "eq.true",
+                    "user_id": f"neq.{SHARED_USER_ID}",
+                },
+            )
         fixed_runs = fixed_runs_between(now - FIXED_RUN_CATCH_UP, now + FIXED_RUN_LOOKAHEAD)
         payload = [
             {
@@ -737,15 +738,15 @@ class AutomationScheduler:
         recheck_available = self.recheck_concurrency - len(self.recheck_tasks)
         if analysis_available <= 0 and recheck_available <= 0:
             return
-        enabled_rows = await self.db.select(
-            "automation_settings",
-            {"select": "user_id", "enabled": "eq.true"},
-        )
-        enabled_users = {str(row["user_id"]) for row in enabled_rows}
         if shared_enabled(getattr(self.db, "settings", None)):
-            enabled_users = {SHARED_USER_ID} if SHARED_USER_ID in enabled_users else set()
+            settings = await self.db.select("automation_settings", {"user_id": f"eq.{SHARED_USER_ID}"})
+            enabled_users = {SHARED_USER_ID} if settings and settings[0]["enabled"] else set()
         else:
-            enabled_users.discard(SHARED_USER_ID)
+            enabled_rows = await self.db.select(
+                "automation_settings",
+                {"select": "user_id", "enabled": "eq.true", "user_id": f"neq.{SHARED_USER_ID}"},
+            )
+            enabled_users = {str(row["user_id"]) for row in enabled_rows}
         if not enabled_users:
             return
         due = []
@@ -813,18 +814,37 @@ class AutomationScheduler:
                 analysis_available -= 1
 
     async def _allocate_shared_decisions(self) -> None:
-        pending = await self.db.runtime.data.request("sharedAnalysis:pendingAllocations", {})
         # Bound concurrency so slow accounts do not serialize the entire allocation batch.
-        semaphore = asyncio.Semaphore(8)
+        semaphore = asyncio.Semaphore(getattr(self.db.settings, "shared_allocation_concurrency", 8))
+        failures = False
+        decision_ids: set[str] = set()
 
         async def allocate(item: dict[str, str]) -> None:
+            nonlocal failures
             async with semaphore:
                 try:
                     await self.db.runtime.data.request("sharedAnalysis:allocate", item, mutation=True)
-                except AppError:
+                except Exception:
+                    failures = True
                     logger.exception("Shared allocation failed decision=%s user=%s", item["decisionId"], item["userId"])
 
-        await asyncio.gather(*(allocate(item) for item in pending))
+        cursor = None
+        while True:
+            page = await self.db.runtime.data.request(
+                "sharedAnalysis:pendingAllocationPage", {"cursor": cursor}
+            )
+            decision_ids.update(page["decisions"])
+            await asyncio.gather(*(allocate(item) for item in page["items"]))
+            if page["isDone"]:
+                if not failures:
+                    for decision_id in decision_ids:
+                        await self.db.runtime.data.request(
+                            "sharedAnalysis:completeAllocation", {"decisionId": decision_id}, mutation=True
+                        )
+                return
+            if cursor == page["continueCursor"]:
+                raise RuntimeError("Account allocation pagination did not advance")
+            cursor = page["continueCursor"]
 
     async def _execute(self, row: dict[str, Any]) -> None:
         try:

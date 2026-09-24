@@ -51,7 +51,7 @@ async def test_reservation_uses_the_same_wallet_and_policy_as_sizing():
 async def test_three_users_produce_one_fixed_review_per_session():
     db = SimpleNamespace(
         settings=SimpleNamespace(convex_runtime_enabled=True, shared_analysis_enabled=True),
-        select=AsyncMock(side_effect=[[{"user_id": user} for user in ("a", "b", "c")], [{"user_id": SHARED_USER_ID, "enabled": True}]]),
+        select=AsyncMock(return_value=[{"user_id": SHARED_USER_ID, "enabled": True}]),
         upsert=AsyncMock(),
         rpc=AsyncMock(),
     )
@@ -60,6 +60,8 @@ async def test_three_users_produce_one_fixed_review_per_session():
     assert runs
     assert {run["user_id"] for run in runs} == {SHARED_USER_ID}
     assert len({run["run_key"] for run in runs}) == len(runs)
+    db.select.assert_awaited_once()
+    assert db.select.call_args.args[1]["user_id"] == f"eq.{SHARED_USER_ID}"
 
 
 @pytest.mark.parametrize(
@@ -82,3 +84,47 @@ async def test_shared_recheck_controls_every_linked_account(status, outcome, exp
     )
     engine = TradingEngine(db, SimpleNamespace())
     assert await engine.activation_recheck_states(["a", "b", "c"]) == dict.fromkeys(["a", "b", "c"], expected)
+
+
+async def test_convex_recheck_states_use_one_request_for_due_accounts():
+    strategy_ids = [f"strategy-{index}" for index in range(100)]
+    expected = dict.fromkeys(strategy_ids, "ready")
+    request = AsyncMock(return_value=expected)
+    db = SimpleNamespace(runtime=SimpleNamespace(data=SimpleNamespace(request=request)))
+    engine = TradingEngine(db, SimpleNamespace())
+    assert await engine.activation_recheck_states(strategy_ids) == expected
+    request.assert_awaited_once_with("runtimeControl:recheckStates", {"strategyIds": strategy_ids})
+
+
+async def test_shared_allocation_drains_multiple_account_pages():
+    pending_cursors = []
+    allocations = []
+
+    async def request(path, args, *, mutation=False):
+        if path == "sharedAnalysis:allocate":
+            assert mutation
+            allocations.append(args["userId"])
+            return {"reused": False}
+        if path == "sharedAnalysis:completeAllocation":
+            assert mutation
+            assert args["decisionId"] == "common"
+            return None
+        assert path == "sharedAnalysis:pendingAllocationPage"
+        pending_cursors.append(args["cursor"])
+        page = len(pending_cursors) - 1
+        count = 50 if page == 2 else 100
+        return {
+            "items": [{"decisionId": "common", "userId": f"user-{page * 100 + index}"} for index in range(count)],
+            "decisions": ["common"],
+            "continueCursor": str(page + 1),
+            "isDone": page == 2,
+        }
+
+    db = SimpleNamespace(
+        settings=SimpleNamespace(shared_allocation_concurrency=8),
+        runtime=SimpleNamespace(data=SimpleNamespace(request=AsyncMock(side_effect=request))),
+    )
+    await AutomationScheduler(db, object())._allocate_shared_decisions()
+    assert pending_cursors == [None, "1", "2"]
+    assert len(allocations) == len(set(allocations)) == 250
+    assert db.runtime.data.request.await_args.args[0] == "sharedAnalysis:completeAllocation"
