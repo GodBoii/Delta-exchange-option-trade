@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from app.automation import automation_overview, build_account_context
+from app.automation import automation_overview, build_account_context, verified_decision_report
 from app.automation_schedule import next_fixed_run
 from app.capital import CapitalPolicy
 from app.default_strategies import default_strategy_definitions
@@ -30,6 +30,15 @@ from news_agent.config import NewsAgentSettings
 
 def option_context(*expiries: datetime) -> dict:
     return {"options": [{"expiry": expiry.isoformat()} for expiry in expiries]}
+
+
+def test_verified_action_precedes_unexecuted_model_suggestion():
+    report = "## Decision\n\nSelected: Short OTM put."
+    rendered = verified_decision_report("no_trade_for_current_window", report, shared=False)
+    assert rendered.startswith("## Verified action\n\nNo strategy was scheduled during this review.")
+    assert report in rendered
+    shared = verified_decision_report("strategy_selected", report, shared=True)
+    assert "still requires recheck and allocation" in shared.split("## Decision")[0]
 
 
 def test_materializes_same_day_hold_to_expiry_schedule() -> None:

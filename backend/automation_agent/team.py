@@ -214,6 +214,11 @@ def run_automation_team(
                     "Orders are submitted later by that engine at the activation time, never inside the tool call."
                 ),
                 (
+                    "Treat the tool result as the source of truth. Say a strategy was selected only if "
+                    "select_strategy_and_time returned strategy_selected. If no scheduling tool committed, "
+                    "report no trade, even if you identified a promising setup."
+                ),
+                (
                     "Use Asia/Kolkata for customer-facing times. Tool timestamps must use timezone-aware ISO-8601: "
                     "UTC such as 2026-08-30T00:00:00Z or IST such as 2026-08-30T05:30:00+05:30."
                 ),

@@ -49,6 +49,19 @@ class AutomationRunRequest(BaseModel):
     reason: str | None = None
 
 
+def verified_decision_report(outcome: str, report: str, *, shared: bool) -> str:
+    """Put the committed action above the model's analysis without rewriting its evidence."""
+    action = {
+        "strategy_selected": (
+            "A shared strategy proposal was recorded. Account entry still requires recheck and allocation."
+            if shared else "A strategy was scheduled for this account. Entry still requires the activation recheck."
+        ),
+        "wait_and_run_again": "A follow-up review was scheduled or an existing review was reused.",
+        "no_trade_for_current_window": "No strategy was scheduled during this review.",
+    }.get(outcome, "No trading action was confirmed during this review.")
+    return f"## Verified action\n\n{action}\n\n{report}"
+
+
 async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
     rows = await db.select("automation_settings", {"select": "*", "user_id": f"eq.{user_id}", "limit": "1"})
     if rows:
@@ -317,11 +330,17 @@ async def execute_automation_run(
             nested = payload.get("error") if isinstance(payload, dict) else None
             message = nested.get("message") if isinstance(nested, dict) else None
             raise AppError(response.status_code, message or "Automation analysis failed", "automation_agent_failed")
+        outcome = str(payload.get("outcome") or "no_trade_for_current_window")
+        report = payload.get("report")
+        if isinstance(report, str) and report.strip():
+            payload["report"] = verified_decision_report(
+                outcome, report, shared=user_id == SHARED_USER_ID
+            )
         await db.update(
             "automation_agent_runs",
             {
                 "status": "completed",
-                "outcome": payload.get("outcome") or "no_trade_for_current_window",
+                "outcome": outcome,
                 "completed_at": iso_now(),
                 "market_snapshot_id": payload.get("marketSnapshotId"),
                 "agno_session_id": payload.get("sessionId"),
