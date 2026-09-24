@@ -83,6 +83,10 @@ the same entry schedule at 06:00 IST. This was normal live trading, not a test o
 The later audit kept owner builder drafts local until an explicit Save built-in,
 labelled older private reports in the run list, hid revision numbers beside strategy
 names, and widened browser connection timeouts after a 9.3-second cold health request.
+Builder recovery keys now include the signed-in UUID, so two people sharing a browser
+do not load each other's unsaved drafts. An unfinished owner draft survives reload
+without entering the global catalog. The first live global research context contained
+no account balances or private positions.
 
 Historical data comparison and authenticated API checks do not prove 100-account
 exchange throughput. That still requires a controlled execution benchmark.
