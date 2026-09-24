@@ -11,7 +11,7 @@ const write = makeFunctionReference<"mutation">("runtimeRecords:write");
 const publish = makeFunctionReference<"mutation">("sharedAnalysis:publish");
 const allocate = makeFunctionReference<"mutation">("sharedAnalysis:allocate");
 const recheck = makeFunctionReference<"mutation">("runtimeAutomation:recheck");
-const pending = makeFunctionReference<"query">("sharedAnalysis:pendingAllocations");
+const pending = makeFunctionReference<"query">("sharedAnalysis:pendingAllocationPage");
 beforeEach(() => { vi.stubEnv("CONVEX_TRADING_SECRET", "trade"); vi.stubEnv("CONVEX_RESEARCH_SECRET", "research"); });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -59,13 +59,15 @@ test("one decision and recheck allocate once to three accounts with the same sch
     if (!run) throw new Error("Missing recheck");
     await ctx.db.patch(run._id, { status: "completed", rowJson: JSON.stringify({ ...JSON.parse(run.rowJson), status: "completed" }) });
   });
-  expect(await t.query(pending, { secret: "trade" })).toHaveLength(3);
+  expect((await t.query(pending, { secret: "trade", cursor: null })).items).toHaveLength(3);
+  expect(await t.query(makeFunctionReference<"query">("sharedAnalysis:pendingAllocations"),
+    { secret: "trade" })).toHaveLength(3);
   for (const userId of ["a", "b", "c"]) {
     const first = await t.mutation(allocate, { ...args, userId });
     const second = await t.mutation(allocate, { ...args, userId });
     expect(second).toEqual({ strategyId: first.strategyId, reused: true });
   }
-  expect(await t.query(pending, { secret: "trade" })).toEqual([]);
+  expect((await t.query(pending, { secret: "trade", cursor: null })).items).toEqual([]);
   const strategies = await t.run(ctx => ctx.db.query("strategies").collect());
   expect(strategies).toHaveLength(3);
   expect(new Set(strategies.map(row => row.owner))).toEqual(new Set(["a", "b", "c"]));

@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { get, parseRow, put, text, time } from "./runtimeRecords";
 import { validateMaterializedDefinition } from "./strategyDefinition";
 import { newRun, uuid } from "./runtimeControl";
@@ -82,33 +82,73 @@ export const allocate = mutation({
   },
 });
 
-/** One read per polling cycle; completed allocations do not cause repeat mutations. */
+/** Account pages keep each query within Convex transaction limits. */
+async function pendingAccountPage(ctx: QueryCtx, cursor: string | null) {
+  const decisions = await ctx.db.query("strategy_proposals")
+    .withIndex("by_owner_time", q => q.eq("owner", sharedUserId).gt("time", Date.now()))
+    .filter(q => q.eq(q.field("status"), "scheduled")).take(101);
+  if (decisions.length > 100) throw new ConvexError("Too many pending shared decisions");
+  const ready = [];
+    for (const decision of decisions) {
+      const plan = parseRow(decision.rowJson);
+      if (plan.allocation_completed_at) continue;
+    if (time(plan.activation_time) <= Date.now()) continue;
+    const recheck = await get(ctx, "analysisJobs", text(plan, "shared_recheck_run_id"));
+    if (recheck?.status === "completed" && parseRow(recheck.rowJson).outcome === "strategy_reconfirmed") {
+      ready.push(decision);
+    }
+  }
+    if (!ready.length) return { items: [], decisions: [], continueCursor: "", isDone: true };
+  const accounts = await ctx.db.query("users").withIndex("by_user")
+    .paginate({ numItems: 100, cursor });
+  const pending = [];
+  for (const decision of ready) {
+    for (const account of accounts.page) {
+      if (!account.automation.enabled) continue;
+      const existing = await ctx.db.query("strategy_proposals").withIndex("by_owner_unique", q =>
+        q.eq("owner", account.userId).eq("uniqueKey", `shared:${decision.externalId}`)).unique();
+      if (existing) continue;
+      const connection = account.connection;
+      if (connection?.status === "connected") pending.push({ decisionId: decision.externalId, userId: account.userId });
+    }
+  }
+  return { items: pending, decisions: ready.map(decision => decision.externalId),
+    continueCursor: accounts.continueCursor, isDone: accounts.isDone };
+}
+
+/** Compatibility while a previous backend process may still be running. */
 export const pendingAllocations = query({
   args: { secret: v.string() },
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
-    const decisions = await ctx.db.query("strategy_proposals")
-      .withIndex("by_owner_time", q => q.eq("owner", sharedUserId).gt("time", Date.now()))
-      .filter(q => q.eq(q.field("status"), "scheduled")).take(101);
-    if (decisions.length > 100) throw new ConvexError("Too many pending shared decisions");
-    const accounts = await ctx.db.query("users").take(101);
-    if (accounts.length > 100) throw new ConvexError("Account allocation batch exceeds supported size");
-    const pending = [];
-    for (const decision of decisions) {
-      const plan = parseRow(decision.rowJson);
-      if (time(plan.activation_time) <= Date.now()) continue;
-      const recheck = await get(ctx, "analysisJobs", text(plan, "shared_recheck_run_id"));
-      if (!recheck || recheck.status !== "completed" || parseRow(recheck.rowJson).outcome !== "strategy_reconfirmed") continue;
-      for (const account of accounts) {
-        if (!account.automation.enabled) continue;
-        const existing = await ctx.db.query("strategy_proposals").withIndex("by_owner_unique", q =>
-          q.eq("owner", account.userId).eq("uniqueKey", `shared:${decision.externalId}`)).unique();
-        if (existing) continue;
-        const connection = account.connection;
-        if (connection?.status === "connected") pending.push({ decisionId: decision.externalId, userId: account.userId });
-      }
+    return (await pendingAccountPage(ctx, null)).items;
+  },
+});
+
+export const pendingAllocationPage = query({
+  args: { secret: v.string(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    return pendingAccountPage(ctx, args.cursor);
+  },
+});
+
+/** Stop rescanning every account after a complete successful allocation pass. */
+export const completeAllocation = mutation({
+  args: { secret: v.string(), decisionId: v.string() },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    const decision = await get(ctx, "strategy_proposals", args.decisionId);
+    if (!decision || decision.owner !== sharedUserId || decision.status !== "scheduled") {
+      throw new ConvexError("Shared decision unavailable");
     }
-    return pending;
+    const row = parseRow(decision.rowJson);
+    if (row.allocation_completed_at) return;
+    const recheck = await get(ctx, "analysisJobs", text(row, "shared_recheck_run_id"));
+    if (!recheck || recheck.status !== "completed" || parseRow(recheck.rowJson).outcome !== "strategy_reconfirmed") {
+      throw new ConvexError("Shared recheck has not confirmed entry");
+    }
+    await put(ctx, "strategy_proposals", { ...row, allocation_completed_at: new Date().toISOString() }, decision);
   },
 });
 
