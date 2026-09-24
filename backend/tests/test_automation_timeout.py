@@ -68,7 +68,10 @@ async def test_long_review_completes_but_recheck_keeps_its_deadline(monkeypatch,
     else:
         await automation.execute_automation_run(**kwargs)
         assert database.row["status"] == "completed"
-        assert database.row["report_markdown"] == "No trade"
+        assert database.row["report_markdown"].startswith(
+            "## Verified action\n\nNo strategy was scheduled during this review."
+        )
+        assert database.row["report_markdown"].endswith("No trade")
 
 
 @pytest.mark.asyncio

@@ -188,7 +188,7 @@ def test_credit_take_profit_90_percent_triggers_at_ten_percent_close_cost():
     assert metrics["target_triggered"] is True
 
 
-def test_default_library_contains_the_thirteen_approved_strategies():
+def test_default_library_contains_the_fifteen_approved_strategies():
     definitions = default_strategy_definitions(datetime(2026, 8, 25, 8, tzinfo=UTC))
 
     assert [definition.name for definition in definitions] == [
@@ -205,6 +205,8 @@ def test_default_library_contains_the_thirteen_approved_strategies():
         "Long ATM straddle - next-day expiry",
         "Short ATM straddle - next-day expiry",
         "Short strangle - next-day expiry",
+        "Bull put credit spread",
+        "Bear call credit spread",
     ]
     assert all(definition.schemaVersion == 2 for definition in definitions)
     assert all(definition.enabledForAi for definition in definitions)
