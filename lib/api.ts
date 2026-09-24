@@ -12,8 +12,8 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 export type ApiRequester = <T>(url: string, init?: RequestInit) => Promise<T>;
 
 const DEFAULT_PORTS = "8000,8585,8085,8011,8001";
-const PROBE_TIMEOUT_MS = 8_000;
-const REQUEST_TIMEOUT_MS = 8_000;
+const PROBE_TIMEOUT_MS = 12_000;
+const REQUEST_TIMEOUT_MS = 12_000;
 
 let resolvedOrigin: string | null = null;
 let pendingResolution: Promise<string> | null = null;

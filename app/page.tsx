@@ -85,7 +85,7 @@ export default function Home() {
 
       try {
         resetApiOrigin();
-        const data = await requestJson<SessionResponse>("/api/session", { signal: AbortSignal.timeout(3_000) });
+        const data = await requestJson<SessionResponse>("/api/session", { signal: AbortSignal.timeout(12_000) });
         setBackendStatus("online");
         setAccount(data.connected ? data.account : null);
         if (data.user) setUser(data.user);
