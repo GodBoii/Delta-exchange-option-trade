@@ -118,7 +118,12 @@ discarded on restart.
 
 The current trading backend remains one writer. Its filesystem lock prevents two
 writers sharing the Ubuntu state volume, but is not a distributed lease. API and
-market-data readers may be replicated; multiple trading writers on separate hosts
+market-data readers may be replicated. An optional Docker Compose
+`read-replicas` profile starts FastAPI containers with no scheduler, private
+stream or trading state volume. They reject non-read HTTP methods. A reverse
+proxy must send write methods to the single writer and may balance GET/HEAD
+among readers. The production API endpoint still points at the writer.
+Multiple trading writers on separate hosts
 must not be started until account leases with fencing are in place. Convex, Supabase
 and Delta impose service and exchange limits beyond our CPU and RAM.
 
