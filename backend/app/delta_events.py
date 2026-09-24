@@ -16,18 +16,22 @@ logger = logging.getLogger(__name__)
 
 
 class DeltaEvents:
-    def __init__(self, api_key: str, api_secret: str, wake: asyncio.Event, public_url: str, private_url: str) -> None:
+    def __init__(
+        self, api_key: str, api_secret: str, wake: asyncio.Event, public_url: str, private_url: str,
+        shared_marks: "PublicMarkFeeds | None" = None,
+    ) -> None:
         self.api_key, self.api_secret = api_key, api_secret
         self.wake = wake
         self.public_url, self.private_url = public_url, private_url
+        self.shared_marks = shared_marks
         self.marks: dict[str, tuple[str, float, float]] = {}
         self.symbols: set[str] = set()
         self.connected = {"public": False, "private": False}
         self.tasks: list[asyncio.Task[None]] = []
         self.closed = False
 
-    def start(self) -> None:
-        self.tasks = [asyncio.create_task(self.run(kind), name=f"delta-{kind}-events") for kind in self.connected]
+    def start(self, kinds: tuple[str, ...] = ("public", "private")) -> None:
+        self.tasks = [asyncio.create_task(self.run(kind), name=f"delta-{kind}-events") for kind in kinds]
 
     async def close(self) -> None:
         self.closed = True
@@ -36,6 +40,8 @@ class DeltaEvents:
         await asyncio.gather(*self.tasks, return_exceptions=True)
 
     def mark(self, symbol: str, max_age: float) -> str | None:
+        if self.shared_marks is not None:
+            return self.shared_marks.mark(symbol, max_age)
         if symbol not in self.symbols:
             if len(self.symbols) >= 256:
                 return None
@@ -167,3 +173,44 @@ class DeltaEvents:
                     backoff = 1
                 await asyncio.sleep(backoff + random.uniform(0, min(backoff, 2)))
                 backoff = min(backoff * 2, 60)
+
+
+class PublicMarkFeeds:
+    """One public mark socket per bounded group of option symbols, shared by accounts."""
+
+    def __init__(self, wake: asyncio.Event, public_url: str, private_url: str) -> None:
+        self.wake = wake
+        self.public_url, self.private_url = public_url, private_url
+        self.feeds: list[DeltaEvents] = []
+        self.by_symbol: dict[str, DeltaEvents] = {}
+        self.last_used: dict[DeltaEvents, float] = {}
+        self.closed = False
+
+    def mark(self, symbol: str, max_age: float) -> str | None:
+        if self.closed:
+            return None
+        feed = self.by_symbol.get(symbol)
+        if feed is None:
+            feed = next((item for item in self.feeds if len(item.symbols) < 256), None)
+            if feed is None:
+                feed = DeltaEvents("", "", self.wake, self.public_url, self.private_url)
+                self.feeds.append(feed)
+                feed.start(("public",))
+            self.by_symbol[symbol] = feed
+        self.last_used[feed] = time.monotonic()
+        return feed.mark(symbol, max_age)
+
+    async def prune(self, *, now: float | None = None) -> None:
+        current = time.monotonic() if now is None else now
+        idle = {feed for feed, used in self.last_used.items() if current - used >= 900}
+        if not idle:
+            return
+        self.feeds = [feed for feed in self.feeds if feed not in idle]
+        self.by_symbol = {symbol: feed for symbol, feed in self.by_symbol.items() if feed not in idle}
+        for feed in idle:
+            self.last_used.pop(feed, None)
+        await asyncio.gather(*(feed.close() for feed in idle))
+
+    async def close(self) -> None:
+        self.closed = True
+        await asyncio.gather(*(feed.close() for feed in self.feeds))
