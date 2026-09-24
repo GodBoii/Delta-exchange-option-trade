@@ -29,6 +29,7 @@ import { BorderBeam } from "border-beam";
 
 const DRAFT_STORAGE_KEY = "delta-strategy-draft-v1";
 const DRAFT_ID_STORAGE_KEY = "delta-strategy-draft-id-v1";
+const LOCAL_DRAFT_KEY = "delta-strategy-local-draft-v1";
 const MAX_LEGS = 12;
 const DEFAULT_STRATEGY_NAMES = [
   "Long call", "Long put", "Long ATM straddle", "Long strangle",
@@ -385,6 +386,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
   /** False while the trading backend is unreachable: design and export only. */
   liveEnabled: boolean;
 }) {
+  const draftKey = `${DRAFT_STORAGE_KEY}:${userId}`;
+  const draftIdKey = `${DRAFT_ID_STORAGE_KEY}:${userId}`;
+  const localDraftKey = `${LOCAL_DRAFT_KEY}:${userId}`;
   const [strategy, setStrategy] = useState<StrategyDefinition>(initialStrategy);
   const [expandedLeg, setExpandedLeg] = useState<string | null>(strategy.legs[0]?.id ?? null);
   const [showIssues, setShowIssues] = useState(false);
@@ -469,6 +473,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
       setLibraryState("saved");
       setError("");
       if (trimmedName !== definition.name) setStrategy(normalized);
+      localStorage.removeItem(localDraftKey);
       if (notify) onNotice({ tone: "ok", text: isOwner ? `${trimmedName} published to built-in strategies.` : `${trimmedName} saved to your strategy library.` });
       return saved;
     } catch (saveError) {
@@ -478,12 +483,12 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
       if (notify) onNotice({ tone: "error", text: message });
       return null;
     }
-  }, [onNotice, savedStrategies, isOwner]);
+  }, [onNotice, savedStrategies, isOwner, localDraftKey]);
 
-  // Browser recovery copy, restored before the Supabase library loads.
+  // Browser recovery copy, isolated by the signed-in user's UUID.
   useEffect(() => {
     try {
-      const cached = localStorage.getItem(DRAFT_STORAGE_KEY);
+      const cached = localStorage.getItem(draftKey);
       if (cached) {
         const parsed = JSON.parse(cached) as unknown;
         if (isStrategyDefinition(parsed)) {
@@ -492,15 +497,15 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
         }
       }
     } catch {
-      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      localStorage.removeItem(draftKey);
     } finally {
       setDraftReady(true);
     }
-  }, []);
+  }, [draftKey]);
 
   useEffect(() => {
-    if (draftReady) localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(strategy));
-  }, [draftReady, strategy]);
+    if (draftReady) localStorage.setItem(draftKey, JSON.stringify(strategy));
+  }, [draftReady, draftKey, strategy]);
 
   useEffect(() => {
     if (!draftReady) return;
@@ -520,7 +525,23 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
         const library = markLegacyDefaultCopies(parsed).sort(sortSavedStrategies);
         setSavedStrategies(library);
 
-        const cachedId = localStorage.getItem(DRAFT_ID_STORAGE_KEY);
+        const cachedId = localStorage.getItem(draftIdKey);
+        const cached = localStorage.getItem(draftKey);
+        if (localStorage.getItem(localDraftKey) === "true" && cached) {
+          try {
+            const parsed = JSON.parse(cached) as unknown;
+            if (isStrategyDefinition(parsed)) {
+              const definition = refreshExpiredSchedule(hydrateStrategy(parsed));
+              setActiveSavedId(null);
+              setStrategy(definition);
+              setExpandedLeg(definition.legs[0]?.id ?? null);
+              setSavedFingerprint("");
+              setLibraryState("unsaved");
+              return;
+            }
+          } catch { /* Invalid recovery copies are cleared below. */ }
+          localStorage.removeItem(localDraftKey);
+        }
         const selected = library.find(item => item.id === cachedId) ?? library[0];
         if (!selected) {
           setLibraryState("local");
@@ -529,7 +550,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
 
         // Prefer the unsaved recovery copy when it belongs to the selected row.
         let cachedDefinition: StrategyDefinition | null = null;
-        const cached = localStorage.getItem(DRAFT_STORAGE_KEY);
         if (cachedId === selected.id && cached) {
           try {
             const parsed = JSON.parse(cached) as unknown;
@@ -537,11 +557,14 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
           } catch { /* the recovery effect above already cleared invalid cache data */ }
         }
 
-        const definition = refreshExpiredSchedule(cachedDefinition ?? selected.definition);
+        const publishedDefinition = refreshExpiredSchedule(selected.definition);
+        const definition = cachedDefinition
+          ? refreshExpiredSchedule(cachedDefinition)
+          : publishedDefinition;
         setActiveSavedId(selected.id);
         setStrategy(definition);
         setExpandedLeg(definition.legs[0]?.id ?? null);
-        setSavedFingerprint(fingerprint(isOwner ? definition : selected.definition));
+        setSavedFingerprint(fingerprint(isOwner ? publishedDefinition : selected.definition));
         setLibraryState(selected.isDefault
           ? "template"
           : fingerprint(definition) === fingerprint(selected.definition) ? "saved" : "unsaved");
@@ -556,13 +579,13 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
 
     void loadLibrary();
     return () => { cancelled = true; };
-  }, [draftReady, isOwner, onNotice, userId]);
+  }, [draftReady, draftIdKey, draftKey, isOwner, localDraftKey, onNotice]);
 
   useEffect(() => {
     if (!draftReady) return;
-    if (activeSavedId) localStorage.setItem(DRAFT_ID_STORAGE_KEY, activeSavedId);
-    else localStorage.removeItem(DRAFT_ID_STORAGE_KEY);
-  }, [activeSavedId, draftReady]);
+    if (activeSavedId) localStorage.setItem(draftIdKey, activeSavedId);
+    else localStorage.removeItem(draftIdKey);
+  }, [activeSavedId, draftIdKey, draftReady]);
 
   // Debounced autosave of the selected definition.
   useEffect(() => {
@@ -644,6 +667,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
     }
     const fresh = initialStrategy();
     if (isOwner) {
+      localStorage.setItem(localDraftKey, "true");
       setActiveSavedId(null);
       setSavedFingerprint("");
       setLibraryState("unsaved");
@@ -675,6 +699,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
     }
     const selected = savedStrategies.find(item => item.id === savedId);
     if (!selected) return;
+    localStorage.removeItem(localDraftKey);
     const definition = refreshExpiredSchedule(selected.definition);
     setActiveSavedId(selected.id);
     setStrategy(definition);
@@ -792,6 +817,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, isOwner
         : parsed;
       if (!isStrategyDefinition(candidate)) throw new Error("This file is not a valid Delta strategy draft.");
       const imported = hydrateStrategy(candidate);
+      localStorage.setItem(localDraftKey, "true");
       setActiveSavedId(null);
       setSavedFingerprint("");
       setLibraryState("local");
