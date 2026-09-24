@@ -185,6 +185,7 @@ export type SavedStrategy = {
 };
 
 export type AutomationRun = {
+  scope?: "shared" | "historical_account";
   id: string;
   sessionId?: string | null;
   runId?: string | null;

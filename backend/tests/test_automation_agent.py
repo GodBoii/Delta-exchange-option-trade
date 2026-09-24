@@ -93,6 +93,7 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
                 return [
                     {
                         "id": "completed",
+                        "user_id": "user-1",
                         "trigger": "manual",
                         "status": "completed",
                         "outcome": "strategy_selected",

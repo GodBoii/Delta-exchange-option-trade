@@ -419,7 +419,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             "automation_agent_runs",
             {
                 "select": (
-                    "id,trigger,status,outcome,scheduled_for,started_at,completed_at,model_id,"
+                    "id,user_id,trigger,status,outcome,scheduled_for,started_at,completed_at,model_id,"
                     "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error"
                 ),
                 "user_id": history_filter(getattr(db, "settings", None), user_id),
@@ -491,6 +491,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "runs": [
             {
                 "id": row["id"],
+                "scope": "shared" if row["user_id"] == SHARED_USER_ID else "historical_account",
                 "sessionId": row.get("agno_session_id"),
                 "runId": row.get("agno_run_id"),
                 "trigger": row["trigger"],
