@@ -17,7 +17,7 @@ from .auth import credentials_for_user
 from .capital import CapitalPolicy, capital_budget, maximum_concurrent_strategies, policy_from_row
 from .config import Settings
 from .delta import DeltaClient, RequestBudget
-from .delta_events import DeltaEvents
+from .delta_events import DeltaEvents, PublicMarkFeeds
 from .errors import AppError, DeltaOrderRejected
 from .fill_accounting import PositionResult, exclusive_fill_positions
 from .models import StrategyDefinition
@@ -262,11 +262,19 @@ class TradingEngine:
         self.running_operations: set[str] = set()
         self.synced_fills: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.sessions: dict[str, AccountSession] = {}
+        self.exchange_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(12, connect=5),
+            limits=httpx.Limits(max_connections=256, max_keepalive_connections=64),
+        )
         self.account_budgets: dict[str, RequestBudget] = {}
         self.account_groups: dict[str, str] = {}
         self.account_groups_refresh_at = 0.0
         self.session_lock = asyncio.Lock()
         self.wake = asyncio.Event()
+        self.public_marks = PublicMarkFeeds(
+            self.wake, settings.delta_public_ws_url, settings.delta_private_ws_url
+        ) if getattr(settings, "delta_events_enabled", False) else None
+        self.last_public_mark_prune = 0.0
         self.risk_errors: dict[str, str] = {}
         self.application_data = (
             ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client)
@@ -289,8 +297,6 @@ class TradingEngine:
                 for owner, idle in list(self.sessions.items()):
                     if idle.leases == 0 and time.monotonic() - idle.last_used > 300:
                         await self.close_session(owner)
-                if len(self.sessions) >= 100:
-                    raise AppError(503, "Active account connection capacity reached", "account_capacity_reached")
                 events = (
                     DeltaEvents(
                         credentials["api_key"],
@@ -298,22 +304,20 @@ class TradingEngine:
                         self.wake,
                         self.settings.delta_public_ws_url,
                         self.settings.delta_private_ws_url,
+                        shared_marks=self.public_marks,
                     )
                     if self.settings.delta_events_enabled
                     else None
                 )
                 session = AccountSession(
-                    httpx.AsyncClient(
-                        timeout=httpx.Timeout(12, connect=5),
-                        limits=httpx.Limits(max_connections=12, max_keepalive_connections=8),
-                    ),
+                    self.exchange_http,
                     self.account_budgets.setdefault(credentials.get("delta_user_id") or user_id, RequestBudget()),
                     credentials,
                     events,
                 )
                 self.sessions[user_id] = session
                 if events is not None:
-                    events.start()
+                    events.start(("private",))
             session.leases += 1
             session.last_used = time.monotonic()
 
@@ -348,14 +352,15 @@ class TradingEngine:
 
     async def close_session(self, user_id: str) -> None:
         session = self.sessions.pop(user_id, None)
-        if session is not None:
-            if session.events is not None:
-                await session.events.close()
-            await session.http.aclose()
+        if session is not None and session.events is not None:
+            await session.events.close()
 
     async def close(self) -> None:
         for user_id in list(self.sessions):
             await self.close_session(user_id)
+        if self.public_marks is not None:
+            await self.public_marks.close()
+        await self.exchange_http.aclose()
 
     async def capital_policy(self, user_id: str) -> CapitalPolicy:
         if self.application_data is not None:
@@ -2564,6 +2569,9 @@ class TradingEngine:
 
     async def process_due_strategies(self) -> None:
         monotonic_now = time.monotonic()
+        if self.public_marks is not None and monotonic_now - self.last_public_mark_prune >= 60:
+            await self.public_marks.prune(now=monotonic_now)
+            self.last_public_mark_prune = monotonic_now
         reconcile_attention = monotonic_now - self.last_attention_reconcile >= ATTENTION_RECONCILE_SECONDS
         if reconcile_attention:
             self.last_attention_reconcile = monotonic_now
