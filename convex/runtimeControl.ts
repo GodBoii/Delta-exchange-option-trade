@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { get, ownerRows, parseRow, put, text, time, type Row } from "./runtimeRecords";
 import { authorizeTradingService } from "./tradingAuth";
 import { findUser } from "./userRecords";
@@ -90,6 +90,39 @@ export const claimAgent = mutation({
     const row = { ...parseRow(run.rowJson), status: "running", started_at: new Date().toISOString(), error: null };
     await put(ctx, "analysisJobs", row, run);
     return [row];
+  },
+});
+
+/** Resolve one shared recheck for up to 100 due account strategies. */
+export const recheckStates = query({
+  args: { secret: v.string(), strategyIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    if (args.strategyIds.length > 100) throw new ConvexError("Recheck batch exceeds 100 strategies");
+    const states: Record<string, "ready" | "pending" | "failed" | "dropped"> =
+      Object.fromEntries(args.strategyIds.map(id => [id, "ready"]));
+    const byDecision = new Map<string, string[]>();
+    for (const strategyId of args.strategyIds) {
+      const proposals = await ctx.db.query("strategy_proposals")
+        .withIndex("by_relation", q => q.eq("relation", strategyId)).collect();
+      for (const proposal of proposals) {
+        const decisionId = text(parseRow(proposal.rowJson), "shared_decision_id") || proposal.externalId;
+        byDecision.set(decisionId, [...(byDecision.get(decisionId) ?? []), strategyId]);
+        states[strategyId] = "pending";
+      }
+    }
+    for (const [decisionId, linkedStrategies] of byDecision) {
+      const runs = await ctx.db.query("analysisJobs").withIndex("by_relation", q => q.eq("relation", decisionId)).collect();
+      for (const run of runs) {
+        const row = parseRow(run.rowJson);
+        if (row.trigger !== "activation_recheck") continue;
+        const state = run.status === "completed" && row.outcome === "strategy_reconfirmed" ? "ready"
+          : row.outcome === "strategy_dropped" ? "dropped"
+          : ["failed", "cancelled"].includes(run.status) ? "failed" : "pending";
+        for (const strategyId of linkedStrategies) states[strategyId] = state;
+      }
+    }
+    return states;
   },
 });
 
