@@ -11,6 +11,7 @@ const list = makeFunctionReference<"query">("library:list");
 const get = makeFunctionReference<"query">("library:serverGet");
 const updateDefault = makeFunctionReference<"mutation">("library:serverUpdateDefault");
 const retireDefault = makeFunctionReference<"mutation">("library:serverRetireDefault");
+const createDefault = makeFunctionReference<"mutation">("library:serverCreateDefault");
 const importRows = makeFunctionReference<"mutation">("library:importStrategies");
 const id = "11111111-1111-4111-8111-111111111111";
 const definition = JSON.stringify({ name: "Test strategy", enabledForAi: true, legs: [{ id: "call" }] });
@@ -134,4 +135,23 @@ test("service retires a default without deleting its stored definition", async (
   const stored = await t.run(async ctx => ctx.db.query("savedStrategies")
     .withIndex("by_external_id", q => q.eq("id", id)).unique());
   expect(stored?.definitionJson).toBe(definition);
+});
+
+test("service creates a shared spread once without overwriting a saved version", async () => {
+  const t = convexTest(schema, modules);
+  const id = "10000000-0000-4000-8000-000000000014";
+  const spread = JSON.stringify({
+    name: "Bull put credit spread", enabledForAi: true,
+    legs: [{ position: "buy", optionType: "put" }, { position: "sell", optionType: "put" }],
+  });
+  const created = await t.mutation(createDefault, { secret: "secret", id, definitionJson: spread });
+  expect(created.user_id).toBeNull();
+  expect(created.version).toBe(1);
+  expect((await t.mutation(createDefault, { secret: "secret", id, definitionJson: spread })).version).toBe(1);
+  await expect(t.mutation(createDefault, {
+    secret: "secret", id: "10000000-0000-4000-8000-000000000015", definitionJson: spread,
+  })).rejects.toThrow("name already exists");
+  await expect(t.mutation(createDefault, {
+    secret: "secret", id, definitionJson: JSON.stringify({ ...JSON.parse(spread), name: "Other spread" }),
+  })).rejects.toThrow("already owned");
 });

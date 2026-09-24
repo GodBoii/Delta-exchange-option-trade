@@ -122,6 +122,41 @@ export const serverUpdateDefault = mutation({
   },
 });
 
+/** Add a named shared template without changing existing versions or run snapshots. */
+export const serverCreateDefault = mutation({
+  args: { secret: v.string(), id: v.string(), definitionJson: v.string() },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.id)) {
+      throw new ConvexError("Invalid strategy ID");
+    }
+    const definition: unknown = JSON.parse(args.definitionJson);
+    if (!definition || typeof definition !== "object" || !("name" in definition)
+        || typeof definition.name !== "string") throw new ConvexError("Invalid strategy definition");
+    const name = definition.name;
+    validateDefinition(name, args.definitionJson, true);
+    const existing = await ctx.db.query("savedStrategies")
+      .withIndex("by_external_id", q => q.eq("id", args.id)).unique();
+    if (existing) {
+      if (existing.user_id !== null || existing.name !== name || existing.deleted
+          || existing.definitionJson !== args.definitionJson) {
+        throw new ConvexError("Shared strategy ID is already owned");
+      }
+      return existing;
+    }
+    const sameName = await ctx.db.query("savedStrategies")
+      .withIndex("by_owner_deleted", q => q.eq("user_id", null).eq("deleted", false)).collect();
+    if (sameName.some(item => item.name.toLowerCase() === name.toLowerCase())) {
+      throw new ConvexError("Shared strategy name already exists");
+    }
+    const now = new Date().toISOString();
+    const value = { id: args.id, user_id: null, name, definitionJson: args.definitionJson,
+      source_run_id: null, version: 1, enabled_for_ai: true, created_at: now, updated_at: now, deleted: false };
+    await ctx.db.insert("savedStrategies", value);
+    return value;
+  },
+});
+
 export const serverRetireDefault = mutation({
   args: {
     secret: v.string(),
