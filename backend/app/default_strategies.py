@@ -347,4 +347,50 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             }
         )
 
+    # Buy the farther wing first. Delta submits distinct option products one by one,
+    # so an incomplete entry must not leave an uncovered short option behind.
+    for option_type, outlook, boundary, name in (
+        ("put", "bullish", "support", "Bull put credit spread"),
+        ("call", "bearish", "resistance", "Bear call credit spread"),
+    ):
+        definitions.append(
+            _base(
+                now,
+                name=name,
+                description=(
+                    f"Use for a mildly {outlook} or one-sided BTC range with intact {boundary}, rich premium, "
+                    "and no catalyst during the hold. Sell an OTM option one listed strike from ATM and buy "
+                    "the farther OTM option three listed strikes from ATM at the same expiry. The long wing "
+                    "caps expiry loss. Require an executable net credit that exceeds round-trip fees; avoid "
+                    "thin books, breakouts through the short strike, and widening volatility."
+                ),
+                category="defined_risk_premium_selling",
+                outlook=outlook,
+                expiry_policy="next_day",
+                holding_mode="intraday",
+                risk_basis="defined_max_loss",
+                risk_mode="strategy_level",
+                legs=[
+                    _leg(
+                        f"{option_type}-credit-protection",
+                        position="buy",
+                        option_type=option_type,
+                        role=f"protective_{option_type}",
+                        expiry=_fallback_expiry(now, "next_day"),
+                        strike_mode="otm",
+                        strike_steps=3,
+                    ),
+                    _leg(
+                        f"{option_type}-credit-short",
+                        position="sell",
+                        option_type=option_type,
+                        role=f"short_{option_type}",
+                        expiry=_fallback_expiry(now, "next_day"),
+                        strike_mode="otm",
+                        strike_steps=1,
+                    ),
+                ],
+            )
+        )
+
     return [StrategyDefinition.model_validate(definition) for definition in definitions]

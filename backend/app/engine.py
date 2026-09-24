@@ -450,15 +450,31 @@ class TradingEngine:
 
         signed_premium = Decimal("0")
         estimated_order_margin = Decimal("0")
+        estimated_entry_fees = Decimal("0")
         for leg, multiplier, product in zip(resolved, contract_values, products, strict=True):
             quantity = Decimal(str(leg["lots"])) if definition.lotsMode == "manual" else Decimal("1")
             executable_price = optional_decimal(leg.get("bestAsk") if leg["position"] == "buy" else leg.get("bestBid"))
+            if definition.riskBasis == "defined_max_loss" and (executable_price is None or executable_price <= 0):
+                raise AppError(409, "A spread leg has no executable quote", "spread_quote_unavailable")
             if executable_price is None or executable_price <= 0:
                 executable_price = optional_decimal(leg.get("markPrice"))
             if executable_price is None or not multiplier.is_finite() or executable_price <= 0 or multiplier <= 0:
                 raise AppError(409, "A live option price is unavailable for automatic lots", "option_price_unavailable")
             direction = Decimal("1") if leg["position"] == "sell" else Decimal("-1")
             signed_premium += direction * executable_price * multiplier * quantity
+            if definition.riskBasis == "defined_max_loss":
+                rate = optional_decimal(product.get("taker_commission_rate"))
+                if rate is None or rate <= 0:
+                    raise AppError(409, "Spread trading fee is unavailable", "spread_fee_unavailable")
+                spot = decimal_value(leg.get("spotPrice"))
+                if spot <= 0:
+                    raise AppError(409, "Spread spot price is unavailable", "spread_quote_unavailable")
+                # Delta caps option fees at 3.5% of premium. Round-trip cost
+                # uses today's quote as an estimate; actual exit cost can differ.
+                estimated_entry_fees += min(
+                    spot * multiplier * quantity * rate,
+                    executable_price * multiplier * quantity * Decimal("0.035"),
+                )
             if leg["position"] == "buy":
                 estimated_order_margin += executable_price * multiplier * quantity
             else:
@@ -474,6 +490,12 @@ class TradingEngine:
                 estimated_order_margin += spot * multiplier * quantity * initial_margin_percent / Decimal("100")
             leg["contractValue"] = str(multiplier)
             leg["sizingPrice"] = str(executable_price)
+
+        if definition.riskBasis == "defined_max_loss" and signed_premium <= estimated_entry_fees * Decimal("2.36"):
+            raise AppError(
+                409, "Executable spread credit does not cover estimated round-trip fees",
+                "spread_credit_too_small",
+            )
 
         if definition.riskBasis == "net_debit":
             risk_per_lot = -signed_premium

@@ -9,12 +9,12 @@ import pytest
 from app.capital import CapitalPolicy
 from app.default_strategies import default_strategy_definitions
 from app.engine import TradingEngine
-from app.strategy import resolve_leg
+from app.strategy import maximum_expiry_loss, resolve_leg
 from automation_agent.tools import materialize_live_definition
 
 NOW = datetime(2026, 9, 4, 14, tzinfo=UTC)
 DEFINITIONS = default_strategy_definitions(NOW)
-ADDED = DEFINITIONS[6:]
+ADDED = DEFINITIONS[6:13]
 CHAIN = [
     {
         "product_id": strike + offset,
@@ -37,6 +37,32 @@ def test_builtin_risk_controls_apply_to_every_compatible_template():
         assert definition.emergencyStopLossPercent == (170 if has_short_leg else None)
         if definition.riskMode == "combined_premium":
             assert definition.combinedStopLossPercent == 100
+
+
+@pytest.mark.parametrize("name,kind", [("Bull put credit spread", "put"), ("Bear call credit spread", "call")])
+def test_new_credit_spreads_have_a_bounded_expiry_loss(name, kind):
+    definition = next(item for item in DEFINITIONS if item.name == name)
+    assert definition.riskBasis == "defined_max_loss"
+    assert definition.category == "defined_risk_premium_selling"
+    assert definition.expiryPolicy == "next_day"
+    assert [leg.position for leg in definition.legs] == ["buy", "sell"]
+    assert all(leg.optionType == kind and leg.orderType == "market_order" for leg in definition.legs)
+    resolved = [resolve_leg(leg, CHAIN) for leg in definition.legs]
+    protection, short = resolved
+    assert abs(protection["strike"] - 80000) > abs(short["strike"] - 80000)
+    if kind == "put":
+        assert protection["strike"] < short["strike"]
+    else:
+        assert protection["strike"] > short["strike"]
+    payoff = [
+        {
+            "side": leg["position"], "option_type": kind, "expiry": leg["expiry"],
+            "strike": leg["strike"], "entry_price": 20 if leg["position"] == "buy" else 80,
+            "filled_size": 1, "contract_value": ".001",
+        }
+        for leg in resolved
+    ]
+    assert maximum_expiry_loss(payoff) == Decimal("0.340")
 
 
 @pytest.mark.parametrize("definition", ADDED, ids=lambda definition: definition.name)
@@ -92,7 +118,7 @@ class Database:
         return {"slot": 1, "created": True, "occupiedBefore": 0}
 
 
-@pytest.mark.parametrize("definition", DEFINITIONS, ids=lambda definition: definition.name)
+@pytest.mark.parametrize("definition", DEFINITIONS[:-2], ids=lambda definition: definition.name)
 async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definition):
     database = Database(definition)
     client = SimpleNamespace(
@@ -100,7 +126,9 @@ async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definiti
             return_value={"result": [{"asset_symbol": "USD", "balance": "100", "available_balance": "100"}]}
         ),
         option_chain=AsyncMock(return_value={"result": CHAIN}),
-        product=AsyncMock(return_value={"result": {"contract_value": "0.001", "initial_margin": "0.5"}}),
+        product=AsyncMock(return_value={"result": {
+            "contract_value": "0.001", "initial_margin": "0.5", "taker_commission_rate": "0.0001",
+        }}),
         place_order=AsyncMock(
             return_value={"result": {"id": 123, "unfilled_size": 0, "average_fill_price": "100", "state": "closed"}}
         ),
@@ -127,6 +155,53 @@ async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definiti
             assert order["bracket_stop_trigger_method"] == "mark_price"
         else:
             assert "bracket_stop_loss_price" not in order
+
+
+@pytest.mark.parametrize("definition", DEFINITIONS[-2:], ids=lambda definition: definition.name)
+async def test_credit_spread_entry_buys_protection_before_selling_short(definition):
+    database = Database(definition)
+    quoted = [
+        {
+            **item,
+            "mark_price": "20" if int(item["strike_price"]) in {79400, 80600} else "80",
+            "quotes": {
+                "best_bid": "19" if int(item["strike_price"]) in {79400, 80600} else "79",
+                "best_ask": "21" if int(item["strike_price"]) in {79400, 80600} else "81",
+            },
+        }
+        for item in CHAIN
+    ]
+
+    async def place_order(order):
+        return {"result": {
+            "id": 123 + (order["side"] == "sell"), "unfilled_size": 0,
+            "average_fill_price": "20" if order["side"] == "buy" else "80", "state": "closed",
+        }}
+
+    client = SimpleNamespace(
+        balances=AsyncMock(return_value={"result": [
+            {"asset_symbol": "USD", "balance": "100", "available_balance": "100"}
+        ]}),
+        option_chain=AsyncMock(return_value={"result": quoted}),
+        product=AsyncMock(return_value={"result": {
+            "contract_value": "0.001", "initial_margin": "0.5", "taker_commission_rate": "0.0001",
+        }}),
+        place_order=AsyncMock(side_effect=place_order),
+        close=AsyncMock(),
+    )
+    engine = TradingEngine(database, SimpleNamespace())
+    engine.client_for_user = AsyncMock(return_value=client)
+    engine.capital_policy = AsyncMock(return_value=CapitalPolicy())
+
+    await engine.execute_entry("strategy-1")
+
+    placed = [call.args[0] for call in client.place_order.call_args_list]
+    assert database.row["status"] == "active"
+    assert [order["side"] for order in placed] == ["buy", "sell"]
+    assert all(order["order_type"] == "market_order" for order in placed)
+    assert placed[0]["size"] == placed[1]["size"]
+    assert "bracket_stop_loss_price" not in placed[0]
+    assert "bracket_stop_loss_price" in placed[1]
 
 
 @pytest.mark.parametrize("definition", ADDED, ids=lambda definition: definition.name)
