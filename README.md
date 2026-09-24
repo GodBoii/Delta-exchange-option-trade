@@ -80,6 +80,8 @@ Then apply migrations `010` through `018` in order. Migration `011` repairs and 
 
 After deploying the current engine, run `python -m scripts.seed_default_strategies` from `backend` to add the seven unhedged templates, bringing the active built-in library to thirteen. This insert-only command preserves existing definitions and history. The additions cover single-sided premium selling, ITM directional positions, and next-day-expiry range/expansion trades. See [strategy coverage](docs/14-automated-strategy-system.md#additional-built-in-market-choices).
 
+The current Convex-owned library also supports two bounded-risk credit spreads. After deploying its new library mutation and backend, run `python -m scripts.seed_credit_spreads --apply` from `backend` to add them, bringing the active BTC catalog to fifteen. This command only creates missing templates and leaves saved versions, active runs and historical snapshots untouched. See [spread gates and rollout checks](docs/22-defined-risk-credit-spreads.md).
+
 ### Apply the account phone-number migration
 
 Open **Supabase Dashboard → SQL Editor**, paste the entire contents of:
