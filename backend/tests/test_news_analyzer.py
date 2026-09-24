@@ -214,6 +214,30 @@ def test_automation_uses_committed_outcome_instead_of_response_tool_list(monkeyp
     response = main._run_automation_analysis(body, "trace-1")
 
     assert response["outcome"] == "strategy_selected"
+    assert "A strategy was scheduled for this account" in response["report"]
+
+
+def test_automation_report_replaces_uncommitted_selection(monkeypatch) -> None:
+    result = SimpleNamespace(
+        run_id="agno-run", session_id="automation:user:run", model_id="model-a",
+        report="## Market regime\n\nSideways.\n\n## Decision\n\nScheduled a strangle.",
+        market_snapshot_id="snapshot-1", member_responses=[], tool_calls=[],
+    )
+    monkeypatch.setattr(main, "run_automation_team", lambda **_kwargs: result)
+    monkeypatch.setattr(
+        main, "read_automation_state",
+        lambda *_args, **_kwargs: {"outcome": None, "market_snapshot_id": "snapshot-1"},
+    )
+    body = main.AutomationAnalysisRequest(
+        userId="global", agentRunId="22222222-2222-4222-8222-222222222222",
+        sessionId="scheduled-run", accountContext={}, trigger="asia_session",
+    )
+
+    response = main._run_automation_analysis(body, "trace-1")
+
+    assert response["outcome"] == "no_trade_for_current_window"
+    assert "Scheduled a strangle" not in response["report"]
+    assert "No strategy was scheduled during this review" in response["report"]
 
 
 def test_automation_recovers_committed_action_when_final_report_fails(monkeypatch) -> None:

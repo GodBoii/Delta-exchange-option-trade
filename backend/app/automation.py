@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -15,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from .auth import current_account, require_owner, require_user
 from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
 from .capital import percentage_concurrency_limit
+from .decision_report import committed_action_text, replace_model_decision
 from .engine import TradingEngine, iso_now
 from .errors import AppError
 from .shared_analysis import SHARED_USER_ID, history_filter
@@ -52,20 +52,8 @@ class AutomationRunRequest(BaseModel):
 
 def verified_decision_report(outcome: str, report: str, *, shared: bool) -> str:
     """Replace the model's decision claim with the action committed by storage."""
-    action = {
-        "strategy_selected": (
-            "A shared strategy proposal was recorded. Account entry still requires recheck and allocation."
-            if shared else "A strategy was scheduled for this account. Entry still requires the activation recheck."
-        ),
-        "wait_and_run_again": "A follow-up review was scheduled or an existing review was reused.",
-        "no_trade_for_current_window": "No strategy was scheduled during this review.",
-    }.get(outcome, "No trading action was confirmed during this review.")
-    decision = f"## Decision\n\n{action}\n\n"
-    pattern = re.compile(r"^## Decision\b[^\n]*\n.*?(?=^## |\Z)", re.IGNORECASE | re.MULTILINE | re.DOTALL)
-    if pattern.search(report):
-        report = pattern.sub(lambda _: decision, report, count=1).strip()
-    else:
-        report = f"{report.strip()}\n\n{decision}".strip()
+    action = committed_action_text(outcome, shared=shared)
+    report = replace_model_decision(outcome, report, shared=shared)
     return f"## Verified action\n\n{action}\n\n{report}"
 
 

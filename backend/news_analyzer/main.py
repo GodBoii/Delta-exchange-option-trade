@@ -14,6 +14,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.decision_report import replace_model_decision
+from app.shared_analysis import SHARED_USER_ID
 from automation_agent.team import run_activation_recheck, run_automation_team
 from automation_agent.tools import confirm_activation_recheck, read_automation_state
 from news_agent.config import NEWS_TIMEOUT_SECONDS, RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
@@ -403,6 +405,10 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
             agent_run_id=body.agentRunId,
         )
         outcome = str(state.get("outcome") or "no_trade_for_current_window") if state else "no_trade_for_current_window"
+        report = (
+            result.report if body.trigger == "activation_recheck"
+            else replace_model_decision(outcome, result.report, shared=body.userId == SHARED_USER_ID)
+        )
         return {
             "success": True,
             "runId": result.run_id,
@@ -410,7 +416,7 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
             "agentRunId": body.agentRunId,
             "model": result.model_id,
             "outcome": outcome,
-            "report": result.report,
+            "report": report,
             "marketSnapshotId": result.market_snapshot_id,
             "memberResponses": result.member_responses,
             "toolCalls": result.tool_calls,
