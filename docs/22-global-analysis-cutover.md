@@ -110,6 +110,11 @@ must be enabled and connected when allocation runs after the global recheck.
 Normal risk checks still run on every scheduler pass, while unchanged display
 snapshots are persisted at most once per ten seconds by default. Failed account
 allocations leave the pass incomplete and are retried.
+The backend caches the Delta account grouping used for concurrent dispatch for
+30 seconds by default. Newly seen users cause an immediate lookup. Changing an
+exchange connection while a strategy is active remains blocked, so this cache
+does not change ownership during a live strategy. The cache is local and
+discarded on restart.
 
 The current trading backend remains one writer. Its filesystem lock prevents two
 writers sharing the Ubuntu state volume, but is not a distributed lease. API and
