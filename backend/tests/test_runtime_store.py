@@ -44,7 +44,8 @@ async def test_projection_happens_after_all_pages_and_ordering():
 
 async def test_settings_update_preserves_existing_limits_in_user_record():
     data = SimpleNamespace(request=AsyncMock(side_effect=[
-        [{"user_id": "owner", "enabled": True, "maximum_agent_runs_per_day": 2}],
+        {"user_id": "owner", "enabled": True, "model_id": "model",
+         "minimum_follow_up_minutes": 5, "maximum_agent_runs_per_day": 2},
         {"user_id": "owner", "enabled": False, "maximum_agent_runs_per_day": 2},
     ]))
     await ConvexRuntimeStore(data).write("automation_settings", {"user_id": "owner", "enabled": False}, "user_id")
@@ -52,3 +53,20 @@ async def test_settings_update_preserves_existing_limits_in_user_record():
     value = data.request.call_args.args[1]["value"]
     assert value["maximum_agent_runs_per_day"] == 2
     assert value["enabled"] is False
+
+
+async def test_enabled_settings_paginate_beyond_the_first_page():
+    pages = [
+        {"page": [{"user_id": f"user-{i}", "enabled": True} for i in range(start, start + 100)],
+         "isDone": False, "continueCursor": str(start + 100)}
+        for start in (0, 100)
+    ]
+    pages.append({"page": [{"user_id": f"user-{i}", "enabled": True} for i in range(200, 250)],
+                  "isDone": True, "continueCursor": ""})
+    request = AsyncMock(side_effect=pages)
+    rows = await ConvexRuntimeStore(SimpleNamespace(request=request)).select(
+        "automation_settings", {"select": "user_id", "enabled": "eq.true", "user_id": "neq.global"}
+    )
+    assert len(rows) == 250
+    assert request.await_count == 3
+    assert all(call.args[1]["enabled"] is True for call in request.await_args_list)

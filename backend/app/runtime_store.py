@@ -55,7 +55,37 @@ class ConvexRuntimeStore:
 
     async def select(self, table: str, params: dict[str, str], *, raw: bool = False) -> list[dict[str, Any]]:
         if table == "automation_settings":
-            rows = await self.data.request("settings:listAutomation", {})
+            user_filter = params.get("user_id", "")
+            if user_filter.startswith("eq."):
+                one = await self.data.request("settings:automationForUser", {"userId": user_filter[3:]})
+                rows = [one] if one is not None else []
+            else:
+                enabled_filter = params.get("enabled", "")
+                enabled: bool | None = None
+                if enabled_filter in {"eq.true", "neq.false"}:
+                    enabled = True
+                elif enabled_filter in {"eq.false", "neq.true"}:
+                    enabled = False
+                rows = []
+                cursor = None
+                while True:
+                    page = await self.data.request(
+                        "settings:automationPage",
+                        {
+                            "paginationOpts": {"numItems": 100, "cursor": cursor},
+                            **({"enabled": enabled} if enabled is not None else {}),
+                        },
+                    )
+                    rows.extend(page["page"])
+                    if page["isDone"]:
+                        break
+                    cursor = page["continueCursor"]
+                if user_filter != "neq.global":
+                    global_settings = await self.data.request(
+                        "settings:automationForUser", {"userId": "global"}
+                    )
+                    if global_settings:
+                        rows.append(global_settings)
             for field, expression in params.items():
                 if field in OPTIONS:
                     continue
