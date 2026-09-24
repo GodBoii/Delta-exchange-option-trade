@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { authorizeTradingService } from "./tradingAuth";
 import { automationPreferences, defaultAutomation, ensureUser, findUser, systemConfig } from "./userRecords";
@@ -13,9 +14,27 @@ export const listAutomation = query({
   handler: async (ctx, args) => {
     authorizeTradingService(args.secret);
     const users = await ctx.db.query("users").take(101);
-    if (users.length > 100) throw new ConvexError("Account limit exceeded");
     const global = await getAutomation(ctx, globalScope);
     return [...users.map(user => ({ user_id: user.userId, ...user.automation })), ...(global ? [global] : [])];
+  },
+});
+export const automationPage = query({
+  args: { secret: v.string(), enabled: v.optional(v.boolean()), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    const enabled = args.enabled;
+    const users = enabled === undefined
+      ? await ctx.db.query("users").withIndex("by_user").paginate(args.paginationOpts)
+      : await ctx.db.query("users").withIndex("by_automation_enabled", q =>
+        q.eq("automation.enabled", enabled)).paginate(args.paginationOpts);
+    return { ...users, page: users.page.map(user => ({ user_id: user.userId, ...user.automation })) };
+  },
+});
+export const automationForUser = query({
+  args: { secret: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    return getAutomation(ctx, args.userId);
   },
 });
 export const saveAutomation = mutation({

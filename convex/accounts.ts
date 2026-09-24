@@ -85,6 +85,17 @@ export const executionGroups = query({
     }));
   },
 });
+export const executionGroupsForUsers = query({
+  args: { secret: v.string(), userIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    authorizeTradingService(args.secret);
+    if (args.userIds.length > 100) throw new ConvexError("Query due accounts in batches of 100");
+    const users = await Promise.all(args.userIds.map(userId => findUser(ctx, userId)));
+    return args.userIds.map((userId, index) => ({
+      userId, accountId: users[index]?.connection?.delta_user_id ?? userId,
+    }));
+  },
+});
 export const updateOutboundIp = mutation({
   args: { secret: v.string(), ip: v.string() },
   handler: async (ctx, args) => {

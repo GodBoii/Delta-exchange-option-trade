@@ -8,7 +8,9 @@ import { runtimeTables } from "./runtimeTables";
 
 export default defineSchema({
   ...runtimeTables,
-  users: defineTable(userRecord).index("by_user", ["userId"]).index("by_delta_account", ["connection.delta_user_id"]),
+  users: defineTable(userRecord).index("by_user", ["userId"])
+    .index("by_delta_account", ["connection.delta_user_id"])
+    .index("by_automation_enabled", ["automation.enabled"]),
   systemSettings: defineTable({
     key: v.literal("main"), ownerUserId: v.string(), outboundIp: v.union(v.string(), v.null()),
     ipCheckedAt: v.union(v.string(), v.null()), analysis: automationPreferences,

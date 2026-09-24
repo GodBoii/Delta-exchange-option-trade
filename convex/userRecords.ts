@@ -23,7 +23,6 @@ export async function ensureUser(ctx: MutationCtx, userId: string) {
   const existing = await findUser(ctx, userId);
   if (existing) return existing;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) throw new ConvexError("Invalid Supabase user ID");
-  if ((await ctx.db.query("users").take(100)).length >= 100) throw new ConvexError("This deployment supports 100 users");
   const now = new Date().toISOString();
   const id = await ctx.db.insert("users", {
     userId, capital: { allocation_mode: "half_balance", capital_amount: null },
