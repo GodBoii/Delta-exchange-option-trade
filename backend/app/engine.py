@@ -2778,4 +2778,6 @@ class Scheduler:
                 bool(session.events and session.events.connected["private"])
                 for session in self.engine.sessions.values()
             ),
+            "publicMarkStreams": len(self.engine.public_marks.feeds) if self.engine.public_marks else 0,
+            "publicMarkSymbols": len(self.engine.public_marks.by_symbol) if self.engine.public_marks else 0,
         }
