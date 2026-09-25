@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Instrument_Sans, Instrument_Serif, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider, THEME_BOOT_SCRIPT } from "@/app/components/theme";
 import { CurrencyProvider } from "@/app/components/currency";
 import PwaRuntime from "@/app/components/PwaRuntime";
@@ -13,13 +13,26 @@ import "./globals.css";
  * face. Serving from the app origin fixes the policy violation and removes the
  * render-blocking third-party request.
  */
-const sans = Geist({
+/* Instrument Sans carries the interface; its slightly condensed width fits
+   dense rows of figures better than a geometric grotesk. Instrument Serif is
+   used only for page titles and the entry headline, where one editorial voice
+   separates the product from a template dashboard. JetBrains Mono has true
+   tabular digits, so prices and balances never jitter as they update. */
+const sans = Instrument_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap"
 });
 
-const mono = Geist_Mono({
+const display = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-display",
+  display: "swap"
+});
+
+const mono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
   display: "swap"
@@ -73,7 +86,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     /* `data-theme` is written by the boot script below before first paint, so
        the server markup deliberately carries no theme and React is told not to
        warn about the difference. */
-    <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${sans.variable} ${display.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
       </head>
