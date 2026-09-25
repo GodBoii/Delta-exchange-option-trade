@@ -10,11 +10,21 @@ from psycopg.types.json import Jsonb
 
 from app.application_data import ConvexApplicationData
 
+from .local_client import LocalResearchClient
+
 
 class ResearchData(ConvexApplicationData):
-    def __init__(self, url: str, secret: str, database_url: str) -> None:
+    def __init__(
+        self, url: str, secret: str, database_url: str, *, local_client: LocalResearchClient | None = None
+    ) -> None:
         super().__init__(url, secret)
         self.database_url = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+        self.local_client = local_client
+
+    def _application_request(self, path: str, args: dict[str, Any], *, mutation: bool) -> Any:
+        if self.local_client is not None:
+            return self.local_client.request_sync(path, args, mutation=mutation)
+        return super().request_sync(path, args, mutation=mutation)
 
     def request_sync(self, path: str, args: dict[str, Any], *, mutation: bool = False) -> Any:
         if path == "runtimeAutomation:saveSnapshot":
@@ -32,7 +42,7 @@ class ResearchData(ConvexApplicationData):
                         Jsonb(json.loads(args["accountJson"])),
                     ),
                 )
-            return super().request_sync(
+            return self._application_request(
                 path,
                 {
                     "userId": args["userId"],
@@ -41,7 +51,7 @@ class ResearchData(ConvexApplicationData):
                 },
                 mutation=True,
             )
-        result = super().request_sync(path, args, mutation=mutation)
+        result = self._application_request(path, args, mutation=mutation)
         if path == "runtimeAutomation:context":
             run, parent = result["run"], result.get("parent")
             with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
