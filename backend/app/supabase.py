@@ -4,10 +4,12 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from psycopg_pool import AsyncConnectionPool
 
 from .application_data import ConvexApplicationData
 from .config import Settings
 from .errors import AppError
+from .local_runtime import LocalRuntimeStore
 from .report_store import REPORT_FIELDS, ReportStore
 from .runtime_store import TABLES, ConvexRuntimeStore
 
@@ -15,14 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 class SupabaseAdmin:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, local_pool: AsyncConnectionPool | None = None) -> None:
         self.settings = settings
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
-        self.runtime = (
+        local_storage = getattr(settings, "application_storage", "convex") == "local"
+        if local_storage and local_pool is None:
+            raise ValueError("Local database pool is required")
+        self.runtime = LocalRuntimeStore(local_pool) if local_storage else (
             ConvexRuntimeStore(ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, self.client))
             if getattr(settings, "convex_runtime_enabled", False)
             else None
         )
+        self.local_data = self.runtime.data if local_storage else None
         self.admin_headers = {
             "apikey": settings.supabase_service_role_key,
             "Authorization": f"Bearer {settings.supabase_service_role_key}",
