@@ -20,6 +20,7 @@ from .delta import DeltaClient, RequestBudget
 from .delta_events import DeltaEvents, PublicMarkFeeds
 from .errors import AppError, DeltaOrderRejected
 from .fill_accounting import PositionResult, exclusive_fill_positions
+from .local_journal import LocalOrderJournal
 from .models import StrategyDefinition
 from .order_journal import ConvexOrderJournal
 from .strategy import (
@@ -262,6 +263,7 @@ class TradingEngine:
         self.running_operations: set[str] = set()
         self.synced_fills: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.sessions: dict[str, AccountSession] = {}
+        self.invalidated_credentials: set[str] = set()
         self.exchange_http = httpx.AsyncClient(
             timeout=httpx.Timeout(12, connect=5),
             limits=httpx.Limits(max_connections=256, max_keepalive_connections=64),
@@ -276,16 +278,21 @@ class TradingEngine:
         ) if getattr(settings, "delta_events_enabled", False) else None
         self.last_public_mark_prune = 0.0
         self.risk_errors: dict[str, str] = {}
-        self.application_data = (
+        self.application_data = db.local_data if getattr(settings, "application_storage", "convex") == "local" else (
             ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client)
             if getattr(settings, "convex_library_enabled", False)
             else None
         )
 
     async def client_for_user(self, user_id: str) -> DeltaClient:
-        credentials = await credentials_for_user(self.db, user_id)
         async with self.session_lock:
             session = self.sessions.get(user_id)
+            credentials = (
+                session.credentials
+                if getattr(self.settings, "application_storage", "convex") == "local"
+                and session is not None and user_id not in self.invalidated_credentials
+                else await credentials_for_user(self.db, user_id)
+            )
             if session is not None and session.credentials != credentials:
                 if session.leases:
                     raise AppError(
@@ -318,6 +325,7 @@ class TradingEngine:
                 self.sessions[user_id] = session
                 if events is not None:
                     events.start(("private",))
+            self.invalidated_credentials.discard(user_id)
             session.leases += 1
             session.last_used = time.monotonic()
 
@@ -335,6 +343,11 @@ class TradingEngine:
             events=session.events,
         )
         if self.settings.convex_order_journal_enabled:
+            if getattr(self.settings, "application_storage", "convex") == "local":
+                client.order_journal = LocalOrderJournal(
+                    self.db.runtime.pool, f"india:{credentials['delta_user_id']}"
+                )
+                return client
             if (
                 not self.settings.convex_url
                 or not self.settings.convex_trading_secret
@@ -354,6 +367,13 @@ class TradingEngine:
         session = self.sessions.pop(user_id, None)
         if session is not None and session.events is not None:
             await session.events.close()
+
+    async def invalidate_credentials(self, user_id: str) -> None:
+        self.invalidated_credentials.add(user_id)
+        async with self.session_lock:
+            session = self.sessions.get(user_id)
+            if session is not None and session.leases == 0:
+                await self.close_session(user_id)
 
     async def close(self) -> None:
         for user_id in list(self.sessions):
