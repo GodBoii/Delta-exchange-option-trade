@@ -48,4 +48,19 @@ export default defineSchema({
   })
     .index("by_scope_entity", ["scope", "entityId"])
     .index("by_user_scope_updated", ["userId", "scope", "updatedAt"]),
+  recoveryRecords: defineTable({
+    entityType: v.string(), entityKey: v.string(), revision: v.number(),
+    payloadJson: v.union(v.string(), v.null()), updatedAt: v.number(),
+    closedAt: v.optional(v.number()),
+  }).index("by_entity", ["entityType", "entityKey"])
+    .index("by_closed", ["closedAt"]),
+  recoveryViews: defineTable({
+    userId: v.string(), entityType: v.string(), entityKey: v.string(),
+    revision: v.number(), summary: v.any(), updatedAt: v.number(),
+  }).index("by_user_type", ["userId", "entityType", "updatedAt"])
+    .index("by_entity", ["entityType", "entityKey"]),
+  recoveryManifests: defineTable({
+    day: v.string(), lastOutboxId: v.number(), countsJson: v.string(),
+    checksum: v.string(), updatedAt: v.number(),
+  }).index("by_day", ["day"]),
 });
