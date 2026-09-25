@@ -629,7 +629,9 @@ time,
   background-color: var(--surface-4);
 }
 
-::-webkit-scrollbar-thumb:hover { background-color: var(--line-strong); }
+@media (hover: hover) {
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--line-strong); }
+}
 ::-webkit-scrollbar-corner { background: transparent; }
 
 .skip-link {
@@ -1305,8 +1307,11 @@ time,
   transition: color var(--tabs-dur) var(--tabs-ease);
 }
 
-.t-tab:not([aria-selected="true"]):hover,
 .t-tab[aria-selected="true"] { color: var(--tabs-text-active); }
+
+@media (hover: hover) {
+  .t-tab:not([aria-selected="true"]):hover { color: var(--tabs-text-active); }
+}
 
 .t-tabs-pill {
   position: absolute;
@@ -1373,13 +1378,22 @@ time,
   transform-origin: 50% 0;
 }
 
-.t-tt-wrap:hover .t-tt,
 .t-tt-trigger:focus-within + .t-tt {
   opacity: 1;
   transform: translate(-50%, 0) scale(1);
   transition-duration: var(--tt-in-dur);
   transition-timing-function: var(--tt-in-ease);
   transition-delay: var(--tt-delay);
+}
+
+@media (hover: hover) {
+  .t-tt-wrap:hover .t-tt {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    transition-duration: var(--tt-in-dur);
+    transition-timing-function: var(--tt-in-ease);
+    transition-delay: var(--tt-delay);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1720,10 +1734,18 @@ time,
   transition: transform var(--learn-out) var(--learn-ease);
 }
 
-.t-learn:hover .t-learn-chevron { transform: translateX(var(--learn-shift)); transition-duration: var(--learn-in); }
-.t-learn:hover .t-learn-arm { transition-duration: var(--learn-in); }
-.t-learn:hover .t-learn-arm-top { transform: rotate(var(--learn-spread)); }
-.t-learn:hover .t-learn-arm-bot { transform: rotate(calc(var(--learn-spread) * -1)); }
+@media (hover: hover) {
+  .t-learn:hover .t-learn-chevron { transform: translateX(var(--learn-shift)); transition-duration: var(--learn-in); }
+}
+@media (hover: hover) {
+  .t-learn:hover .t-learn-arm { transition-duration: var(--learn-in); }
+}
+@media (hover: hover) {
+  .t-learn:hover .t-learn-arm-top { transform: rotate(var(--learn-spread)); }
+}
+@media (hover: hover) {
+  .t-learn:hover .t-learn-arm-bot { transform: rotate(calc(var(--learn-spread) * -1)); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .t-learn-chevron,
@@ -1998,7 +2020,9 @@ time,
     transform var(--duration-fast) var(--ease-smooth-out);
 }
 
-.button:hover:not(:disabled) { transform: translateY(-1px); }
+@media (hover: hover) {
+  .button:hover:not(:disabled) { transform: translateY(-1px); }
+}
 
 .button:active:not(:disabled) {
   transform: translateY(0) scale(0.985);
@@ -2013,9 +2037,11 @@ time,
 
 /* The primary button is the inverse of the canvas, so its hover pushes further
    away from the page rather than always toward white. */
-.button.primary:hover:not(:disabled) {
-  background: var(--primary-hover);
-  box-shadow: var(--shadow-2), inset 0 -1px 0 rgb(0 0 0 / 12%);
+@media (hover: hover) {
+  .button.primary:hover:not(:disabled) {
+    background: var(--primary-hover);
+    box-shadow: var(--shadow-2), inset 0 -1px 0 rgb(0 0 0 / 12%);
+  }
 }
 
 .button.secondary {
@@ -2026,10 +2052,12 @@ time,
   box-shadow: var(--inset-lit);
 }
 
-.button.secondary:hover:not(:disabled) {
-  background-color: var(--surface-4);
-  border-color: var(--line-strong);
-  box-shadow: var(--inset-lit), var(--shadow-1);
+@media (hover: hover) {
+  .button.secondary:hover:not(:disabled) {
+    background-color: var(--surface-4);
+    border-color: var(--line-strong);
+    box-shadow: var(--inset-lit), var(--shadow-1);
+  }
 }
 
 .button.ghost {
@@ -2037,10 +2065,12 @@ time,
   color: var(--text-2);
 }
 
-.button.ghost:hover:not(:disabled) {
-  background: var(--surface-2);
-  border-color: var(--line-strong);
-  color: var(--text-1);
+@media (hover: hover) {
+  .button.ghost:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--line-strong);
+    color: var(--text-1);
+  }
 }
 
 .button.danger {
@@ -2049,9 +2079,11 @@ time,
   color: var(--danger-text);
 }
 
-.button.danger:hover:not(:disabled) {
-  background: rgb(229 105 95 / 22%);
-  box-shadow: var(--glow-short);
+@media (hover: hover) {
+  .button.danger:hover:not(:disabled) {
+    background: rgb(229 105 95 / 22%);
+    box-shadow: var(--glow-short);
+  }
 }
 
 /* A trailing chevron that opens into an arrow on hover. The affordance is
@@ -2066,7 +2098,9 @@ time,
   color: #14171b;
 }
 
-.button.google:hover:not(:disabled) { background: #fff; }
+@media (hover: hover) {
+  .button.google:hover:not(:disabled) { background: #fff; }
+}
 
 .phone-label-compact { display: none; }
 
@@ -2114,10 +2148,12 @@ time,
     transform var(--duration-fast) var(--ease-smooth-out);
 }
 
-.icon-button:hover {
-  background: var(--surface-4);
-  border-color: var(--line-strong);
-  color: var(--text-1);
+@media (hover: hover) {
+  .icon-button:hover {
+    background: var(--surface-4);
+    border-color: var(--line-strong);
+    color: var(--text-1);
+  }
 }
 
 .icon-button:active { transform: scale(0.94); transition-duration: var(--duration-quick); }
@@ -2441,7 +2477,9 @@ time,
   border-radius: var(--r-xs);
 }
 
-.toast-close:hover { color: var(--text-1); }
+@media (hover: hover) {
+  .toast-close:hover { color: var(--text-1); }
+}
 
 /* --------------------------------------------------------------------------
    9. Empty states and skeletons
@@ -2581,8 +2619,10 @@ time,
   resize: vertical;
 }
 
-.field input:hover,
-.field select:hover { border-color: var(--text-3); }
+@media (hover: hover) {
+  .field input:hover,
+  .field select:hover { border-color: var(--text-3); }
+}
 
 .field input:focus,
 .field select:focus,
@@ -2644,7 +2684,9 @@ time,
   transition: background-color var(--dur) ease, color var(--dur) ease;
 }
 
-.t-clear-btn:hover { background: var(--surface-4); color: var(--text-1); }
+@media (hover: hover) {
+  .t-clear-btn:hover { background: var(--surface-4); color: var(--text-1); }
+}
 .t-clear-btn svg { width: 13px; height: 13px; }
 
 /* Listbox.
@@ -2673,7 +2715,9 @@ time,
     background-color var(--dur) ease;
 }
 
-.listbox-trigger:hover:not(:disabled) { border-color: var(--text-3); }
+@media (hover: hover) {
+  .listbox-trigger:hover:not(:disabled) { border-color: var(--text-3); }
+}
 
 .listbox-trigger.is-open,
 .listbox-trigger:focus-visible {
@@ -2861,7 +2905,9 @@ time,
   transition: color var(--tabs-dur) var(--tabs-ease);
 }
 
-.segmented-option:hover:not([aria-checked="true"]):not(:disabled) { color: var(--text-2); }
+@media (hover: hover) {
+  .segmented-option:hover:not([aria-checked="true"]):not(:disabled) { color: var(--text-2); }
+}
 
 /* The travelling pill is the only selected-state background; a second one on
    the button would read as two highlights during the slide. */
@@ -3095,9 +3141,11 @@ time,
 
 .description-trigger-action svg { width: 14px; height: 14px; }
 
-.description-trigger:hover {
-  border-color: var(--text-3);
-  color: var(--text-1);
+@media (hover: hover) {
+  .description-trigger:hover {
+    border-color: var(--text-3);
+    color: var(--text-1);
+  }
 }
 
 .description-trigger:focus-visible {
@@ -3136,11 +3184,18 @@ time,
   color: var(--text-3);
 }
 
-.row-menu-trigger:hover,
 .row-menu-trigger.open {
   background: var(--surface-4);
   border-color: var(--line-strong);
   color: var(--text-1);
+}
+
+@media (hover: hover) {
+  .row-menu-trigger:hover {
+    background: var(--surface-4);
+    border-color: var(--line-strong);
+    color: var(--text-1);
+  }
 }
 
 /* Cosmetics only. The panel grows from the trigger via `t-dropdown`, and
@@ -3170,13 +3225,17 @@ time,
   text-align: left;
 }
 
-.row-menu [role="menuitem"]:hover:not(:disabled) {
-  background: var(--surface-4);
-  color: var(--text-1);
+@media (hover: hover) {
+  .row-menu [role="menuitem"]:hover:not(:disabled) {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
 }
 
 .row-menu [role="menuitem"].danger { color: var(--short); }
-.row-menu [role="menuitem"].danger:hover:not(:disabled) { background: var(--short-soft); color: var(--short); }
+@media (hover: hover) {
+  .row-menu [role="menuitem"].danger:hover:not(:disabled) { background: var(--short-soft); color: var(--short); }
+}
 
 .row-menu-icon {
   display: grid;
@@ -3515,7 +3574,9 @@ time,
   transition: color var(--dur) ease, background-color var(--dur) ease;
 }
 
-.topnav-item:hover { color: var(--text-1); background: var(--surface-2); }
+@media (hover: hover) {
+  .topnav-item:hover { color: var(--text-1); background: var(--surface-2); }
+}
 .topnav-item[aria-current="page"] { color: var(--text-1); }
 
 /* The boundary between the surfaces that reach the exchange and the read-only
@@ -3538,8 +3599,11 @@ time,
   transition: color var(--dur) ease;
 }
 
-.topnav-item:hover .topnav-item-icon,
 .topnav-item[aria-current="page"] .topnav-item-icon { color: var(--accent); }
+
+@media (hover: hover) {
+  .topnav-item:hover .topnav-item-icon { color: var(--accent); }
+}
 
 .topnav-item-icon .t-badge { top: -6px; right: -8px; }
 .topnav-item-icon .t-badge-dot { border-color: var(--chrome-solid); }
@@ -3559,9 +3623,11 @@ time,
   transition: background-color var(--dur) ease, border-color var(--dur) ease;
 }
 
-.account-trigger:hover {
-  background: var(--surface-2);
-  border-color: var(--line);
+@media (hover: hover) {
+  .account-trigger:hover {
+    background: var(--surface-2);
+    border-color: var(--line);
+  }
 }
 
 .account-trigger > svg { color: var(--text-3); }
@@ -3697,7 +3763,9 @@ time,
 }
 
 .appearance-option svg { width: 14px; height: 14px; }
-.appearance-option:hover { color: var(--text-1); }
+@media (hover: hover) {
+  .appearance-option:hover { color: var(--text-1); }
+}
 .appearance-option[aria-checked="true"] { color: var(--text-1); }
 .appearance-option:disabled { cursor: wait; opacity: 0.45; }
 
@@ -3722,13 +3790,17 @@ time,
   transition: background-color var(--dur) ease, color var(--dur) ease;
 }
 
-.account-dropdown [role="menuitem"]:hover {
-  background: var(--surface-3);
-  color: var(--text-1);
+@media (hover: hover) {
+  .account-dropdown [role="menuitem"]:hover {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
 }
 
 .account-dropdown [role="menuitem"] svg { color: var(--text-3); }
-.account-dropdown [role="menuitem"]:hover svg { color: var(--accent); }
+@media (hover: hover) {
+  .account-dropdown [role="menuitem"]:hover svg { color: var(--accent); }
+}
 
 .connection-chip {
   display: inline-flex;
@@ -4033,7 +4105,9 @@ time,
   cursor: pointer;
 }
 
-.auth-text-button:hover { color: var(--text-1); }
+@media (hover: hover) {
+  .auth-text-button:hover { color: var(--text-1); }
+}
 
 .auth-text-button:focus-visible {
   outline: 2px solid var(--accent);
@@ -4332,9 +4406,13 @@ time,
   transition: background-color var(--dur) ease, color var(--dur) ease;
 }
 
-.leg-add-menu-item:hover:not(:disabled) { background: var(--surface-4); color: var(--text-1); }
+@media (hover: hover) {
+  .leg-add-menu-item:hover:not(:disabled) { background: var(--surface-4); color: var(--text-1); }
+}
 .leg-add-menu-item svg { color: var(--text-3); }
-.leg-add-menu-item:hover:not(:disabled) svg { color: var(--accent); }
+@media (hover: hover) {
+  .leg-add-menu-item:hover:not(:disabled) svg { color: var(--accent); }
+}
 
 /* Schedule timeline */
 
@@ -4682,12 +4760,16 @@ time,
   color: var(--text-3);
 }
 
-.leg-tools button:hover:not(:disabled) {
-  background: var(--surface-4);
-  color: var(--text-1);
+@media (hover: hover) {
+  .leg-tools button:hover:not(:disabled) {
+    background: var(--surface-4);
+    color: var(--text-1);
+  }
 }
 
-.leg-tools button.danger:hover:not(:disabled) { color: var(--short); }
+@media (hover: hover) {
+  .leg-tools button.danger:hover:not(:disabled) { color: var(--short); }
+}
 .leg-tools svg { width: 14px; height: 14px; }
 
 /* The leg body is the accordion recipe (`t-acc`), keyed off the `data-open`
@@ -4853,7 +4935,9 @@ time,
 
 .data-table tbody tr:last-child > * { border-bottom: 0; }
 
-.data-table tbody tr:hover > * { background: var(--tint-1); }
+@media (hover: hover) {
+  .data-table tbody tr:hover > * { background: var(--tint-1); }
+}
 
 .data-table .numeric { text-align: right; }
 
@@ -4982,7 +5066,9 @@ time,
   font-variant-numeric: tabular-nums;
 }
 
-.filter-tab:hover { color: var(--text-2); }
+@media (hover: hover) {
+  .filter-tab:hover { color: var(--text-2); }
+}
 
 /* The travelling pill is the only selected-state background. */
 .filter-tab[aria-pressed="true"] { color: var(--text-1); }
@@ -5122,7 +5208,9 @@ time,
   transition: color var(--tabs-dur) var(--tabs-ease);
 }
 
-.market-intervals button:hover { color: var(--text-2); }
+@media (hover: hover) {
+  .market-intervals button:hover { color: var(--text-2); }
+}
 .market-intervals button.active { color: var(--text-1); }
 
 .market-feed-state {
@@ -5220,7 +5308,9 @@ time,
   display: block;
   width: 100%;
   height: 520px;
-  touch-action: none;
+  /* Vertical swipes scroll the page; horizontal drags and pinches reach the
+     chart's own pan and zoom handlers. `none` trapped the page on phones. */
+  touch-action: pan-y;
   cursor: crosshair;
 }
 
@@ -5323,9 +5413,11 @@ time,
   transition: color 120ms, background 120ms;
 }
 
-.chart-zoom-controls button:hover:not(:disabled) {
-  color: var(--text-1);
-  background: var(--surface-3);
+@media (hover: hover) {
+  .chart-zoom-controls button:hover:not(:disabled) {
+    color: var(--text-1);
+    background: var(--surface-3);
+  }
 }
 
 .chart-zoom-controls button:disabled {
@@ -5399,7 +5491,9 @@ time,
   cursor: grab;
 }
 
-.minimap-window:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+@media (hover: hover) {
+  .minimap-window:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+}
 .minimap-window:active { cursor: grabbing; }
 
 /* Edge handles for resizing the minimap window */
@@ -5427,9 +5521,14 @@ time,
   opacity: 0.8;
 }
 
-.minimap-window:hover .minimap-edge::after,
 .minimap-window:active .minimap-edge::after {
   opacity: 1;
+}
+
+@media (hover: hover) {
+  .minimap-window:hover .minimap-edge::after {
+    opacity: 1;
+  }
 }
 
 .analysis-grid {
@@ -6243,7 +6342,9 @@ time,
   border-bottom: 2px solid transparent;
 }
 
-.news-session-chips button:hover:not(:disabled) { border-color: var(--line-strong); }
+@media (hover: hover) {
+  .news-session-chips button:hover:not(:disabled) { border-color: var(--line-strong); }
+}
 
 .news-session-chips button.active {
   border-color: var(--accent);
@@ -6527,7 +6628,9 @@ time,
 
 .news-history-head time { color: var(--text-2); font-size: var(--t-sm); }
 .news-history-head strong { color: var(--text-3); font-size: var(--t-xs); font-weight: 550; }
-.news-history-head:hover time { color: var(--text-1); }
+@media (hover: hover) {
+  .news-history-head:hover time { color: var(--text-1); }
+}
 .news-history-head .t-acc-chevron { color: var(--text-3); }
 .news-history-head .t-acc-chevron svg { display: block; }
 .news-history-list .news-markdown { padding-top: var(--s-5); border-top: 1px solid var(--line); }
@@ -6595,7 +6698,9 @@ time,
   color: var(--text-3);
 }
 
-.install-sheet-dismiss:hover { color: var(--text-1); }
+@media (hover: hover) {
+  .install-sheet-dismiss:hover { color: var(--text-1); }
+}
 
 .install-sheet-actions {
   grid-column: 1 / -1;
@@ -6647,6 +6752,395 @@ time,
 .install-sheet-steps strong { color: var(--text-1); }
 
 /* --------------------------------------------------------------------------
+   19b. Identity layer
+
+   Three decisions carry the look, and everything else stays quiet:
+   - an editorial serif for page titles only, set against a condensed sans;
+   - every figure in a mono with true tabular digits, so columns align and
+     live prices never shift sideways as digits change;
+   - a price-axis ruler under each page title: tick marks on a hairline with
+     an amber cursor at the origin. It is the one ornament in the interface,
+     and it is drawn from the subject rather than borrowed from a template.
+   -------------------------------------------------------------------------- */
+
+:root {
+  --font-display-stack: var(--font-display), "Iowan Old Style", Georgia, serif;
+  --t-display: clamp(30px, 2.4vw + 14px, 44px);
+  --dock-h: 64px;
+
+  /* Shadows carry the canvas hue instead of neutral black. */
+  --shadow-2: 0 10px 28px rgb(6 5 3 / 42%);
+  --shadow-3: 0 24px 64px -8px rgb(6 5 3 / 60%), 0 2px 6px rgb(6 5 3 / 30%);
+
+  --ruler:
+    linear-gradient(var(--accent), var(--accent)) left bottom / 44px 2px no-repeat,
+    repeating-linear-gradient(90deg, var(--line-strong) 0 1px, transparent 1px 10px) left calc(100% - 1px) / 100% 5px no-repeat,
+    linear-gradient(var(--line), var(--line)) left bottom / 100% 1px no-repeat;
+}
+
+:root[data-theme="light"] {
+  --shadow-2: 0 10px 28px rgb(64 52 30 / 12%);
+  --shadow-3: 0 24px 64px -8px rgb(64 52 30 / 20%), 0 2px 6px rgb(64 52 30 / 8%);
+}
+
+/* Figures */
+
+.tile-value,
+.numeric,
+.data-table .numeric,
+.market-last-price strong,
+.market-stat strong,
+.risk-readout strong,
+.detail-tile > strong,
+.oi-hero strong,
+.context-clock time,
+.t-reel,
+.t-num {
+  font-family: var(--font-mono-stack);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+.tile-value {
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.context-clock time { font-weight: 500; letter-spacing: -0.02em; }
+
+/* Titles */
+
+.section-heading {
+  position: relative;
+  align-items: flex-end;
+  padding-bottom: var(--s-5);
+  margin-bottom: var(--s-6);
+  border-bottom: 0;
+  background: var(--ruler);
+}
+
+.section-heading h1,
+.entry-copy h1 {
+  font-family: var(--font-display-stack);
+  font-weight: 400;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+
+.section-heading h1 {
+  font-size: var(--t-display);
+  line-height: 1;
+}
+
+.section-description {
+  max-width: 58ch;
+  padding-bottom: 3px;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.panel-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.panel-header { border-bottom-color: var(--line); }
+
+/* The panel icon gets a quiet plate so a column of panel headers reads as a
+   set of labelled instruments rather than loose glyphs. */
+.panel-icon {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.panel-icon svg { width: 15px; height: 15px; }
+
+/* Wordmark: one word in the serif italic, matching the page titles. */
+.brand-text strong em {
+  font-family: var(--font-display-stack);
+  font-size: 1.14em;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Tiles: the metric strip gets a leading tick per figure, echoing the ruler. */
+.tile { padding-left: var(--s-4); border-bottom: 0; }
+
+.tile::before {
+  content: "";
+  position: absolute;
+  top: var(--s-4);
+  bottom: var(--s-4);
+  left: 0;
+  width: 1px;
+  background: linear-gradient(var(--line-strong), transparent);
+}
+
+.tile-icon {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.tile-icon svg { width: 15px; height: 15px; }
+
+/* Empty states sit on a faint dot field so they read as a designed pause in
+   the page rather than a missing block. The field fades out radially. */
+.empty-state {
+  position: relative;
+  isolation: isolate;
+}
+
+.empty-state::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px);
+  background-size: 14px 14px;
+  -webkit-mask-image: radial-gradient(closest-side, #000 20%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 20%, transparent 100%);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.empty-state-icon {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line-strong);
+  color: var(--accent);
+}
+
+.empty-state-icon svg { width: 20px; height: 20px; }
+.empty-state h3 { font-size: var(--t-lg); font-weight: 600; }
+
+/* Chrome refinements */
+
+.topnav-item { font-weight: 500; }
+.topnav-item[aria-current="page"] { font-weight: 600; }
+
+.live-pill { font-family: var(--font-mono-stack); font-size: 11px; letter-spacing: 0.02em; }
+
+/* Jump menu trigger. A labelled search control on desktop, hidden on phones
+   where the dock already holds every destination. */
+.command-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 34px;
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  transition: border-color var(--dur) ease, color var(--dur) ease, background-color var(--dur) ease;
+}
+
+.command-trigger svg { width: 14px; height: 14px; }
+
+@media (hover: hover) {
+  .command-trigger:hover {
+    border-color: var(--line-strong);
+    background: var(--surface-2);
+    color: var(--text-1);
+  }
+}
+
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-family: var(--font-mono-stack);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* Jump menu. Opens with the modal recipe's scale-in; closes instantly, since
+   the operator has already chosen where to go. */
+.command-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  padding: max(12vh, var(--s-12)) var(--s-4) var(--s-4);
+  background: var(--scrim);
+  animation: command-scrim var(--duration-fast) var(--ease-smooth-out) both;
+}
+
+.command-panel {
+  width: min(560px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  background-image: var(--gradient-raised);
+  box-shadow: var(--shadow-3), var(--inset-lit);
+  transform-origin: top center;
+  animation: command-panel var(--duration-fast) var(--ease-smooth-out) both;
+}
+
+.command-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0 var(--s-4);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+}
+
+.command-field > svg { width: 18px; height: 18px; flex: none; }
+
+.command-field input {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--t-lg);
+  outline: none;
+}
+
+.command-field input::placeholder { color: var(--text-3); }
+
+.command-list {
+  display: grid;
+  gap: 2px;
+  max-height: min(420px, 60dvh);
+  padding: var(--s-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.command-option {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.command-option[aria-selected="true"] {
+  background: var(--surface-4);
+  color: var(--text-1);
+}
+
+.command-option-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  color: var(--text-3);
+}
+
+.command-option[aria-selected="true"] .command-option-icon { border-color: var(--accent-soft); color: var(--accent); }
+.command-option-icon svg { width: 16px; height: 16px; }
+
+.command-option-text { display: grid; min-width: 0; line-height: 1.3; }
+.command-option-text strong { font-size: var(--t-sm); font-weight: 600; }
+.command-option-text small { overflow: hidden; color: var(--text-3); font-size: var(--t-xs); white-space: nowrap; text-overflow: ellipsis; }
+
+.command-empty { padding: var(--s-6) var(--s-3); color: var(--text-3); font-size: var(--t-sm); text-align: center; }
+
+@keyframes command-scrim { from { opacity: 0; } }
+
+@keyframes command-panel {
+  from { opacity: 0; transform: translateY(-6px) scale(var(--scale-medium)); filter: blur(var(--blur-small)); }
+}
+
+/* Phone dock. Hidden until the phone breakpoint. */
+.dock { display: none; }
+
+.dock-track {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  height: var(--dock-h);
+}
+
+/* The travelling pill becomes a short amber bar riding the dock's top edge. */
+.dock-track > .t-tabs-pill {
+  top: 0;
+  height: 2px;
+  border-radius: 0 0 var(--r-pill) var(--r-pill);
+  background: var(--accent);
+  box-shadow: 0 0 14px 0 var(--accent);
+}
+
+.dock-track > .t-tabs-pill[data-ready="false"] { opacity: 0; }
+
+.dock-item {
+  position: relative;
+  display: grid;
+  flex: 1 1 0;
+  place-content: center;
+  justify-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-3);
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur) ease;
+}
+
+.dock-item-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  transition: transform var(--duration-fast) var(--ease-bounce);
+}
+
+.dock-item-icon svg { width: 22px; height: 22px; }
+.dock-item-icon .t-badge { top: -5px; right: -9px; }
+.dock-item-icon .t-badge-dot { border-color: var(--chrome-solid); }
+
+.dock-item-label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dock-item[aria-current="page"] { color: var(--text-1); }
+.dock-item[aria-current="page"] .dock-item-icon { color: var(--accent); transform: translateY(-1px); }
+.dock-item[aria-current="page"] .dock-item-label { font-weight: 600; }
+.dock-item:active .dock-item-icon { transform: scale(0.88); transition-duration: var(--duration-quick); }
+
+@media (prefers-reduced-motion: reduce) {
+  .command-layer,
+  .command-panel { animation: none; }
+  .dock-item-icon { transition: none; }
+}
+
+/* --------------------------------------------------------------------------
    20. Responsive
    -------------------------------------------------------------------------- */
 
@@ -6655,10 +7149,27 @@ time,
   .market-detail-grid { grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr); }
 }
 
-@media (max-width: 1120px) {
+/* Wide monitors get the room back instead of two empty gutters. */
+@media (min-width: 1800px) {
+  .workspace { max-width: 1760px; }
+}
+
+/* Tablets and small laptops keep the builder's review rail beside the form;
+   it only stacks once the form column would drop below ~560px. */
+@media (max-width: 1120px) and (min-width: 901px) {
+  .builder-columns { grid-template-columns: minmax(0, 1fr) 280px; }
+}
+
+@media (max-width: 900px) {
   .builder-columns { grid-template-columns: minmax(0, 1fr); }
   .builder-rail { position: static; }
   .builder-rail > .panel { max-width: none; }
+}
+
+@media (max-width: 1120px) {
+  .command-trigger > span,
+  .command-trigger > kbd { display: none; }
+  .command-trigger { width: 34px; justify-content: center; padding: 0; }
   .market-detail-grid,
   .delta-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .liquidity-panel { grid-row: auto; }
@@ -6709,7 +7220,7 @@ time,
     padding:
       var(--s-5)
       max(var(--s-4), env(safe-area-inset-right))
-      calc(var(--s-12) + env(safe-area-inset-bottom))
+      calc(var(--dock-h) + var(--s-10) + env(safe-area-inset-bottom))
       max(var(--s-4), env(safe-area-inset-left));
   }
 
@@ -6749,14 +7260,30 @@ time,
   .account-dropdown [role="menuitem"] { min-height: 44px; }
   .appearance-option { min-height: 40px; }
 
-  /* Icon-only destinations at this width: seven labels cannot fit and a strip
-     that scrolls three at a time hides most of the product. The label is kept
-     for the current one so the row still says where the operator is. */
-  .topnav-item { padding-inline: var(--s-3); min-height: 44px; }
-  .topnav-item-label { display: none; }
-  .topnav-item[aria-current="page"] .topnav-item-label { display: inline; }
-  .topnav-item-icon svg { width: 18px; height: 18px; }
-  .topnav-item[data-divider="before"] { margin-left: var(--s-2); padding-left: var(--s-3); }
+  /* Destinations move from the top strip to a bottom dock: inside thumb reach,
+     and every icon keeps a label. The top bar shrinks to identity and account. */
+  .topnav,
+  .command-trigger { display: none; }
+
+  .dock {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    display: block;
+    padding:
+      0
+      env(safe-area-inset-right)
+      env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
+    border-top: 1px solid var(--line);
+    background: var(--chrome);
+    backdrop-filter: var(--chrome-blur);
+    -webkit-backdrop-filter: var(--chrome-blur);
+  }
+
+  .section-heading h1 { white-space: normal; }
 
   .entry-bar {
     min-height: 64px;
@@ -6807,7 +7334,6 @@ time,
   .grid-3 { grid-template-columns: minmax(0, 1fr); }
   .risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .panel { padding: var(--s-4) 0; }
-  .table-scroll { margin-inline: 0; padding-inline: 0; }
   /* The leg summary wraps instead of dropping facts, so the configuration
      stays fully readable on a phone. */
   .leg-toggle {
@@ -6826,10 +7352,14 @@ time,
   .leg-body { padding: var(--s-4); }
   .leg-grid { grid-template-columns: minmax(0, 1fr); }
   .review-facts > div { flex-wrap: wrap; }
-  .review-facts dd { overflow-wrap: anywhere; }
+  .review-facts dd { overflow-wrap: anywhere; word-break: break-word; }
   .timeline-legend { grid-template-columns: minmax(0, 1fr); }
-  .account-trigger-text { display: none; }
-  .toast-region { right: var(--s-4); left: var(--s-4); bottom: var(--s-4); max-width: none; }
+  .toast-region {
+    right: var(--s-4);
+    left: var(--s-4);
+    bottom: calc(var(--dock-h) + var(--s-3) + env(safe-area-inset-bottom));
+    max-width: none;
+  }
   .market-toolbar { flex-direction: column; align-items: stretch; }
   .market-intervals { justify-content: space-between; }
   .market-intervals button { flex: 1; }
@@ -6873,7 +7403,7 @@ time,
   .news-sessions > header,
   .news-history > header { align-items: flex-start; flex-wrap: wrap; }
   .news-session-chips { margin-inline: calc(var(--s-2) * -1); padding-inline: var(--s-2); }
-  .news-session-chips button { min-width: min(240px, 76vw); }
+  .news-session-chips button { min-width: min(200px, 70vw); }
   .news-report-meta { grid-template-columns: minmax(0, 1fr); }
   .news-markdown {
     max-width: 100%;
@@ -7118,17 +7648,10 @@ time,
   /* Depth summary: tighten on phones */
   .depth-summary strong { font-size: var(--t-sm); }
 
-  /* News history: full-width session chips on narrow screens */
-  .news-session-chips button { min-width: min(200px, 70vw); }
 
   /* Run name in table: allow wrapping */
   .run-name strong { white-space: normal; }
 
-  /* Review facts: values can be long on mobile */
-  .review-facts dd {
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
 }
 
 @media (max-width: 520px) {
@@ -7170,7 +7693,6 @@ time,
   .panel-header-actions > .button,
   .section-heading-actions > .button { flex: 1 1 auto; }
 
-  .callout { align-items: flex-start; flex-wrap: wrap; border-left: 2px solid var(--line); }
   .callout > .button { width: 100%; }
   .button-row { display: grid; grid-template-columns: minmax(0, 1fr); }
   .button-row > .button,
@@ -7216,9 +7738,8 @@ time,
 
   .risk-readout strong { font-size: var(--t-lg); }
 
-  /* The title and its orientation line stop sharing a row. */
-  .section-heading { flex-direction: column; align-items: stretch; gap: var(--s-3); }
-  .section-heading h1 { font-size: var(--t-lg); white-space: normal; }
+  .section-heading { gap: var(--s-3); }
+  .section-heading h1 { font-size: 30px; }
 
   /* News status panel: tighter layout */
   .news-status-panel h2 { font-size: var(--t-lg); }
@@ -7274,8 +7795,8 @@ time,
   /* Destinations: tighter on tiny phones */
   .topnav-item { padding-inline: var(--s-2); }
 
-  /* Toast: full width on tiny phones */
-  .toast-region { right: var(--s-2); left: var(--s-2); bottom: var(--s-2); }
+  .toast-region { right: var(--s-2); left: var(--s-2); }
+  .dock-item-label { font-size: 10px; }
 
   /* Boot screen: tighter */
   .boot-screen .brand-mark { width: 28px; height: 28px; }
@@ -7298,13 +7819,19 @@ time,
     padding:
       var(--s-4)
       max(var(--s-3), env(safe-area-inset-right))
-      calc(var(--s-10) + env(safe-area-inset-bottom))
+      calc(var(--dock-h) + var(--s-8) + env(safe-area-inset-bottom))
       max(var(--s-3), env(safe-area-inset-left));
   }
 }
 
-@media (hover: none) and (pointer: coarse) {
-  .button:hover:not(:disabled) { transform: none; }
+/* Touch gets press feedback in place of hover: the hover rules above are all
+   scoped to `(hover: hover)`, so a tap never leaves a control lit. */
+@media (hover: none) {
+  .topnav-item:active,
+  .icon-button:active,
+  .account-trigger:active,
+  .filter-tab:active,
+  .segmented-option:active { transform: scale(0.97); transition-duration: var(--duration-quick); }
 }
 
 /* --------------------------------------------------------------------------
