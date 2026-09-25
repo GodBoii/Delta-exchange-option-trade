@@ -19,6 +19,14 @@ const draft = { id, name: "Test strategy", definitionJson: definition, enabled: 
 beforeEach(() => vi.stubEnv("CONVEX_TRADING_SECRET", "secret"));
 afterEach(() => vi.unstubAllEnvs());
 
+test("library freeze blocks browser edits during the storage transfer", async () => {
+  const t = convexTest(schema, modules);
+  vi.stubEnv("CONVEX_LIBRARY_WRITES_PAUSED", "true");
+  await expect(t.withIdentity({ subject: "owner" }).mutation(save, draft)).rejects.toThrow("paused");
+  await expect(t.mutation(createDefault, { secret: "secret", id, definitionJson: definition }))
+    .rejects.toThrow("paused");
+});
+
 test("ownership is enforced on reads and writes", async () => {
   const t = convexTest(schema, modules);
   await t.withIdentity({ subject: "owner" }).mutation(save, draft);
