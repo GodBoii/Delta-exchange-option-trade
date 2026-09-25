@@ -15,6 +15,7 @@ import ConnectView from "@/app/components/ConnectView";
 import StrategyBuilder from "@/app/components/StrategyBuilder";
 import Dashboard from "@/app/components/Dashboard";
 import RunHistory from "@/app/components/RunHistory";
+import RecoveryHistory from "@/app/components/RecoveryHistory";
 import {
   Brand, ConfirmModal, LearnMoreChevron, PageEnter, Shimmer, TableSkeleton, Toast,
   useTravelDirection, type Notice
@@ -41,7 +42,8 @@ type BackendStatus = "checking" | "online" | "offline";
 
 const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation"];
 const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news", "automation"];
-const OFFLINE_TABS: Tab[] = ["builder", "market"];
+const OFFLINE_TABS: Tab[] = process.env.NEXT_PUBLIC_APPLICATION_STORAGE === "local"
+  ? ["builder", "runs", "market"] : ["builder", "market"];
 
 /** Cheap enough to run alongside the run list without straining rate limits. */
 const ATTENTION_POLL_MS = 60_000;
@@ -265,8 +267,9 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "connect" && backendOnline && !connected && (
         <ConnectView user={user} onConnected={onConnected} onSignOut={onSignOut} embedded />
       )}
-      {tab === "builder" && <StrategyBuilder isOwner={user.userType === "owner"} userId={userId} onNotice={onNotice} liveEnabled={connected} />}
+      {tab === "builder" && <StrategyBuilder isOwner={user.userType === "owner"} userId={userId} onNotice={onNotice} liveEnabled={connected} backendOnline={backendOnline} />}
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
+      {tab === "runs" && !backendOnline && <RecoveryHistory />}
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
       {tab === "market" && <BtcMarketChart />}
       {tab === "news" && backendOnline && <NewsAnalysis request={requestJson} />}
@@ -319,7 +322,7 @@ function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
       <WifiOff aria-hidden="true" />
       <span>
         <strong>Live trading is temporarily unavailable.</strong>
-        {" "}Builder and public market data remain available.
+        {" "}Local drafts, saved recovery state, and public market data remain available where cached.
       </span>
       <button type="button" className="button secondary t-learn" onClick={() => void onRetry()}>
         <RefreshCw aria-hidden="true" />Retry<LearnMoreChevron />
