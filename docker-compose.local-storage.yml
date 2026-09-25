@@ -1,0 +1,47 @@
+# Apply only for the local-storage cutover after migration verification.
+services:
+  trade-postgres:
+    image: postgres:17.11-alpine3.24
+    env_file:
+      - ./deploy/local-postgres.env
+    command:
+      - postgres
+      - -c
+      - fsync=on
+      - -c
+      - synchronous_commit=on
+      - -c
+      - full_page_writes=on
+    volumes:
+      - trade-postgres:/var/lib/postgresql/data
+    networks:
+      - trade-data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  delta-exchange:
+    depends_on:
+      trade-postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - trade-data
+
+  delta-exchange-reader:
+    depends_on:
+      trade-postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - trade-data
+
+volumes:
+  trade-postgres:
+
+networks:
+  trade-data:
+    internal: true
