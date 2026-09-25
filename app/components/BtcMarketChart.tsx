@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, ArrowRight, BarChart3, RefreshCw, WifiOff, ZoomIn, ZoomOut } from "@/app/components/icons";
 import {
   AnimatedNumber, SectionHeading, Shimmer, SwapText, useSlidingPill
@@ -348,6 +348,16 @@ export default function BtcMarketChart() {
   const activeCandle = chart.candles[hoveredIndex] ?? chart.candles.at(-1);
   const positive = (data?.ticker.priceChangePercent || 0) >= 0;
 
+  /** The open time of the candle under a pointer, or null outside the plot. */
+  const candleAt = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * viewWidth;
+    const y = ((event.clientY - rect.top) / rect.height) * VIEW_HEIGHT;
+    const index = Math.floor((x - LEFT) / chart.step);
+    return x >= LEFT && x < viewWidth - RIGHT && y >= TOP && y <= BOTTOM
+      ? chart.candles[index]?.openTime ?? null : null;
+  };
+
   return <div className="market-page">
     <SectionHeading
       title="Market analysis"
@@ -436,20 +446,19 @@ export default function BtcMarketChart() {
           onPointerDown={event => {
             event.currentTarget.parentElement?.focus({ preventScroll: true });
             navigation.onPointerDown(event);
+            // Touch has no hover, so a tap is what places the crosshair.
+            if (event.pointerType !== "mouse") setHovered(candleAt(event));
           }}
           onPointerMove={event => {
             if (navigation.onPointerMove(event)) { setHovered(null); return; }
-            const rect = event.currentTarget.getBoundingClientRect();
-            const x = ((event.clientX - rect.left) / rect.width) * viewWidth;
-            const y = ((event.clientY - rect.top) / rect.height) * VIEW_HEIGHT;
-            const index = Math.floor((x - LEFT) / chart.step);
-            setHovered(x >= LEFT && x < viewWidth - RIGHT && y >= TOP && y <= BOTTOM
-              ? chart.candles[index]?.openTime ?? null : null);
+            setHovered(candleAt(event));
           }}
           onPointerUp={navigation.onPointerUp}
           onPointerCancel={event => { navigation.onPointerUp(event); setHovered(null); }}
           onLostPointerCapture={navigation.onPointerUp}
-          onPointerLeave={() => setHovered(null)}
+          // A finger lifting also fires `pointerleave`; the tapped candle stays
+          // inspected until the next tap instead of vanishing with the finger.
+          onPointerLeave={event => { if (event.pointerType === "mouse") setHovered(null); }}
         >
           <defs>
             <linearGradient id="volumeUp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#55d7c4" stopOpacity=".52" /><stop offset="1" stopColor="#55d7c4" stopOpacity=".12" /></linearGradient>
