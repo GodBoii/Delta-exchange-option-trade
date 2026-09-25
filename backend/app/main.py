@@ -77,7 +77,8 @@ async def lifespan(app: FastAPI):
     db = SupabaseAdmin(settings, local_pool)
     mirror = (
         RecoveryMirror(local_pool, db.client, settings.convex_url, settings.convex_trading_secret)
-        if (settings.application_storage == "local" and settings.trading_writer_enabled and not recovery_pending)
+        if (settings.application_storage == "local" and settings.trading_writer_enabled
+            and settings.recovery_mirror_enabled and not recovery_pending)
         else None
     )
     if mirror is not None:
@@ -323,6 +324,7 @@ async def health(request: Request) -> dict[str, Any]:
         "service": "delta-strategy-api",
         "scheduler": scheduler.status(),
         "recoveryPending": request.app.state.recovery_pending,
+        "recoveryMirrorEnabled": settings.application_storage == "local" and settings.recovery_mirror_enabled,
         **({"recoveryMirror": await mirror.status()} if mirror is not None else {}),
     }
 
