@@ -84,7 +84,7 @@ def account_store(db: Any) -> CredentialStore | None:
     settings = getattr(db, "settings", None)
     if not getattr(settings, "convex_accounts_enabled", False):
         return None
-    return CredentialStore(
-        ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client),
-        settings.convex_credential_key,
+    data = db.local_data if getattr(settings, "application_storage", "convex") == "local" else (
+        ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client)
     )
+    return CredentialStore(data, settings.convex_credential_key)
