@@ -39,7 +39,7 @@ export function Brand({ subtitle = "Trading dashboard" }: { subtitle?: string })
         aria-hidden="true"
       />
       <span className="brand-text">
-        <strong>Trade Cognition</strong>
+        <strong>Trade <em>Cognition</em></strong>
         <small>{subtitle}</small>
       </span>
     </span>
