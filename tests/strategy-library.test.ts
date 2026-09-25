@@ -22,8 +22,9 @@ test("Convex library uses the existing login and never reads the retired databas
     source_run_id: null, version: 3, enabled_for_ai: false, created_at: "date", updated_at: "date" };
   calls.query.mockImplementation(async (_ref, args) => ({ page: args.defaults ? [] : [record], isDone: true, continueCursor: "end" }));
   const { readStrategyLibrary } = await import("../lib/strategy-library");
-  const rows = await readStrategyLibrary();
+  const { rows, recoveryAt } = await readStrategyLibrary();
   expect(rows).toHaveLength(1);
+  expect(recoveryAt).toBeNull();
   expect(rows[0].definition_json).toEqual({ name: "Saved", legs: [] });
   expect(rows[0].version).toBe(3);
   calls.from.mockImplementation(() => { throw new Error("Retired source must not be used"); });
