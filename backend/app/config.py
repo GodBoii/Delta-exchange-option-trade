@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,9 @@ class Settings(BaseSettings):
     supabase_url: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_URL")
     supabase_publishable_key: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
     supabase_service_role_key: str = Field(validation_alias="SUPABASE_SERVICE_ROLE_KEY")
+    application_storage: Literal["convex", "local"] = "convex"
+    local_database_url: str | None = None
+    local_reader_database_url: str | None = None
     convex_url: str | None = Field(default=None, validation_alias="CONVEX_URL")
     convex_sync_secret: str | None = Field(default=None, validation_alias="CONVEX_SYNC_SECRET")
     convex_trading_secret: str | None = Field(default=None, validation_alias="CONVEX_TRADING_SECRET")
@@ -51,6 +55,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_convex_cutover(self) -> "Settings":
+        if self.application_storage == "local":
+            if not self.local_database_url:
+                raise ValueError("Local application storage requires LOCAL_DATABASE_URL")
+            if not self.trading_writer_enabled and not self.local_reader_database_url:
+                raise ValueError("Local read replicas require LOCAL_READER_DATABASE_URL")
+            if not self.analysis_service_secret:
+                raise ValueError("Local application storage requires ANALYSIS_SERVICE_SECRET")
+            if not self.convex_url or not self.convex_trading_secret:
+                raise ValueError("Local application storage requires Convex recovery-mirror credentials")
+            if not all((self.convex_runtime_enabled, self.convex_library_enabled,
+                        self.convex_accounts_enabled, self.convex_order_journal_enabled)):
+                raise ValueError("Local application storage requires the complete trading cutover")
+            return self
         if self.convex_runtime_enabled and not all(
             (self.convex_library_enabled, self.convex_accounts_enabled, self.convex_order_journal_enabled)
         ):
