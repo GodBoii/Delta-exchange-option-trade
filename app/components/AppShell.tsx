@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  useEffect, useId, useRef, useState, type ReactNode
+  useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode
 } from "react";
 import {
-  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart,
+  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart, Search,
   ThemeDark, ThemeLight, ThemeSystem
 } from "@/app/components/icons";
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
@@ -15,7 +15,8 @@ import {
 
 export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs";
 
-type NavItem = { id: Tab; label: string; hint: string; icon: ReactNode };
+/** `short` is the label under the icon in the phone dock, where ~56px is all a destination gets. */
+type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
 
 /**
  * Navigation.
@@ -32,13 +33,13 @@ type NavItem = { id: Tab; label: string; hint: string; icon: ReactNode };
  * next to the balance it is calculated from.
  */
 const NAV_ITEMS: (NavItem & { family: "execute" | "research" })[] = [
-  { id: "connect", label: "Connection", hint: "Enable live execution", icon: <KeyRound />, family: "execute" },
-  { id: "builder", label: "Builder", hint: "Configure and schedule", icon: <Layers3 />, family: "execute" },
-  { id: "runs", label: "History", hint: "Scheduled and active strategies", icon: <Activity />, family: "execute" },
-  { id: "dashboard", label: "Portfolio", hint: "Balances, positions and capital", icon: <PieChart />, family: "execute" },
-  { id: "market", label: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
-  { id: "news", label: "News", hint: "Headlines and market impact", icon: <Newspaper />, family: "research" },
-  { id: "automation", label: "Automation", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" }
+  { id: "connect", label: "Connection", short: "Connect", hint: "Enable live execution", icon: <KeyRound />, family: "execute" },
+  { id: "builder", label: "Builder", short: "Build", hint: "Configure and schedule", icon: <Layers3 />, family: "execute" },
+  { id: "runs", label: "History", short: "History", hint: "Scheduled and active strategies", icon: <Activity />, family: "execute" },
+  { id: "dashboard", label: "Portfolio", short: "Portfolio", hint: "Balances, positions and capital", icon: <PieChart />, family: "execute" },
+  { id: "market", label: "Market", short: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
+  { id: "news", label: "News", short: "News", hint: "Headlines and market impact", icon: <Newspaper />, family: "research" },
+  { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" }
 ];
 
 /** Reading order of the sections, so a transition knows which way it travelled. */
@@ -65,8 +66,23 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   children: ReactNode;
 }) {
   const items = NAV_ITEMS.filter(item => availableTabs.includes(item.id));
-  const { barRef, pill } = useSlidingPill(`${tab}:${availableTabs.join(",")}`, '[aria-current="page"]');
+  const pillKey = `${tab}:${availableTabs.join(",")}`;
+  const { barRef, pill } = useSlidingPill(pillKey, '[aria-current="page"]');
+  const dockPill = useSlidingPill(pillKey, '[aria-current="page"]');
   const activeRef = useRef<HTMLButtonElement>(null);
+  const [commandOpen, setCommandOpen] = useState(false);
+
+  /* Ctrl+K / Cmd+K opens the jump menu from anywhere, including inside a field. */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen(value => !value);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   /**
    * The strip scrolls horizontally on a narrow viewport, so the current section
@@ -98,6 +114,17 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
           </Tooltip>
 
           <div className="topbar-actions">
+            <button
+              type="button"
+              className="command-trigger"
+              aria-label="Jump to a section"
+              aria-haspopup="dialog"
+              onClick={() => setCommandOpen(true)}
+            >
+              <Search aria-hidden="true" />
+              <span>Jump to</span>
+              <kbd aria-hidden="true">Ctrl K</kbd>
+            </button>
             <Clock />
             <AccountMenu
               account={account}
@@ -148,6 +175,149 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
         {banner}
         {children}
       </main>
+
+      {/* Phones get the destinations at the bottom edge, inside thumb reach and
+          with a label under every icon. It replaces the top strip below 720px
+          (CSS hides one or the other), so only one is ever in the a11y tree. */}
+      <nav className="dock" aria-label="Dashboard sections">
+        <div className="dock-track" ref={dockPill.barRef}>
+          {dockPill.pill}
+          {items.map(item => {
+            const count = badges?.[item.id] ?? 0;
+            return (
+              <button
+                type="button"
+                key={item.id}
+                className="dock-item"
+                aria-current={item.id === tab ? "page" : undefined}
+                onClick={() => onNavigate(item.id)}
+              >
+                <span className="dock-item-icon" aria-hidden="true">
+                  {item.icon}
+                  <Badge count={count} tone="negative" label="" />
+                </span>
+                <span className="dock-item-label">{item.short}</span>
+                {count > 0 && <span className="visually-hidden">, {count} need attention</span>}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      {commandOpen && (
+        <CommandMenu
+          items={items}
+          current={tab}
+          onNavigate={next => { setCommandOpen(false); onNavigate(next); }}
+          onSignOut={() => { setCommandOpen(false); onSignOut(); }}
+          onClose={() => setCommandOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+type Command = { id: string; label: string; hint: string; icon: ReactNode; run: () => void };
+
+/**
+ * Jump menu.
+ *
+ * A filtered list with one active row, driven from the input so focus never
+ * leaves the field: arrows move the active row, Enter runs it, Escape closes.
+ * The list follows the combobox pattern, so screen readers announce the active
+ * option through `aria-activedescendant` while the caret stays in the input.
+ */
+function CommandMenu({ items, current, onNavigate, onSignOut, onClose }: {
+  items: NavItem[];
+  current: Tab;
+  onNavigate: (tab: Tab) => void;
+  onSignOut: () => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  const listId = useId();
+
+  const commands = useMemo<Command[]>(() => [
+    ...items.map(item => ({
+      id: item.id,
+      label: item.label,
+      hint: item.id === current ? "You are here" : item.hint,
+      icon: item.icon,
+      run: () => onNavigate(item.id)
+    })),
+    { id: "sign-out", label: "Sign out", hint: "End this session", icon: <LogOut />, run: onSignOut }
+  ], [items, current, onNavigate, onSignOut]);
+
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? commands.filter(command => `${command.label} ${command.hint}`.toLowerCase().includes(needle))
+    : commands;
+  const activeIndex = Math.min(active, Math.max(visible.length - 1, 0));
+
+  /* Focus moves into the field on open and back to whatever had it on close. */
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    input.current?.focus();
+    return () => previous?.focus?.();
+  }, []);
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!visible.length) return;
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActive((activeIndex + step + visible.length) % visible.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      visible[activeIndex]?.run();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+    }
+  };
+
+  return (
+    <div className="command-layer" onPointerDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="command-panel" role="dialog" aria-modal="true" aria-label="Jump to a section">
+        <div className="command-field">
+          <Search aria-hidden="true" />
+          <input
+            ref={input}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={visible[activeIndex] ? `${listId}-${visible[activeIndex].id}` : undefined}
+            aria-autocomplete="list"
+            placeholder="Search sections and actions"
+            value={query}
+            onChange={event => { setQuery(event.target.value); setActive(0); }}
+            onKeyDown={onKeyDown}
+          />
+          <kbd aria-hidden="true">Esc</kbd>
+        </div>
+        <ul className="command-list" role="listbox" id={listId} aria-label="Results">
+          {visible.map((command, index) => (
+            <li
+              key={command.id}
+              id={`${listId}-${command.id}`}
+              role="option"
+              aria-selected={index === activeIndex}
+              className="command-option"
+              onPointerMove={() => { if (index !== activeIndex) setActive(index); }}
+              onClick={command.run}
+            >
+              <span className="command-option-icon" aria-hidden="true">{command.icon}</span>
+              <span className="command-option-text">
+                <strong>{command.label}</strong>
+                <small>{command.hint}</small>
+              </span>
+            </li>
+          ))}
+          {!visible.length && <li className="command-empty" role="presentation">No section matches &ldquo;{query}&rdquo;</li>}
+        </ul>
+      </div>
     </div>
   );
 }
