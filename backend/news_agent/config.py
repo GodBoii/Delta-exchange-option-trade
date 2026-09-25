@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
@@ -63,6 +64,8 @@ class NewsAgentSettings:
     analysis_service_secret: str | None = None
     convex_url: str | None = None
     convex_trading_secret: str | None = None
+    application_storage: Literal["convex", "local"] = "convex"
+    trade_backend_internal_url: str = "http://delta-exchange:8000"
 
     @classmethod
     def load(cls) -> NewsAgentSettings:
@@ -87,6 +90,8 @@ class NewsAgentSettings:
             analysis_service_secret=os.getenv("ANALYSIS_SERVICE_SECRET") or None,
             convex_url=os.getenv("CONVEX_URL") or None,
             convex_trading_secret=os.getenv("CONVEX_RESEARCH_SECRET") or None,
+            application_storage=os.getenv("APPLICATION_STORAGE", "convex"),
+            trade_backend_internal_url=os.getenv("TRADE_BACKEND_INTERNAL_URL", "http://delta-exchange:8000"),
         )
 
     def require_api_key(self) -> str:
