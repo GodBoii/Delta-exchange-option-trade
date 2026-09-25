@@ -8,13 +8,12 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
-import httpx
 import psycopg
 from agno.tools import Toolkit
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.application_data import ConvexApplicationData, response_value
+from app.application_data import ConvexApplicationData
 from app.automation_schedule import (
     IST,
     fixed_session_during_minute,
@@ -31,6 +30,7 @@ from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
 
+from .local_client import LocalResearchClient
 from .report_data import ResearchData
 
 RECHECK_LEAD_TIME = timedelta(seconds=RECHECK_LEAD_SECONDS)
@@ -58,12 +58,16 @@ class AutomationStrategyTools(Toolkit):
         self.market_snapshot_id = str(UUID(market_snapshot_id))
         self.news_analysis_id = news_analysis_id
         self.strategy_references: dict[str, tuple[str, int]] = {}
-        self.application_data = (
+        local_client = (
+            LocalResearchClient(settings.trade_backend_internal_url, settings.analysis_service_secret)
+            if getattr(settings, "application_storage", "convex") == "local" else None
+        )
+        self.application_data = local_client or (
             ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
             if settings.convex_library_enabled
             else None
         )
-        self.account_data = (
+        self.account_data = local_client or (
             ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
             if getattr(settings, "convex_accounts_enabled", False)
             else None
@@ -423,13 +427,7 @@ class AutomationStrategyTools(Toolkit):
             )
         account_connected = None
         if self.account_data is not None:
-            with httpx.Client(timeout=15) as client:
-                overview = response_value(
-                    client.post(
-                        f"{self.account_data.url}/api/query",
-                        json=self.account_data.body("accounts:overview", {"userId": self.user_id}),
-                    )
-                )
+            overview = self.account_data.request_sync("accounts:overview", {"userId": self.user_id})
             account_connected = bool(overview["connection"] and overview["connection"]["status"] == "connected")
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -1045,7 +1043,11 @@ def read_parent_run_context(settings: NewsAgentSettings, *, user_id: str, agent_
 
 def read_automation_state(settings: NewsAgentSettings, *, user_id: str, agent_run_id: str) -> dict[str, Any] | None:
     if getattr(settings, "convex_runtime_enabled", False):
-        data = ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
+        data = (
+            LocalResearchClient(settings.trade_backend_internal_url, settings.analysis_service_secret)
+            if getattr(settings, "application_storage", "convex") == "local"
+            else ConvexApplicationData(settings.convex_url, settings.convex_trading_secret)
+        )
         row = data.request_sync("runtimeAutomation:context", {"userId": user_id, "runId": agent_run_id})["run"]
         return {"outcome": row.get("outcome"), "market_snapshot_id": row.get("market_snapshot_id")}
     with psycopg.connect(_psycopg_url(settings.require_database_url()), row_factory=dict_row) as connection:
@@ -1105,11 +1107,14 @@ def confirm_activation_recheck(
 
 
 def runtime_data(settings: NewsAgentSettings) -> ConvexApplicationData | None:
-    return (
-        ResearchData(settings.convex_url, settings.convex_trading_secret, settings.require_database_url())
-        if getattr(settings, "convex_runtime_enabled", False)
-        else None
-    )
+    if not getattr(settings, "convex_runtime_enabled", False):
+        return None
+    if getattr(settings, "application_storage", "convex") == "local":
+        client = LocalResearchClient(settings.trade_backend_internal_url, settings.analysis_service_secret)
+        return ResearchData(
+            client.url, client.secret, settings.require_database_url(), local_client=client
+        )
+    return ResearchData(settings.convex_url, settings.convex_trading_secret, settings.require_database_url())
 
 
 def _psycopg_url(url: str) -> str:
