@@ -9,6 +9,6 @@ httpx>=0.28,<1
 pydantic>=2.11,<3
 python-dotenv>=1.1,<2
 tzdata>=2025.2
-sqlalchemy>=2.0,<3
+sqlalchemy[asyncio]>=2.0,<3
 psycopg[binary]>=3.2,<4
 pillow>=11,<13
