@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY scripts ./scripts
+COPY db ./db
 RUN mkdir -p /app/state && chown -R app:app /app
 
 USER app
