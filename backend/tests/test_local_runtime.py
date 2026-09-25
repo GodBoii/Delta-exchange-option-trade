@@ -114,6 +114,7 @@ async def test_capital_reservation_and_agent_claim_are_atomic(runtime: LocalRunt
 @pytest.mark.asyncio
 async def test_completed_strategy_marks_order_recovery_records_closed(runtime: LocalRuntimeStore):
     user_id, strategy_id, execution_id, order_id = (str(uuid4()) for _ in range(4))
+    client_order_id = f"ord_{uuid4().hex[:16]}"
     delta_account = str(uuid4())
     account_id = f"india:{delta_account}"
     async with runtime.pool.connection() as connection:
@@ -130,14 +131,14 @@ async def test_completed_strategy_marks_order_recovery_records_closed(runtime: L
     })
     await runtime.write("execution_orders", {
         "id": order_id, "execution_id": execution_id, "state": "settled",
-        "client_order_id": "order_closed", "delta_order_id": "exchange_closed",
+        "client_order_id": client_order_id, "delta_order_id": "exchange_closed",
     })
     journal = LocalOrderJournal(runtime.pool, account_id)
     await journal.call("orderIntents:begin", {
-        "clientOrderId": "order_closed", "payload": '{}', "context": {"strategyId": strategy_id},
+        "clientOrderId": client_order_id, "payload": '{}', "context": {"strategyId": strategy_id},
     })
     await journal.call("orderIntents:resolve", {
-        "clientOrderId": "order_closed", "outcome": {"kind": "accepted", "response": '{"result":{"id":1}}'},
+        "clientOrderId": client_order_id, "outcome": {"kind": "accepted", "response": '{"result":{"id":1}}'},
     })
     await journal.call("exchangeFills:ingest", {"fills": [{
         "fillId": "fill_closed", "productId": "101", "orderId": "exchange_closed",
@@ -153,7 +154,7 @@ async def test_completed_strategy_marks_order_recovery_records_closed(runtime: L
             assert (await result.fetchone())[0]
         intent = await connection.execute(
             "select recovery_closed_at from trade.order_intents where account_id=%s and client_order_id=%s",
-            (account_id, "order_closed"),
+            (account_id, client_order_id),
         )
         fill = await connection.execute(
             "select recovery_closed_at from trade.exchange_fills where account_id=%s and fill_id=%s",
