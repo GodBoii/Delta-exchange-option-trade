@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     application_storage: Literal["convex", "local"] = "convex"
     local_database_url: str | None = None
     local_reader_database_url: str | None = None
+    recovery_mirror_enabled: bool = True
     convex_url: str | None = Field(default=None, validation_alias="CONVEX_URL")
     convex_sync_secret: str | None = Field(default=None, validation_alias="CONVEX_SYNC_SECRET")
     convex_trading_secret: str | None = Field(default=None, validation_alias="CONVEX_TRADING_SECRET")
@@ -62,7 +63,7 @@ class Settings(BaseSettings):
                 raise ValueError("Local read replicas require LOCAL_READER_DATABASE_URL")
             if not self.analysis_service_secret:
                 raise ValueError("Local application storage requires ANALYSIS_SERVICE_SECRET")
-            if not self.convex_url or not self.convex_trading_secret:
+            if self.recovery_mirror_enabled and (not self.convex_url or not self.convex_trading_secret):
                 raise ValueError("Local application storage requires Convex recovery-mirror credentials")
             if not all((self.convex_runtime_enabled, self.convex_library_enabled,
                         self.convex_accounts_enabled, self.convex_order_journal_enabled)):
