@@ -136,8 +136,8 @@ def run_automation_team(
                 ),
                 (
                     "Call show_available_strategy to receive short strategyRef values and every available complete "
-                    "definition, including category, index, price source, holding type, risk, take profit, order type, "
-                    "legs, option types, and positions."
+                    "definition and description, including category, index, price source, holding type, risk, "
+                    "take profit, order type, legs, option types, and positions."
                 ),
                 (
                     "Preserve the saved option legs, strike rules, size policy, stops, profit target and order types. "
@@ -146,8 +146,8 @@ def run_automation_team(
                     "explicit planned_exit_time, or hold_to_expiry with the saved expiry safety buffer. Intraday "
                     "means an exit on the same IST date; overnight means the next IST date. A positional exit can "
                     "span several days but must precede the chosen expiry buffer. Use saved to retain the template. "
-                    "Explain the exact entry, exit, expiry and holding rationale in the report. Template descriptions "
-                    "may describe the old seven-hour default; your explicit holding selection overrides that duration. "
+                    "Use each strategy description to understand its intended market conditions and payoff. "
+                    "Explain the exact entry, exit, expiry and holding rationale in the report. "
                     "Do not extend naked shorts simply to avoid realizing a loss. Consider event timing, executable "
                     "option liquidity, time decay, volatility, and short-strike distance over the entire hold. "
                     "Stops and profit targets can close any holding policy early. If evidence cannot support the "

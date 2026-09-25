@@ -93,7 +93,7 @@ def test_strategy_catalog_uses_short_references() -> None:
                 "id": "11111111-1111-4111-8111-111111111111",
                 "version": 7,
                 "name": "Short strangle",
-                "definition_json": {"takeProfitPercent": 50},
+                "definition_json": {"description": "Range-bound BTC until expiry.", "takeProfitPercent": 50},
                 "enabled_for_ai": True,
                 "user_id": None,
             }],
@@ -105,6 +105,8 @@ def test_strategy_catalog_uses_short_references() -> None:
     result = json.loads(tool.show_available_strategy())
 
     assert result["strategies"][0]["strategyRef"] == "S01"
+    assert result["strategies"][0]["description"] == "Range-bound BTC until expiry."
+    assert result["strategies"][0]["definition"]["description"] == result["strategies"][0]["description"]
     assert "id" not in result["strategies"][0]
     assert tool.strategy_references["S01"] == ("11111111-1111-4111-8111-111111111111", 7)
 

@@ -91,7 +91,7 @@ class AutomationStrategyTools(Toolkit):
         )
 
     def show_available_strategy(self) -> str:
-        """Return enabled strategies with short run-local references and complete definitions."""
+        """Return enabled strategies with descriptions, run-local references, and complete definitions."""
         external = self.application_data.selection_context(self.user_id) if self.application_data else None
         if self.runtime_data is not None:
             if external is None:
@@ -120,6 +120,7 @@ class AutomationStrategyTools(Toolkit):
                             "strategyRef": f"S{index:02d}",
                             "version": row["version"],
                             "name": row["name"],
+                            "description": row["definition_json"].get("description", ""),
                             "definition": row["definition_json"],
                             "currentAvailability": "unavailable"
                             if self.user_id != SHARED_USER_ID and maximum and occupied >= maximum
@@ -180,6 +181,7 @@ class AutomationStrategyTools(Toolkit):
                     "strategyRef": f"S{index:02d}",
                     "version": row["version"],
                     "name": row["name"],
+                    "description": definition.get("description", ""),
                     "definition": definition,
                     "currentAvailability": "unavailable" if reasons else "available_for_live_schedule",
                     "reasonUnavailable": reasons or None,

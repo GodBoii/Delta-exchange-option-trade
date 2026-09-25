@@ -103,10 +103,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long call",
             description=(
-                "Use for a strong, time-bound bullish BTC view backed by momentum or a positive catalyst. "
-                "The expected upside should comfortably exceed the ATM call premium and intraday time decay. "
-                "Avoid when direction is uncertain, price is range-bound, or implied volatility makes the call "
-                "expensive."
+                "Buy an at-the-money call when evidence favors a sustained BTC rise during the planned hold. "
+                "The call gains value as BTC rises; its premium is the most that can be lost. Compare the likely "
+                "price move with the quoted premium, time decay, and volatility before entry. A flat or falling "
+                "market weakens the thesis."
             ),
             category="premium_buying",
             outlook="bullish",
@@ -120,10 +120,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long put",
             description=(
-                "Use for a strong, time-bound bearish BTC view backed by downside momentum or a negative catalyst. "
-                "The expected fall should comfortably exceed the ATM put premium and intraday time decay. "
-                "Avoid when direction is uncertain, price is range-bound, or implied volatility makes the put "
-                "expensive."
+                "Buy an at-the-money put when evidence favors a sustained BTC decline during the planned hold. "
+                "The put gains value as BTC falls; its premium is the most that can be lost. Compare the likely "
+                "price move with the quoted premium, time decay, and volatility before entry. A flat or rising "
+                "market weakens the thesis."
             ),
             category="premium_buying",
             outlook="bearish",
@@ -137,10 +137,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long ATM straddle",
             description=(
-                "Use before an imminent catalyst or breakout when BTC should move sharply today but direction is "
-                "unclear. The expected move must exceed the combined ATM call and put debit. Avoid quiet sessions or "
-                "entry after "
-                "implied volatility has already priced an extreme move."
+                "Buy an at-the-money call and put with today's expiry when a sharp move is likely before expiry "
+                "but its direction is unclear. Either leg can gain from a large move. The combined debit is at "
+                "risk, and the move must outweigh both premiums, rapid same-day time decay, and any drop in "
+                "implied volatility."
             ),
             category="premium_buying",
             outlook="large_move_unknown_direction",
@@ -157,10 +157,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long strangle",
             description=(
-                "Use when BTC may make an exceptionally large move within about seven days but direction is unclear. "
-                "The OTM options cost less than a straddle, but BTC must travel farther to profit. Avoid modest-move "
-                "setups, "
-                "slow markets, or overpriced implied volatility because both legs lose value to time decay."
+                "Buy a call and put two listed strikes out of the money when a large BTC move is likely but its "
+                "direction is unclear. The pair costs less than an at-the-money straddle but needs a larger move "
+                "to gain value. The combined debit is at risk; time decay and falling implied volatility work "
+                "against both legs."
             ),
             category="premium_buying",
             outlook="very_large_move_unknown_direction",
@@ -193,10 +193,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Short ATM straddle",
             description=(
-                "Use only when BTC is likely to stay tightly pinned near the current price through today's expiry, "
-                "realized volatility is subdued, option premium is rich, and no major catalyst is due. Avoid trends, "
-                "breakouts, news "
-                "events, or rising volatility. Both short legs carry uncapped tail risk."
+                "Sell the at-the-money call and put with today's expiry when BTC is likely to remain close to "
+                "its current price until the expiry exit. Both premiums benefit from time decay. A strong move "
+                "in either direction can overwhelm the credit; the uncovered shorts have substantial tail risk "
+                "and monitored stops cannot guarantee a loss limit."
             ),
             category="premium_selling",
             outlook="sideways",
@@ -213,11 +213,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Short strangle",
             description=(
-                "Use when BTC should remain inside a well-supported wider range through today's expiry and implied "
-                "volatility is rich relative to the expected move. It gives more room than a short straddle but "
-                "collects less premium. Avoid catalysts, directional momentum, expanding volatility, or uncertain "
-                "range boundaries; "
-                "tail risk is uncapped."
+                "Sell a call and put two listed strikes out of the money with today's expiry when BTC is "
+                "likely to remain between those strikes until the expiry exit. This collects less premium than "
+                "an at-the-money straddle but allows a wider range. A breakout or volatility surge can erase "
+                "the credit; both uncovered shorts have substantial tail risk."
             ),
             category="premium_selling",
             outlook="wide_sideways",
@@ -254,11 +253,11 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
                 now,
                 name=f"Short OTM {option_type}",
                 description=(
-                    f"Sell one OTM {option_type} for a neutral-to-{outlook} BTC view with intact {boundary}. "
-                    "Fits a modest drift or one-sided range without requiring a large directional move. "
-                    "Use the next listed expiry after the entry date; close within seven hours, not at expiry. "
-                    f"Avoid a break of {boundary} or sharp two-way expansion. This is an uncovered short option; "
-                    "the monitored stop is not a guaranteed loss cap."
+                    f"Sell a {option_type} two listed strikes out of the money when BTC is expected to stay "
+                    f"on the safe side of {boundary} during the planned hold. Time decay helps if the strike "
+                    f"remains out of reach. A break through {boundary} or a volatility jump can quickly "
+                    "outweigh the credit. This is an uncovered short option, and its stop cannot guarantee a "
+                    "loss limit."
                 ),
                 category="premium_selling",
                 outlook=outlook,
@@ -286,10 +285,10 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
                 now,
                 name=f"Long ITM {option_type}",
                 description=(
-                    f"Buy one ITM {option_type} for an established {outlook} BTC trend or steady directional grind. "
-                    "The strike is two listed steps ITM, giving more directional sensitivity and a larger debit "
-                    "than the ATM version. Use a seven-day-or-later expiry but close within seven hours. "
-                    "Avoid an uncertain trend, reversal, or range-bound chop. The full debit remains at risk."
+                    f"Buy a {option_type} two listed strikes in the money when an established {outlook} BTC "
+                    "trend is likely to continue during the planned hold. The deeper strike gives more "
+                    "directional exposure than an at-the-money option but costs more. A stalled or reversing "
+                    "trend and time decay reduce its value; the full debit is at risk."
                 ),
                 category="premium_buying",
                 outlook=outlook,
@@ -315,24 +314,24 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
     for source_name, description in (
         (
             "Long ATM straddle",
-            "Buy ATM calls and puts before a sharp move of uncertain direction within the next seven hours. "
-            "Use this instead of the same-day straddle when the event or holding window falls after today's expiry. "
-            "Both options expire after the entry date. Avoid buying after the move or in quiet chop; "
-            "time decay and falling volatility can offset a price move. Exit within seven hours.",
+            "Buy an at-the-money call and put with the next listed expiry when a sharp BTC move is likely "
+            "during the planned hold but direction is unclear. This expiry keeps both legs alive beyond "
+            "today's settlement. The combined debit is at risk; the move must overcome both premiums, time "
+            "decay, and any drop in implied volatility.",
         ),
         (
             "Short ATM straddle",
-            "Sell ATM calls and puts when BTC is expected to stay tightly centered during the next seven hours. "
-            "Use this when today's expiry has passed or cannot cover the holding window. "
-            "Both options use the next listed expiry after the entry date. Avoid directional drift, breakouts, "
-            "or major events within the hold. Uncovered shorts have tail risk; stops do not guarantee the loss limit.",
+            "Sell the at-the-money call and put with the next listed expiry when BTC is likely to stay "
+            "near its current price during the planned hold. This expiry covers a window beyond today's "
+            "settlement. Time decay helps both legs, but a directional move or volatility jump can exceed "
+            "the credit. Uncovered shorts carry substantial tail risk; stops cannot guarantee a loss limit.",
         ),
         (
             "Short strangle",
-            "Sell OTM calls and puts two listed steps from ATM for a wider range over the next seven hours. "
-            "Use this when today's expiry has passed or cannot cover the holding window. "
-            "Both options expire after the entry date. Avoid expanding ranges or directional breaks. "
-            "Close within seven hours; do not assume an overnight hold. Uncovered shorts have tail risk.",
+            "Sell a call and put two listed strikes out of the money with the next listed expiry when BTC "
+            "is likely to stay between those strikes during the planned hold. This expiry covers a window "
+            "beyond today's settlement. Time decay earns the credit while the range holds; a breakout or "
+            "volatility surge can erase it. Both uncovered shorts carry substantial tail risk.",
         ),
     ):
         source = existing[source_name]
@@ -358,11 +357,11 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
                 now,
                 name=name,
                 description=(
-                    f"Use for a mildly {outlook} or one-sided BTC range with intact {boundary}, rich premium, "
-                    "and no catalyst during the hold. Sell an OTM option one listed strike from ATM and buy "
-                    "the farther OTM option three listed strikes from ATM at the same expiry. The long wing "
-                    "caps expiry loss. Require an executable net credit that exceeds round-trip fees; avoid "
-                    "thin books, breakouts through the short strike, and widening volatility."
+                    f"Use for a mildly {outlook} BTC view when {boundary} is likely to hold during the "
+                    f"planned hold. Buy a protective {option_type} three listed strikes out of the money, "
+                    "then sell the nearer option one strike out at the same expiry. Time decay helps earn "
+                    "the net credit. The long wing caps expiry loss, but the spread can still lose if BTC "
+                    "crosses the short strike; fees and executable quotes matter."
                 ),
                 category="defined_risk_premium_selling",
                 outlook=outlook,
