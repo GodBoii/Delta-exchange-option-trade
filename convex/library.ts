@@ -21,6 +21,12 @@ function validateDefinition(name: string, definitionJson: string, enabled: boole
   }
 }
 
+function requireLibraryWrites() {
+  if (process.env.CONVEX_LIBRARY_WRITES_PAUSED === "true") {
+    throw new ConvexError("Strategy library is paused for the local storage transfer");
+  }
+}
+
 export const list = query({
   args: { defaults: v.boolean(), paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
@@ -35,6 +41,7 @@ export const list = query({
 export const save = mutation({
   args: { id: v.string(), name: v.string(), definitionJson: v.string(), enabled: v.boolean(), expectedVersion: v.union(v.number(), v.null()) },
   handler: async (ctx, args) => {
+    requireLibraryWrites();
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to save a strategy");
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.id)) throw new ConvexError("Invalid strategy ID");
@@ -62,6 +69,7 @@ export const save = mutation({
 export const remove = mutation({
   args: { id: v.string(), expectedVersion: v.number() },
   handler: async (ctx, args) => {
+    requireLibraryWrites();
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new ConvexError("Sign in to delete a strategy");
     const existing = await ctx.db.query("savedStrategies").withIndex("by_external_id", q => q.eq("id", args.id)).unique();
@@ -100,6 +108,7 @@ export const serverUpdateDefault = mutation({
     expectedVersion: v.number(),
   },
   handler: async (ctx, args) => {
+    requireLibraryWrites();
     authorizeTradingService(args.secret);
     const existing = await ctx.db.query("savedStrategies")
       .withIndex("by_external_id", q => q.eq("id", args.id))
@@ -126,6 +135,7 @@ export const serverUpdateDefault = mutation({
 export const serverCreateDefault = mutation({
   args: { secret: v.string(), id: v.string(), definitionJson: v.string() },
   handler: async (ctx, args) => {
+    requireLibraryWrites();
     authorizeTradingService(args.secret);
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.id)) {
       throw new ConvexError("Invalid strategy ID");
@@ -164,6 +174,7 @@ export const serverRetireDefault = mutation({
     expectedVersion: v.number(),
   },
   handler: async (ctx, args) => {
+    requireLibraryWrites();
     authorizeTradingService(args.secret);
     const existing = await ctx.db.query("savedStrategies")
       .withIndex("by_external_id", q => q.eq("id", args.id))
@@ -195,6 +206,7 @@ export const getCapital = query({
 export const setCapital = mutation({
   args: { secret: v.string(), value: capitalRecord },
   handler: async (ctx, args) => {
+    requireLibraryWrites();
     authorizeTradingService(args.secret);
     const amount = args.value.capital_amount;
     if (args.value.allocation_mode === "fixed_amount") {
