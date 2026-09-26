@@ -12,17 +12,17 @@ from typing import Any
 
 import httpx
 
-from .application_data import ConvexApplicationData
 from .auth import credentials_for_user
 from .capital import CapitalPolicy, capital_budget, maximum_concurrent_strategies, policy_from_row
 from .config import Settings
+from .database import Database
 from .delta import DeltaClient, RequestBudget
 from .delta_events import DeltaEvents, PublicMarkFeeds
 from .errors import AppError, DeltaOrderRejected
 from .fill_accounting import PositionResult, exclusive_fill_positions
 from .local_journal import LocalOrderJournal
 from .models import StrategyDefinition
-from .order_journal import ConvexOrderJournal
+from .order_journal import OrderJournal
 from .strategy import (
     deferred_control_warnings,
     delta_expiry,
@@ -31,7 +31,6 @@ from .strategy import (
     strategy_level_metrics,
     validate_entry_policy,
 )
-from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
 ATTENTION_RECONCILE_SECONDS = 30.0
@@ -255,13 +254,13 @@ def settlement_client_order_id(strategy_id: str, fill: dict[str, Any]) -> str:
 
 
 class TradingEngine:
-    def __init__(self, db: SupabaseAdmin, settings: Settings) -> None:
+    def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
         self.settings = settings
         self.contract_values: dict[str, Decimal] = {}
         self.product_specs: dict[str, dict[str, Any]] = {}
         self.last_attention_reconcile = 0.0
-        self.startup_recovered = not getattr(settings, "convex_order_journal_enabled", False)
+        self.startup_recovered = False
         self.running_operations: set[str] = set()
         self.synced_fills: OrderedDict[tuple[str, str], str] = OrderedDict()
         self.sessions: dict[str, AccountSession] = {}
@@ -280,19 +279,15 @@ class TradingEngine:
         ) if getattr(settings, "delta_events_enabled", False) else None
         self.last_public_mark_prune = 0.0
         self.risk_errors: dict[str, str] = {}
-        self.application_data = db.local_data if getattr(settings, "application_storage", "convex") == "local" else (
-            ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client)
-            if getattr(settings, "convex_library_enabled", False)
-            else None
-        )
+        self.application_data = getattr(db, "local_data", None)
 
     async def client_for_user(self, user_id: str) -> DeltaClient:
         async with self.session_lock:
             session = self.sessions.get(user_id)
+            # Credentials change only through connect/disconnect, which invalidate the cached session.
             credentials = (
                 session.credentials
-                if getattr(self.settings, "application_storage", "convex") == "local"
-                and session is not None and user_id not in self.invalidated_credentials
+                if session is not None and user_id not in self.invalidated_credentials
                 else await credentials_for_user(self.db, user_id)
             )
             if session is not None and session.credentials != credentials:
@@ -344,25 +339,10 @@ class TradingEngine:
             budget=session.budget,
             events=session.events,
         )
-        if self.settings.convex_order_journal_enabled:
-            if getattr(self.settings, "application_storage", "convex") == "local":
-                client.order_journal = LocalOrderJournal(
-                    self.db.runtime.pool, f"india:{credentials['delta_user_id']}"
-                )
-                return client
-            if (
-                not self.settings.convex_url
-                or not self.settings.convex_trading_secret
-                or not credentials.get("delta_user_id")
-            ):
-                await client.close()
-                raise AppError(503, "Convex trading journal is not configured", "journal_not_configured")
-            client.order_journal = ConvexOrderJournal(
-                self.settings.convex_url,
-                self.settings.convex_trading_secret,
-                f"india:{credentials['delta_user_id']}",
-                client.client,
-            )
+        if not credentials.get("delta_user_id"):
+            await client.close()
+            raise AppError(503, "The exchange account identity is missing", "journal_not_configured")
+        client.order_journal = LocalOrderJournal(self.db.runtime.pool, f"india:{credentials['delta_user_id']}")
         return client
 
     @asynccontextmanager
@@ -408,40 +388,18 @@ class TradingEngine:
         await self.exchange_http.aclose()
 
     async def capital_policy(self, user_id: str) -> CapitalPolicy:
-        if self.application_data is not None:
-            return policy_from_row(await self.application_data.request("library:getCapital", {"userId": user_id}))
-        rows = await self.db.select(
-            "capital_settings",
-            {"select": "allocation_mode,capital_amount", "user_id": f"eq.{user_id}", "limit": "1"},
-        )
-        if rows:
-            return policy_from_row(rows[0])
-        inserted = await self.db.upsert(
-            "capital_settings",
-            {"user_id": user_id, "allocation_mode": "half_balance", "capital_amount": None},
-            on_conflict="user_id",
-        )
-        return policy_from_row(inserted[0] if inserted else None)
+        return policy_from_row(await self.application_data.request("library:getCapital", {"userId": user_id}))
 
     async def saved_strategies(self, user_id: str, strategy_id: str | None = None) -> list[dict[str, Any]]:
-        if self.application_data is not None:
-            return await self.application_data.saved_strategies(user_id, strategy_id)
-        params = {"select": "*", "or": f"(user_id.eq.{user_id},user_id.is.null)", "order": "name.asc"}
-        if strategy_id is not None:
-            params.update({"id": f"eq.{strategy_id}", "limit": "1"})
-        return await self.db.select("saved_strategies", params)
+        return await self.application_data.saved_strategies(user_id, strategy_id)
 
     async def save_capital_policy(self, user_id: str, mode: str, amount: float | None) -> None:
         payload = {
             "user_id": user_id,
             "allocation_mode": mode,
-            "capital_amount": amount if mode == "fixed_amount" else None,
+            "capital_amount": str(amount) if mode == "fixed_amount" else None,
         }
-        if self.application_data is not None:
-            payload["capital_amount"] = str(amount) if mode == "fixed_amount" else None
-            await self.application_data.request("library:setCapital", {"value": payload}, mutation=True)
-        elif not await self.db.upsert("capital_settings", payload, on_conflict="user_id"):
-            raise AppError(500, "Could not save the capital policy", "capital_settings_failed")
+        await self.application_data.request("library:setCapital", {"value": payload}, mutation=True)
 
     async def usd_capital(self, client: DeltaClient) -> tuple[Decimal, Decimal]:
         balances = (await client.balances()).get("result") or []
@@ -992,7 +950,7 @@ class TradingEngine:
             if not enabled_accounts or recheck[strategy_id] != "ready":
                 raise AppError(409, "Shared strategy is not authorized for entry", "activation_recheck_failed")
         definition = StrategyDefinition.model_validate(row["definition_json"])
-        if self.application_data is not None and row.get("saved_strategy_id"):
+        if row.get("saved_strategy_id"):
             proposals = await self.db.select(
                 "strategy_proposals",
                 {
@@ -1309,7 +1267,7 @@ class TradingEngine:
             if order.get("delta_order_id") or order.get("state") != "unknown":
                 continue
             response = await client.order_by_client_id(str(order["client_order_id"]))
-            ConvexOrderJournal.validate_response(response)
+            OrderJournal.validate_response(response)
             result = response["result"]
             values = {"delta_order_id": str(result["id"]), "state": str(result.get("state") or "submitted")}
             await self.db.update("execution_orders", values, {"id": f"eq.{order['id']}"})
@@ -2042,8 +2000,6 @@ class TradingEngine:
             await journal.call("orderIntents:materialized", {"clientOrderId": intent["clientOrderId"]})
 
     async def recover_interrupted_states(self) -> None:
-        if not getattr(self.settings, "convex_order_journal_enabled", False):
-            return
         rows = await self.strategy_pages({"select": "id,risk_state", "status": "in.(executing_entry,executing_exit)"})
         for row in rows:
             if str(row["id"]) in self.running_operations:
@@ -2622,10 +2578,6 @@ class TradingEngine:
         self, rows: list[dict[str, Any]], operation: Callable[[dict[str, Any]], Awaitable[None]]
     ) -> None:
         if not rows:
-            return
-        if not getattr(self.settings, "convex_runtime_enabled", False):
-            for row in rows:
-                await operation(row)
             return
         user_ids = list({str(row["user_id"]) for row in rows})
         now = time.monotonic()
