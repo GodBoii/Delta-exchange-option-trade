@@ -9,14 +9,14 @@ from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from .application_data import ConvexApplicationData
 from .errors import AppError
+from .local_application_data import LocalApplicationData
 
 
 class CredentialStore:
-    def __init__(self, data: ConvexApplicationData, key: str) -> None:
+    def __init__(self, data: LocalApplicationData, key: str) -> None:
         if not key:
-            raise ValueError("CONVEX_CREDENTIAL_KEY is required for encrypted credential storage")
+            raise ValueError("CREDENTIAL_ENCRYPTION_KEY is required for encrypted credential storage")
         self.data = data
         self.cipher = Fernet(key.encode())
         self.key = key.encode()
@@ -80,11 +80,9 @@ class CredentialStore:
         )
 
 
-def account_store(db: Any) -> CredentialStore | None:
-    settings = getattr(db, "settings", None)
-    if not getattr(settings, "convex_accounts_enabled", False):
-        return None
-    data = db.local_data if getattr(settings, "application_storage", "convex") == "local" else (
-        ConvexApplicationData(settings.convex_url, settings.convex_trading_secret, db.client)
-    )
-    return CredentialStore(data, settings.convex_credential_key)
+def account_store(db: Any) -> CredentialStore:
+    store = getattr(db, "credential_store", None)
+    if store is None:
+        store = CredentialStore(db.local_data, db.settings.credential_encryption_key)
+        db.credential_store = store
+    return store
