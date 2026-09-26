@@ -10,10 +10,11 @@ from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, ConfigDict
 
+from scripts.database_roles import ensure_roles
 from scripts.init_local_db import apply_migrations
 
 from .auth import (
@@ -27,7 +28,9 @@ from .auth import (
 from .automation import AutomationScheduler
 from .automation import router as automation_router
 from .capital import capital_budget, maximum_concurrent_strategies
+from .change_feed import ChangeFeed
 from .config import get_settings
+from .database import Database
 from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
 from .errors import AppError
@@ -42,9 +45,7 @@ from .models import (
 )
 from .news import router as news_router
 from .portfolio_stream import serve_portfolio
-from .recovery_mirror import RecoveryMirror
 from .strategy import delta_expiry
-from .supabase import SupabaseAdmin
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -53,37 +54,24 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    local_pool = None
-    if settings.application_storage == "local":
-        if settings.trading_writer_enabled:
-            await asyncio.to_thread(apply_migrations, settings.local_database_url)
-        database_url = (
-            settings.local_database_url if settings.trading_writer_enabled else settings.local_reader_database_url
+    if settings.trading_writer_enabled:
+        await asyncio.to_thread(apply_migrations, settings.local_database_url)
+        await asyncio.to_thread(
+            ensure_roles,
+            settings.local_database_url,
+            ai_url=settings.ai_database_url,
+            reader_url=settings.local_reader_database_url,
         )
-        local_pool = AsyncConnectionPool(database_url, min_size=1, max_size=12, open=False)
-        await local_pool.open(wait=True)
-    recovery_pending = False
-    if local_pool is not None:
-        async with local_pool.connection() as connection:
-            result = await connection.execute("select pending from trade.recovery_gate where key='main'")
-            gate = await result.fetchone()
-            recovery_pending = bool(gate and gate[0])
-    instance_lock = (
-        InstanceLock(settings.trading_lock_path)
-        if settings.trading_writer_enabled and settings.convex_runtime_enabled
-        else None
+    pool = AsyncConnectionPool(
+        settings.database_url, min_size=2, max_size=settings.database_pool_size, open=False
     )
+    await pool.open(wait=True)
+    instance_lock = InstanceLock(settings.trading_lock_path) if settings.trading_writer_enabled else None
     if instance_lock is not None:
         instance_lock.acquire()
-    db = SupabaseAdmin(settings, local_pool)
-    mirror = (
-        RecoveryMirror(local_pool, db.client, settings.convex_url, settings.convex_trading_secret)
-        if (settings.application_storage == "local" and settings.trading_writer_enabled
-            and settings.recovery_mirror_enabled and not recovery_pending)
-        else None
-    )
-    if mirror is not None:
-        mirror.start()
+    db = Database(settings, pool)
+    change_feed = ChangeFeed(settings.database_url)
+    change_feed.start()
     engine_settings = (
         settings if settings.trading_writer_enabled else settings.model_copy(update={"delta_events_enabled": False})
     )
@@ -91,16 +79,15 @@ async def lifespan(app: FastAPI):
     scheduler = Scheduler(
         engine,
         settings.scheduler_poll_seconds,
-        settings.scheduler_enabled and settings.trading_writer_enabled and not recovery_pending,
+        settings.scheduler_enabled and settings.trading_writer_enabled,
     )
     automation_scheduler = AutomationScheduler(db, engine)
     app.state.db = db
-    app.state.recovery_mirror = mirror
-    app.state.recovery_pending = recovery_pending
+    app.state.change_feed = change_feed
     app.state.engine = engine
     app.state.scheduler = scheduler
     app.state.automation_scheduler = automation_scheduler
-    if settings.trading_writer_enabled and settings.convex_runtime_enabled:
+    if settings.trading_writer_enabled:
         try:
             response = await db.client.get("https://api.ipify.org", timeout=5)
             response.raise_for_status()
@@ -108,22 +95,20 @@ async def lifespan(app: FastAPI):
             await db.runtime.data.request("accounts:updateOutboundIp", {"ip": outbound_ip}, mutation=True)
         except Exception:
             logger.exception("Could not refresh the server outbound IP")
-    if settings.trading_writer_enabled and not settings.scheduler_enabled and not recovery_pending:
+    if settings.trading_writer_enabled and not settings.scheduler_enabled:
         await engine.recover_interrupted_states()
     scheduler.start()
-    if settings.trading_writer_enabled and settings.automation_scheduler_enabled and not recovery_pending:
+    if settings.trading_writer_enabled and settings.automation_scheduler_enabled:
         automation_scheduler.start()
     try:
         yield
     finally:
         await automation_scheduler.stop()
         await scheduler.stop()
-        if mirror is not None:
-            await mirror.stop()
+        await change_feed.stop()
         await engine.close()
         await db.close()
-        if local_pool is not None:
-            await local_pool.close()
+        await pool.close()
         if instance_lock is not None:
             instance_lock.close()
 
@@ -139,18 +124,6 @@ app = FastAPI(
 
 @app.middleware("http")
 async def require_trading_writer(request: Request, call_next):
-    app_state = getattr(request.scope.get("app"), "state", None)
-    if getattr(app_state, "recovery_pending", False) and request.method not in {"GET", "HEAD", "OPTIONS"}:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "success": False,
-                "error": {
-                    "code": "recovery_reconciliation_required",
-                    "message": "Trading remains paused until restored state is reconciled with Delta Exchange",
-                },
-            },
-        )
     if not settings.trading_writer_enabled and request.method not in {"GET", "HEAD", "OPTIONS"}:
         return JSONResponse(
             status_code=503,
@@ -208,76 +181,71 @@ class LibrarySave(BaseModel):
 
 
 @app.get("/api/library")
-async def local_library(request: Request, user: RequiredUser) -> dict[str, Any]:
-    if settings.application_storage != "local":
-        raise AppError(404, "Local strategy library unavailable", "library_unavailable")
+async def library(request: Request, user: RequiredUser) -> dict[str, Any]:
     rows = await request.app.state.db.local_data.saved_strategies(str(user["id"]))
     return {"success": True, "result": rows}
 
 
 @app.put("/api/library/{strategy_id}")
-async def local_library_save(
-    request: Request, strategy_id: str, body: LibrarySave, user: RequiredUser
-) -> dict[str, Any]:
-    if settings.application_storage != "local" or strategy_id != body.id:
-        raise AppError(404, "Local strategy library unavailable", "library_unavailable")
+async def library_save(request: Request, strategy_id: str, body: LibrarySave, user: RequiredUser) -> dict[str, Any]:
+    if strategy_id != body.id:
+        raise AppError(422, "Strategy identifier mismatch", "library_identifier_mismatch")
     row = await request.app.state.db.local_data.library_save(str(user["id"]), body.model_dump())
     return {"success": True, "result": request.app.state.db.local_data._legacy_library_row(row)}
 
 
 @app.delete("/api/library/{strategy_id}")
-async def local_library_remove(
+async def library_remove(
     request: Request, strategy_id: str, expectedVersion: int, user: RequiredUser
 ) -> dict[str, bool]:
-    if settings.application_storage != "local":
-        raise AppError(404, "Local strategy library unavailable", "library_unavailable")
     await request.app.state.db.local_data.library_remove(str(user["id"]), strategy_id, expectedVersion)
     return {"success": True}
 
 
+REVISION_HEARTBEAT_SECONDS = 15.0
+
+
 @app.get("/api/revisions")
-async def local_revisions(request: Request, user: RequiredUser) -> StreamingResponse:
-    if settings.application_storage != "local":
-        raise AppError(404, "Local revisions unavailable", "revisions_unavailable")
-    pool: AsyncConnectionPool = request.app.state.db.runtime.pool
-    user_id = str(user["id"])
+async def revisions(request: Request, user: RequiredUser) -> StreamingResponse:
+    feed: ChangeFeed = request.app.state.change_feed
+    subscription = feed.subscribe(str(user["id"]))
 
     async def events():
-        async with pool.connection() as connection:
-            result = await connection.execute("select coalesce(max(id),0) from trade.recovery_outbox")
-            cursor = (await result.fetchone())[0]
-        yield ": connected\n\n"
-        while not await request.is_disconnected():
-            async with pool.connection() as connection:
-                result = await connection.execute(
-                    """select id,entity_type,payload from trade.recovery_outbox
-                       where id>%s and entity_type in ('strategies','analysis_jobs')
-                       order by id limit 100""",
-                    (cursor,),
-                )
-                rows = await result.fetchall()
-            revisions: dict[str, int] = {}
-            for event_id, entity_type, payload in rows:
-                cursor = event_id
-                owner = payload.get("owner_id") if isinstance(payload, dict) else None
-                if owner in {user_id, "global"} or payload is None:
-                    field = "strategies" if entity_type == "strategies" else "automation"
-                    revisions[field] = event_id
-            if revisions:
-                yield f"data: {json.dumps(revisions)}\n\n"
-            elif not rows:
-                yield ": alive\n\n"
-            await asyncio.sleep(2 if len(rows) < 100 else 0)
+        try:
+            yield ": connected\n\n"
+            while not await request.is_disconnected():
+                try:
+                    await asyncio.wait_for(subscription.changed.wait(), timeout=REVISION_HEARTBEAT_SECONDS)
+                except TimeoutError:
+                    yield ": alive\n\n"
+                    continue
+                yield f"data: {json.dumps(subscription.take())}\n\n"
+        finally:
+            feed.unsubscribe(subscription)
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/charts/{run_id}/{chart_id}")
+async def chart_image(request: Request, run_id: str, chart_id: str, expires: int, signature: str) -> Response:
+    db: Database = request.app.state.db
+    db.charts.verify(run_id, chart_id, expires, signature)
+    content = await db.charts.content(run_id, chart_id)
+    return Response(
+        content,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600, immutable", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.post("/internal/research")
-async def local_research_operation(
+async def research_operation(
     request: Request, body: ResearchOperation, x_analysis_secret: str | None = Header(default=None)
 ) -> dict[str, Any]:
-    if settings.application_storage != "local" or not settings.analysis_service_secret:
-        raise AppError(404, "Research operation unavailable", "research_operation_unavailable")
     if not hmac.compare_digest(x_analysis_secret or "", settings.analysis_service_secret):
         raise AppError(401, "Service authentication required", "service_unauthorized")
     result = await request.app.state.db.local_data.request(body.path, body.args, mutation=body.mutation)
@@ -319,20 +287,26 @@ async def unhandled_error_handler(_: Request, error: Exception) -> JSONResponse:
 @app.get("/health")
 async def health(request: Request) -> dict[str, Any]:
     scheduler: Scheduler = request.app.state.scheduler
-    mirror: RecoveryMirror | None = request.app.state.recovery_mirror
+    feed: ChangeFeed = request.app.state.change_feed
+    pool: AsyncConnectionPool = request.app.state.db.pool
+    stats = pool.get_stats()
     return {
         "success": True,
         "service": "delta-strategy-api",
+        "role": "writer" if settings.trading_writer_enabled else "reader",
         "scheduler": scheduler.status(),
-        "recoveryPending": request.app.state.recovery_pending,
-        "recoveryMirrorEnabled": settings.application_storage == "local" and settings.recovery_mirror_enabled,
-        **({"recoveryMirror": await mirror.status()} if mirror is not None else {}),
+        "database": {
+            "poolSize": stats.get("pool_size", 0),
+            "poolAvailable": stats.get("pool_available", 0),
+            "requestsWaiting": stats.get("requests_waiting", 0),
+        },
+        "changeFeed": {"connected": feed.connected, "subscribers": sum(map(len, feed.subscribers.values()))},
     }
 
 
 @app.get("/api/session")
 async def session(request: Request, user: OptionalUser) -> dict[str, Any]:
-    db: SupabaseAdmin = request.app.state.db
+    db: Database = request.app.state.db
     account = await current_account(db, user, required=False)
     return {
         "success": True,
@@ -362,22 +336,20 @@ async def session(request: Request, user: OptionalUser) -> dict[str, Any]:
 @app.post("/api/session/connect")
 async def connect_delta(request: Request, body: ConnectRequest, user: RequiredUser) -> dict[str, Any]:
     result = await create_connection(request.app.state.db, settings, str(user["id"]), body.apiKey, body.apiSecret)
-    if settings.application_storage == "local":
-        await request.app.state.engine.invalidate_credentials(str(user["id"]))
+    await request.app.state.engine.invalidate_credentials(str(user["id"]))
     return {"success": True, "account": result["account"]}
 
 
 @app.delete("/api/session")
 async def disconnect_delta(request: Request, user: RequiredUser) -> dict[str, bool]:
     await remove_connection(request.app.state.db, str(user["id"]))
-    if settings.application_storage == "local":
-        await request.app.state.engine.invalidate_credentials(str(user["id"]))
+    await request.app.state.engine.invalidate_credentials(str(user["id"]))
     return {"success": True}
 
 
 @app.get("/api/account/overview")
 async def account_overview(request: Request, user: RequiredUser) -> dict[str, Any]:
-    db: SupabaseAdmin = request.app.state.db
+    db: Database = request.app.state.db
     account = await current_account(db, user, required=True)
     client = await delta_client_for_user(db, settings, str(user["id"]))
     try:
