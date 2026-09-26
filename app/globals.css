@@ -4967,6 +4967,100 @@ time,
   font-size: var(--t-xs);
 }
 
+/* Live positions: each position is a <tbody> holding the summary row and an
+   accordion row. The detail row collapses to zero height, so it carries no
+   padding or border of its own until it opens. */
+
+.positions-table .position-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.positions-table .position-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
+
+.positions-table .position-toggle .t-acc-chevron { color: var(--text-3); }
+.positions-table .position-toggle[aria-expanded="true"] .t-acc-chevron { color: var(--accent); }
+
+.positions-table .position-group[data-open="true"] .position-row > * {
+  border-bottom-color: transparent;
+  background: var(--tint-1);
+}
+
+.positions-table .position-detail > td {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.positions-table .position-group[data-open="true"] .position-detail > td {
+  border-bottom: 1px solid var(--line);
+  background: var(--tint-1);
+}
+
+.positions-table .position-group:last-of-type[data-open="true"] .position-detail > td { border-bottom: 0; }
+
+@media (hover: hover) {
+  .positions-table tbody tr.position-detail:hover > td { background: transparent; }
+  .positions-table .position-group[data-open="true"] tr.position-detail:hover > td { background: var(--tint-1); }
+}
+
+.protective-summary abbr {
+  margin-right: var(--s-1);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-decoration: none;
+}
+
+.position-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-3);
+  padding: var(--s-1) var(--s-3) var(--s-4);
+}
+
+.position-detail-grid > section {
+  min-width: 0;
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.position-detail-grid h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 0 var(--s-3);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.position-detail-grid .detail-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+
+.position-detail-grid .detail-list dd { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1280px) {
+  .position-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* Combined-premium monitors */
 
 .risk-monitor-list {
@@ -7538,6 +7632,28 @@ kbd {
 
   .mobile-card-table .row-action .button { min-width: 96px; }
   .mobile-card-table .run-name { width: 100%; min-height: 44px; }
+
+  /* A position card is its summary row plus the disclosure below it, so the
+     pair shares one bottom rule and the detail spans the card. */
+  .positions-table tbody.position-group { gap: 0; }
+  .positions-table .position-group[data-open="true"] .position-row { border-bottom: 0; }
+  .positions-table .position-group[data-open="true"] .position-row > * { background: transparent; }
+  .positions-table tr.position-detail {
+    display: block;
+    padding: 0;
+    border-bottom: 0;
+  }
+  .positions-table .position-group[data-open="true"] tr.position-detail { border-bottom: 1px solid var(--line); }
+  .positions-table tr.position-detail > td,
+  .positions-table .position-group[data-open="true"] tr.position-detail > td {
+    display: block;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .positions-table tr.position-detail > td::before { content: none; }
+  .positions-table .position-toggle { width: 100%; min-height: 44px; }
+  .position-detail-grid { grid-template-columns: minmax(0, 1fr); padding: 0 0 var(--s-4); }
 
   .portfolio .tile-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
