@@ -2,40 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Clock3, Layers, RefreshCw, Shield, TrendingUp, Wallet
+  ChevronDown, Clock3, Layers, RefreshCw, Shield, TrendingUp, Wallet
 } from "@/app/components/icons";
 import CapitalAllocation from "@/app/components/CapitalAllocation";
 import { useCurrency } from "@/app/components/currency";
+import { usePortfolioStream, type StreamFeed } from "@/app/components/usePortfolioStream";
 import { requestJson } from "@/lib/api";
 import {
-  EM_DASH, errorMessage, formatClock, percent, quantity, relativeTime, titleCase, toNumber
+  EM_DASH, errorMessage, formatClock, formatDateTime, percent, quantity, relativeTime, signedPercent, titleCase,
+  toNumber
 } from "@/lib/format";
 import type { AccountOverview, DeltaRecord, RiskStrategy } from "@/lib/app-types";
 import {
-  AnimatedNumber, ConfirmModal, EmptyState, IconSwap, Meter, Panel, PanelHeader, Revealed,
+  describeOrder, isProtectiveOrder, positionViews, readNumber, readText, readValue, totalUnrealized,
+  triggerMethodLabel, type PositionView, type ProtectiveOrder
+} from "@/lib/portfolio";
+import {
+  AnimatedNumber, ConfirmModal, DetailList, EmptyState, IconSwap, Meter, Panel, PanelHeader, Revealed,
   SectionHeading, SpinningCounter, StatusChip, SwapText, TableSkeleton, TileSkeleton,
   Toggle, type NoticeHandler, type StatusTone
 } from "@/app/components/ui";
 
 const AUTO_REFRESH_MS = 30_000;
-
-/** Reads the first present key from a passthrough Delta record. */
-function read(record: DeltaRecord, ...keys: string[]) {
-  for (const key of keys) {
-    const value = record[key];
-    if (value !== undefined && value !== null && value !== "") return value;
-  }
-  return undefined;
-}
-
-function readNumber(record: DeltaRecord, ...keys: string[]) {
-  return toNumber(read(record, ...keys));
-}
-
-function readText(record: DeltaRecord, ...keys: string[]) {
-  const value = read(record, ...keys);
-  return value === undefined ? null : String(value);
-}
+/** Live prices tick several times a second; a full digit replay at most this often. */
+const PRICE_REPLAY_MS = 900;
 
 type Wallet = {
   asset: string;
@@ -53,8 +43,10 @@ function walletRows(balances: DeltaRecord[]): Wallet[] {
       balance: readNumber(row, "balance") ?? 0,
       available: readNumber(row, "available_balance") ?? 0,
       blocked: readNumber(row, "blocked_margin") ?? 0,
-      positionMargin: readNumber(row, "position_margin", "cross_position_margin") ?? 0,
-      orderMargin: readNumber(row, "order_margin", "cross_order_margin") ?? 0
+      // Isolated and cross margin are reported separately and both are real
+      // commitments; Delta sends "0" for the unused mode, so they are summed.
+      positionMargin: (readNumber(row, "position_margin") ?? 0) + (readNumber(row, "cross_position_margin") ?? 0),
+      orderMargin: (readNumber(row, "order_margin") ?? 0) + (readNumber(row, "cross_order_margin") ?? 0)
     }))
     .filter(wallet => wallet.balance !== 0 || wallet.blocked !== 0 || wallet.available !== 0)
     .sort((left, right) => right.balance - left.balance);
@@ -62,6 +54,7 @@ function walletRows(balances: DeltaRecord[]): Wallet[] {
 
 export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
   const { formatMoney, currencyCode } = useCurrency();
+  const stream = usePortfolioStream(true);
   const [data, setData] = useState<AccountOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
@@ -91,17 +84,30 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
     return () => window.clearInterval(timer);
   }, [autoRefresh, load]);
 
-  const wallets = useMemo(() => walletRows(data?.balances ?? []), [data]);
+  // The live stream is the source of truth while it is up. REST (which lags
+  // Delta's socket by up to ten seconds) fills in whenever it is not.
+  const live = stream.feed === "live" ? stream.account : null;
+  const balances = live?.balances ?? data?.balances;
+  const positionRecords = live?.positions ?? data?.positions;
+  const orderRecords = live?.orders ?? data?.orders;
+  const wallets = useMemo(() => walletRows(balances ?? []), [balances]);
   const primary = wallets[0];
-  const positions = useMemo(() => data?.positions ?? [], [data]);
-  const orders = useMemo(() => data?.orders ?? [], [data]);
+  const orders = useMemo(() => orderRecords ?? [], [orderRecords]);
+  const positions = useMemo(
+    () => positionViews(positionRecords ?? [], orders, stream.prices),
+    [positionRecords, orders, stream.prices]
+  );
+  const unrealized = useMemo(() => totalUnrealized(positions), [positions]);
 
   const positionMargin = useMemo(
     () => wallets.reduce((total, wallet) => total + wallet.positionMargin, 0),
     [wallets]
   );
+  const protectiveCount = useMemo(() => orders.filter(isProtectiveOrder).length, [orders]);
   const unfilled = useMemo(
-    () => orders.reduce((total, order) => total + Math.abs(readNumber(order, "unfilled_size", "size") ?? 0), 0),
+    () => orders
+      .filter(order => !isProtectiveOrder(order))
+      .reduce((total, order) => total + Math.abs(readNumber(order, "unfilled_size", "size") ?? 0), 0),
     [orders]
   );
 
@@ -141,6 +147,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
         title="Portfolio"
         actions={
           <>
+            <FeedState feed={stream.feed} autoRefresh={autoRefresh} />
             <span className="refresh-state">
               <SwapText>{refreshedAt ? `Updated ${formatClock(refreshedAt.getTime())}` : "Loading"}</SwapText>
             </span>
@@ -158,7 +165,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
         }
       />
 
-      {loading && !data ? (
+      {loading && !data && !live ? (
         <>
           <TileSkeleton count={4} />
           <Panel><TableSkeleton label="portfolio data" /></Panel>
@@ -190,14 +197,22 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
               icon={<TrendingUp />}
               label="Open positions"
               value={String(positions.length)}
-              note={positionMargin > 0 ? `${primary?.asset === "USD" ? formatMoney(positionMargin, { digits: 4 }) : quantity(positionMargin, 4)} margin committed` : "No margin committed"}
+              note={[
+                unrealized !== null ? `${formatMoney(unrealized, { signed: true })} unrealised` : null,
+                positionMargin > 0
+                  ? `${primary?.asset === "USD" ? formatMoney(positionMargin, { digits: 4 }) : quantity(positionMargin, 4)} margin committed`
+                  : "No margin committed"
+              ].filter(Boolean).join(" · ")}
             />
             <Tile
               roll
               icon={<Clock3 />}
               label="Open orders"
               value={String(orders.length)}
-              note={unfilled > 0 ? `${quantity(unfilled, 2)} contracts unfilled` : "Nothing awaiting fill"}
+              note={[
+                unfilled > 0 ? `${quantity(unfilled, 2)} contracts unfilled` : null,
+                protectiveCount > 0 ? `${protectiveCount} protective ${protectiveCount === 1 ? "stop" : "stops"} armed` : null
+              ].filter(Boolean).join(" · ") || "Nothing awaiting fill"}
             />
           </div>
 
@@ -209,13 +224,13 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
 
           <PositionsPanel
             positions={positions}
-            onClose={row => {
-              const productId = readNumber(row, "product_id");
-              if (!productId) return;
+            feed={stream.feed}
+            onClose={view => {
+              if (!view.productId) return;
               setCloseTarget({
-                productId,
-                symbol: readText(row, "product_symbol", "symbol") ?? String(productId),
-                size: String(read(row, "size") ?? "")
+                productId: view.productId,
+                symbol: view.symbol,
+                size: String(readValue(view.record, "size") ?? "")
               });
             }}
           />
@@ -313,76 +328,75 @@ function Tile({ icon, label, value, note, meter, roll = false }: {
   );
 }
 
+/** Header badge: where the figures on this screen are coming from right now. */
+function FeedState({ feed, autoRefresh }: { feed: StreamFeed; autoRefresh: boolean }) {
+  const polling = autoRefresh ? `Polling every ${AUTO_REFRESH_MS / 1000}s` : "Manual refresh";
+  const label = feed === "live" ? "Live"
+    : feed === "syncing" ? "Syncing with Delta"
+      : feed === "unavailable" ? polling
+        : feed === "connecting" ? "Connecting" : `Reconnecting · ${polling.toLowerCase()}`;
+  return (
+    <span className={feed === "live" ? "market-feed-state" : "market-feed-state stale"} role="status">
+      <i aria-hidden="true" />
+      <SwapText>{label}</SwapText>
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Positions
  * ------------------------------------------------------------------ */
 
-function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onClose: (row: DeltaRecord) => void }) {
-  const { formatMoney } = useCurrency();
+const POSITION_COLUMNS = 8;
+
+function PositionsPanel({ positions, feed, onClose }: {
+  positions: PositionView[];
+  feed: StreamFeed;
+  onClose: (view: PositionView) => void;
+}) {
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = useCallback((key: string) => {
+    setExpanded(current => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
+
   return (
     <Panel>
       <PanelHeader
         icon={<TrendingUp />}
         title="Open positions"
-        meta={`${positions.length} live ${positions.length === 1 ? "contract" : "contracts"} on Delta`}
+        meta={`${positions.length} live ${positions.length === 1 ? "contract" : "contracts"} on Delta${feed === "live" ? " · streaming" : ""}`}
       />
       {positions.length ? (
         <div className="table-scroll mobile-card-list">
-          <table className="data-table mobile-card-table portfolio-card-table">
-            <caption className="visually-hidden">Live Delta positions with entry, margin, and liquidation detail</caption>
+          <table className="data-table mobile-card-table portfolio-card-table positions-table">
+            <caption className="visually-hidden">
+              Live Delta positions with notional, entry, mark and index prices, unrealised profit and loss, and protective orders
+            </caption>
             <thead>
               <tr>
                 <th scope="col">Contract</th>
                 <th scope="col">Side</th>
-                <th scope="col" className="numeric">Size</th>
+                <th scope="col" className="numeric">Notional / Qty</th>
                 <th scope="col" className="numeric">Entry</th>
-                <th scope="col" className="numeric">Margin</th>
-                <th scope="col" className="numeric">Liquidation</th>
-                <th scope="col" className="numeric">Buffer from entry</th>
-                <th scope="col" className="numeric">Realised P&amp;L</th>
+                <th scope="col" className="numeric">Mark / Index</th>
+                <th scope="col" className="numeric">Unrealised P&amp;L</th>
+                <th scope="col">TP / SL</th>
                 <th scope="col"><span className="visually-hidden">Actions</span></th>
               </tr>
             </thead>
-            <tbody>
-              {positions.map((row, index) => {
-                const symbol = readText(row, "product_symbol", "symbol") ?? `Product ${readNumber(row, "product_id") ?? index}`;
-                const size = readNumber(row, "size") ?? 0;
-                const entry = readNumber(row, "entry_price");
-                const liquidation = readNumber(row, "liquidation_price");
-                const margin = readNumber(row, "margin");
-                const realised = readNumber(row, "realized_pnl");
-                const long = size > 0;
-                // Distance between entry and the liquidation trigger. Stated
-                // against entry because the REST position payload carries no
-                // mark price, and inventing one would misstate live risk.
-                const buffer = entry && liquidation && entry > 0
-                  ? (Math.abs(entry - liquidation) / entry) * 100
-                  : null;
-                return (
-                  <tr key={`${symbol}-${index}`}>
-                    <th scope="row">{symbol}</th>
-                    <td data-label="Side"><span className={`side-tag ${long ? "buy" : "sell"}`}>{long ? "Long" : "Short"}</span></td>
-                    <td className="numeric" data-label="Size">{quantity(Math.abs(size), 0)}</td>
-                    <td className="numeric" data-label="Entry">{formatMoney(entry)}</td>
-                    <td className="numeric" data-label="Margin">{formatMoney(margin, { digits: 4 })}</td>
-                    <td className="numeric" data-label="Liquidation">{formatMoney(liquidation)}</td>
-                    <td className="numeric" data-label="Buffer from entry">
-                      {buffer === null
-                        ? EM_DASH
-                        : <span className={buffer < 5 ? "value negative" : buffer < 15 ? "value warning" : "value"}>{percent(buffer, 1)}</span>}
-                    </td>
-                    <td className="numeric" data-label="Realised P&L">
-                      {realised === null
-                        ? EM_DASH
-                        : <span className={realised >= 0 ? "value positive" : "value negative"}>{formatMoney(realised, { digits: 4, signed: true })}</span>}
-                    </td>
-                    <td className="row-action" data-label="Position actions">
-                      <button type="button" className="button ghost small" onClick={() => onClose(row)}>Close</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
+            {positions.map(view => (
+              <PositionRows
+                key={view.key}
+                view={view}
+                open={expanded.has(view.key)}
+                onToggle={toggle}
+                onClose={onClose}
+              />
+            ))}
           </table>
         </div>
       ) : (
@@ -397,6 +411,179 @@ function PositionsPanel({ positions, onClose }: { positions: DeltaRecord[]; onCl
   );
 }
 
+function pnlTone(value: number | null) {
+  return value === null || value === 0 ? "value" : value > 0 ? "value positive" : "value negative";
+}
+
+/**
+ * One position: the summary row and its disclosure row share a `<tbody>`, so
+ * the pair stays together on the mobile card layout and for assistive tech.
+ */
+function PositionRows({ view, open, onToggle, onClose }: {
+  view: PositionView;
+  open: boolean;
+  onToggle: (key: string) => void;
+  onClose: (view: PositionView) => void;
+}) {
+  const { formatMoney } = useCurrency();
+  const detailId = `position-detail-${view.key}`;
+  const nearLiquidation = view.liquidationDistance !== null && view.liquidationDistance < 15;
+  const lots = Math.abs(view.size);
+
+  return (
+    <tbody className="position-group t-acc" data-open={open}>
+      <tr className="position-row">
+        <th scope="row">
+          <button
+            type="button"
+            className="position-toggle"
+            aria-expanded={open}
+            aria-controls={detailId}
+            onClick={() => onToggle(view.key)}
+          >
+            <span className="t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
+            <span className="cell-stack">
+              <span>{view.symbol}</span>
+              {nearLiquidation && view.liquidationDistance !== null && (
+                <small className="value warning">Liquidation {percent(view.liquidationDistance, 1)} away</small>
+              )}
+            </span>
+            <span className="visually-hidden">{open ? "Hide details" : "Show details"}</span>
+          </button>
+        </th>
+        <td data-label="Side">
+          <span className={`side-tag ${view.side === "long" ? "buy" : "sell"}`}>{view.side === "long" ? "Long" : "Short"}</span>
+        </td>
+        <td className="numeric" data-label="Notional / Qty">
+          <span className="cell-stack">
+            <span>{view.units !== null ? `${quantity(view.units, 4)} ${view.underlying ?? ""}`.trim() : EM_DASH}</span>
+            <small>{view.size < 0 ? "-" : ""}{quantity(lots, 0)} {lots === 1 ? "lot" : "lots"}</small>
+          </span>
+        </td>
+        <td className="numeric" data-label="Entry">{formatMoney(view.entry)}</td>
+        <td className="numeric" data-label="Mark / Index">
+          <span className="cell-stack">
+            <span title={view.markSource === "snapshot" ? "Last account snapshot; live mark not received yet" : undefined}>
+              {view.mark !== null ? <AnimatedNumber value={formatMoney(view.mark)} minReplayMs={PRICE_REPLAY_MS} /> : EM_DASH}
+            </span>
+            <small>{view.index !== null ? <AnimatedNumber value={formatMoney(view.index)} minReplayMs={PRICE_REPLAY_MS} /> : EM_DASH}</small>
+          </span>
+        </td>
+        <td className="numeric" data-label="Unrealised P&L">
+          {view.unrealizedPnl === null ? EM_DASH : (
+            <span className={`cell-stack ${pnlTone(view.unrealizedPnl)}`}>
+              <AnimatedNumber value={formatMoney(view.unrealizedPnl, { signed: true })} minReplayMs={PRICE_REPLAY_MS} />
+              {view.unrealizedPercent !== null && <small>{signedPercent(view.unrealizedPercent, 2)}</small>}
+            </span>
+          )}
+        </td>
+        <td data-label="TP / SL">
+          <span className="cell-stack protective-summary">
+            <span><abbr title="Take profit">TP</abbr> {protectiveLabel(view.takeProfit, formatMoney)}</span>
+            <span><abbr title="Stop loss">SL</abbr> {protectiveLabel(view.stopLoss, formatMoney)}</span>
+          </span>
+        </td>
+        <td className="row-action" data-label="Position actions">
+          <button type="button" className="button ghost small" onClick={() => onClose(view)}>Close</button>
+        </td>
+      </tr>
+      <tr className="position-detail" id={detailId}>
+        <td colSpan={POSITION_COLUMNS}>
+          <div className="t-acc-panel" aria-hidden={!open}>
+            <div className="t-acc-panel-inner" inert={open ? undefined : true}>
+              <PositionDetail view={view} />
+            </div>
+          </div>
+        </td>
+      </tr>
+    </tbody>
+  );
+}
+
+type MoneyFormatter = ReturnType<typeof useCurrency>["formatMoney"];
+
+function protectiveLabel(order: ProtectiveOrder | null, formatMoney: MoneyFormatter) {
+  return order?.trigger != null ? formatMoney(order.trigger) : EM_DASH;
+}
+
+function protectiveItems(title: string, order: ProtectiveOrder | null, formatMoney: MoneyFormatter) {
+  const method = triggerMethodLabel(order?.method ?? null);
+  return [
+    { label: `${title} trigger`, value: order?.trigger != null ? `${formatMoney(order.trigger)}${method ? ` on ${method}` : ""}` : EM_DASH },
+    { label: `${title} limit`, value: order ? order.limit !== null ? formatMoney(order.limit) : "Market" : EM_DASH }
+  ];
+}
+
+function PositionDetail({ view }: { view: PositionView }) {
+  const { formatMoney } = useCurrency();
+  const money = (value: number | null, digits = 2) => formatMoney(value, { digits });
+  return (
+    <div className="position-detail-grid">
+      <section aria-label="Profit and loss">
+        <h3>P&amp;L</h3>
+        <DetailList items={[
+          {
+            label: "Unrealised",
+            value: view.unrealizedPnl === null ? EM_DASH : (
+              <span className={pnlTone(view.unrealizedPnl)}>
+                {formatMoney(view.unrealizedPnl, { signed: true })}
+                {view.unrealizedPercent !== null && ` (${signedPercent(view.unrealizedPercent, 2)})`}
+              </span>
+            )
+          },
+          {
+            label: view.isOption ? (view.size < 0 ? "Premium received" : "Premium paid") : "Entry value",
+            value: money(view.entryValue)
+          },
+          { label: "Realised cashflows", value: money(view.realizedCashflow) },
+          {
+            label: "Realised P&L",
+            value: view.realizedPnl === null ? EM_DASH
+              : <span className={pnlTone(view.realizedPnl)}>{formatMoney(view.realizedPnl, { signed: true })}</span>
+          }
+        ]} />
+      </section>
+      <section aria-label="Margin">
+        <h3>Margin{view.marginMode ? <StatusChip tone="neutral">{titleCase(view.marginMode)}</StatusChip> : null}</h3>
+        <DetailList items={[
+          { label: "Assigned margin", value: money(view.margin, 4) },
+          { label: "Effective leverage", value: view.effectiveLeverage !== null ? `${view.effectiveLeverage.toFixed(2)}x` : EM_DASH },
+          {
+            label: "Est. liquidation",
+            value: view.liquidation === null ? "N.A." : (
+              <>
+                {money(view.liquidation)}
+                {view.liquidationDistance !== null && (
+                  <span className={view.liquidationDistance < 5 ? "value negative" : view.liquidationDistance < 15 ? "value warning" : "value"}>
+                    {` · ${percent(view.liquidationDistance, 1)} from mark`}
+                  </span>
+                )}
+              </>
+            )
+          },
+          { label: "Closing fees reserved", value: money(view.commission, 4) }
+        ]} />
+      </section>
+      <section aria-label="Take profit and stop loss">
+        <h3>TP / SL</h3>
+        <DetailList items={[
+          ...protectiveItems("TP", view.takeProfit, formatMoney),
+          ...protectiveItems("SL", view.stopLoss, formatMoney)
+        ]} />
+      </section>
+      <section aria-label="Contract">
+        <h3>Contract</h3>
+        <DetailList items={[
+          { label: "Type", value: view.contractType ? titleCase(view.contractType.replace(/_options$/, " option")) : EM_DASH },
+          { label: "Strike", value: view.strike !== null ? money(view.strike) : EM_DASH },
+          { label: "Expiry", value: view.settlementTime ? formatDateTime(view.settlementTime) : EM_DASH },
+          { label: "Notional at index", value: money(view.notional) }
+        ]} />
+      </section>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Orders
  * ------------------------------------------------------------------ */
@@ -408,12 +595,12 @@ function OrdersPanel({ orders, onCancel }: { orders: DeltaRecord[]; onCancel: (r
       <PanelHeader
         icon={<Clock3 />}
         title="Open orders"
-        meta={`${orders.length} ${orders.length === 1 ? "order" : "orders"} awaiting fill or cancellation`}
+        meta={`${orders.length} ${orders.length === 1 ? "order" : "orders"} awaiting fill, trigger or cancellation`}
       />
       {orders.length ? (
         <div className="table-scroll mobile-card-list">
           <table className="data-table mobile-card-table portfolio-card-table">
-            <caption className="visually-hidden">Outstanding Delta orders</caption>
+            <caption className="visually-hidden">Outstanding Delta orders, including stop-loss and take-profit orders</caption>
             <thead>
               <tr>
                 <th scope="col">Contract</th>
@@ -433,20 +620,27 @@ function OrdersPanel({ orders, onCancel }: { orders: DeltaRecord[]; onCancel: (r
                 const size = Math.abs(readNumber(row, "size") ?? 0);
                 const unfilledSize = Math.abs(readNumber(row, "unfilled_size") ?? 0);
                 const filled = Math.max(0, size - unfilledSize);
-                const limitPrice = readNumber(row, "limit_price");
-                const average = readNumber(row, "average_fill_price");
+                const order = describeOrder(row);
                 const state = readText(row, "state") ?? "unknown";
                 const created = readText(row, "created_at");
+                // Delta's "pending" on a stop order means armed, not stuck.
+                const stateLabel = order.protective && state === "pending" ? "Awaiting trigger" : titleCase(state);
+                const method = triggerMethodLabel(order.triggerMethod);
                 return (
                   <tr key={readText(row, "id", "order_id") ?? index}>
                     <th scope="row">{symbol}</th>
                     <td data-label="Side"><span className={`side-tag ${side === "buy" ? "buy" : "sell"}`}>{side === "buy" ? "Buy" : "Sell"}</span></td>
-                    <td data-label="Type">{titleCase(readText(row, "order_type") ?? "—")}</td>
+                    <td data-label="Type">{order.typeLabel}</td>
                     <td className="numeric" data-label="Filled">{quantity(filled, 0)} / {quantity(size, 0)}</td>
                     <td className="numeric" data-label="Price">
-                      {limitPrice !== null ? formatMoney(limitPrice) : average !== null ? formatMoney(average) : "Market"}
+                      {order.protective && order.trigger !== null ? (
+                        <span className="cell-stack">
+                          <span>{formatMoney(order.trigger)}</span>
+                          <small>Trigger{method ? ` on ${method}` : ""}{order.limit !== null ? ` · limit ${formatMoney(order.limit)}` : ""}</small>
+                        </span>
+                      ) : order.limit !== null ? formatMoney(order.limit) : order.average !== null ? formatMoney(order.average) : "Market"}
                     </td>
-                    <td data-label="State"><StatusChip tone={orderTone(state)}>{titleCase(state)}</StatusChip></td>
+                    <td data-label="State"><StatusChip tone={orderTone(state)}>{stateLabel}</StatusChip></td>
                     <td data-label="Placed">{created ? relativeTime(created) : EM_DASH}</td>
                     <td className="row-action" data-label="Order actions">
                       <button type="button" className="button ghost small" onClick={() => onCancel(row)}>Cancel</button>
