@@ -362,7 +362,7 @@ export default function BtcMarketChart() {
     <SectionHeading
       title="Market analysis"
       actions={
-        <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
+        <button type="button" className="button secondary small" onClick={() => void load()} disabled={loading}>
           <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
         </button>
       }
