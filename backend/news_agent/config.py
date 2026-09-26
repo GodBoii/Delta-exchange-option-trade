@@ -15,7 +15,8 @@ AUTOMATION_MODEL_ID = MODEL_ID
 AUTOMATION_SESSION_TABLE = "automation_agent_sessions"
 SESSION_TABLE = "news_agent_sessions"
 DB_SCHEMA = "ai"
-DB_CREATE_SCHEMA = True
+# Migration 006 creates the schema; the analysis role may create tables in it but not schemas.
+DB_CREATE_SCHEMA = False
 HISTORY_RUNS = 2
 RECHECK_LEAD_SECONDS = 7 * 60
 RECHECK_TIMEOUT_SECONDS = 5 * 60
