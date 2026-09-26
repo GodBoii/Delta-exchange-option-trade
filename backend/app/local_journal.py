@@ -1,4 +1,4 @@
-"""PostgreSQL-backed exchange journal with the same dispatch contract as Convex."""
+"""PostgreSQL-backed exchange journal: identities commit before any order leaves the backend."""
 
 import json
 import re
@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from .errors import AppError
-from .order_journal import ConvexOrderJournal
+from .order_journal import OrderJournal
 
 CLIENT_ID = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
 POSITIVE_INTEGER = re.compile(r"^[1-9][0-9]*$")
@@ -40,12 +41,21 @@ def _page(rows: list[dict[str, Any]], limit: int, converter: Any, cursor_key: st
     }
 
 
-class LocalOrderJournal(ConvexOrderJournal):
+class LocalOrderJournal(OrderJournal):
     def __init__(self, pool: AsyncConnectionPool, account_id: str) -> None:
         self.pool = pool
         self.account_id = account_id
 
     async def call(self, path: str, args: dict[str, Any], *, query: bool = False) -> Any:
+        try:
+            return await self._dispatch(path, args)
+        except (psycopg.OperationalError, TimeoutError) as error:
+            # A lost connection leaves the operation's outcome unknown; callers treat it that way.
+            raise AppError(
+                503, "Trading journal unavailable; order outcome must be checked", "journal_unavailable"
+            ) from error
+
+    async def _dispatch(self, path: str, args: dict[str, Any]) -> Any:
         if path == "orderIntents:begin":
             return await self._begin(args)
         if path == "orderIntents:resolve":

@@ -6,17 +6,21 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-import httpx
-
 from .errors import AppError, DeltaOrderRejected
 
 
-class ConvexOrderJournal:
-    def __init__(self, url: str, secret: str, account_id: str, client: httpx.AsyncClient) -> None:
-        self.url = url.rstrip("/")
-        self.secret = secret
-        self.account_id = account_id
-        self.client = client
+class OrderJournal:
+    """Dispatch contract shared by journal storage backends.
+
+    Subclasses implement ``call`` for the named journal operations. This class owns the
+    order-identity rules: an identity is committed before dispatch, a known outcome is
+    replayed instead of resubmitted, and an unknown outcome is resolved only by lookup.
+    """
+
+    account_id: str
+
+    async def call(self, path: str, args: dict[str, Any], *, query: bool = False) -> Any:
+        raise NotImplementedError
 
     async def ingest_fills(self, fills: list[dict[str, Any]]) -> None:
         def amount(value: Any) -> str:
@@ -39,27 +43,6 @@ class ConvexOrderJournal:
         ]
         for offset in range(0, len(payload), 100):
             await self.call("exchangeFills:ingest", {"fills": payload[offset : offset + 100]})
-
-    async def call(self, path: str, args: dict[str, Any], *, query: bool = False) -> Any:
-        try:
-            response = await self.client.post(
-                f"{self.url}/api/{'query' if query else 'mutation'}",
-                json={
-                    "path": path,
-                    "args": {"secret": self.secret, "accountId": self.account_id, **args},
-                    "format": "json",
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            if not isinstance(data, dict) or data.get("status") != "success":
-                raise ValueError("Unconfirmed journal operation")
-            return data.get("value")
-        except (httpx.HTTPError, ValueError) as error:
-            # Do not include the request body or remote error payload: they may contain secrets.
-            raise AppError(
-                503, "Trading journal unavailable; order outcome must be checked", "journal_unavailable"
-            ) from error
 
     async def submit(
         self,

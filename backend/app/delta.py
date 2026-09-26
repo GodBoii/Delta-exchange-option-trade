@@ -13,7 +13,7 @@ import httpx
 from .config import Settings
 from .delta_events import DeltaEvents
 from .errors import AppError, DeltaOrderRejected
-from .order_journal import ConvexOrderJournal
+from .order_journal import OrderJournal
 
 
 class RequestBudget:
@@ -55,7 +55,7 @@ class DeltaClient:
         self.budget = budget or RequestBudget()
         self.events = events
         self.mark_max_age = getattr(settings, "delta_mark_max_age_seconds", 5.0)
-        self.order_journal: ConvexOrderJournal | None = None
+        self.order_journal: OrderJournal | None = None
 
     async def close(self) -> None:
         if self.release is not None:
