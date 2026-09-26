@@ -6,18 +6,16 @@ const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const apiWsOrigin = apiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const binanceApiOrigin = process.env.NEXT_PUBLIC_BINANCE_API_URL ?? "http://localhost:8001";
 const binanceWsOrigin = binanceApiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-const supabaseUrl = new URL(supabaseOrigin);
-const convexOrigin = process.env.NEXT_PUBLIC_CONVEX_URL
-  ? new URL(process.env.NEXT_PUBLIC_CONVEX_URL).origin : "";
-const convexWsOrigin = convexOrigin.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
+const apiUrl = new URL(apiOrigin);
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   images: {
+    // Agent charts are signed, short-lived links served by the trading API.
     remotePatterns: [{
-      protocol: supabaseUrl.protocol === "http:" ? "http" : "https",
-      hostname: supabaseUrl.hostname,
-      pathname: "/storage/v1/object/sign/**"
+      protocol: apiUrl.protocol === "http:" ? "http" : "https",
+      hostname: apiUrl.hostname,
+      pathname: "/api/charts/**"
     }]
   },
   async headers() {
@@ -29,7 +27,7 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-          { key: "Content-Security-Policy", value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ${supabaseOrigin} ${apiOrigin} ${apiWsOrigin} ${binanceApiOrigin} ${binanceWsOrigin} ${convexOrigin} ${convexWsOrigin} http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` }
+          { key: "Content-Security-Policy", value: `default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: ${apiOrigin}; connect-src 'self' ${supabaseOrigin} ${apiOrigin} ${apiWsOrigin} ${binanceApiOrigin} ${binanceWsOrigin} http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` }
         ]
       }
     ];
