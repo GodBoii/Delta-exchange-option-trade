@@ -115,7 +115,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
           <>
             <button
               type="button"
-              className="button ghost small"
+              className="button ghost small icon-only"
               onClick={() => void load()}
               disabled={loading || saving}
               aria-label="Reload capital policy"
