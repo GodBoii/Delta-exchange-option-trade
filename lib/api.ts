@@ -69,6 +69,12 @@ export async function apiOrigin() {
   }
 }
 
+/** Resolves a backend-relative path such as a signed chart link against the API origin. */
+export async function backendUrl(path: string) {
+  if (/^https?:\/\//.test(path)) return path;
+  return `${await apiOrigin()}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 /**
  * Authenticated JSON request. The Supabase access token is attached per call so
  * the backend can verify the caller; no Delta secret ever reaches the browser.

@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cleanAgentMarkdown } from "@/lib/agent-markdown";
 import type { AutomationOverview as AutomationOverviewData } from "@/lib/app-types";
-import { requestJson } from "@/lib/api";
+import { backendUrl, requestJson } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage, formatDateTime, percent, titleCase } from "@/lib/format";
 import {
@@ -26,7 +26,13 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      setOverview(await requestJson<AutomationOverviewData>("/api/automation/overview"));
+      const data = await requestJson<AutomationOverviewData>("/api/automation/overview");
+      // Chart links are signed paths on the trading backend, which may be a different origin.
+      const runs = await Promise.all(data.runs.map(async run => ({
+        ...run,
+        charts: await Promise.all(run.charts.map(async chart => ({ ...chart, url: await backendUrl(chart.url) }))),
+      })));
+      setOverview({ ...data, runs });
       setError("");
     } catch (loadError) {
       setError(errorMessage(loadError, "Automation status could not be loaded."));
