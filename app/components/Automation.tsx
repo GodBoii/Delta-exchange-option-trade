@@ -89,7 +89,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
         title="Automation"
         actions={
           <>
-            <button type="button" className="button secondary" onClick={() => void load()} disabled={loading || running}>
+            <button type="button" className="button secondary small" onClick={() => void load()} disabled={loading || running}>
               <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
             </button>
             {isOwner && <button type="button" className="button primary" onClick={() => void runNow()} disabled={loading || running || !overview?.enabledStrategies}>
