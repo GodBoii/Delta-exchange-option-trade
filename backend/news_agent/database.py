@@ -6,7 +6,7 @@ from .config import NewsAgentSettings
 
 
 def create_session_db(settings: NewsAgentSettings | None = None, *, session_table: str | None = None) -> BaseDb:
-    """Create the Agno session database backed directly by Supabase PostgreSQL."""
+    """Create the Agno session store in the ``ai`` schema of the local PostgreSQL server."""
     settings = settings or NewsAgentSettings.load()
     return PostgresDb(
         db_url=settings.require_database_url(),

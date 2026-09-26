@@ -247,8 +247,8 @@ def _database_service_error(error: Exception) -> ServiceError:
         code = "news_database_not_configured"
     else:
         message = (
-            "News session storage cannot connect to Supabase. Verify SUPABASE_DB_URL uses the Session pooler URI "
-            "for this project and the current database password."
+            "News session storage cannot connect to the local PostgreSQL server. Verify AI_DATABASE_URL and the "
+            "analysis role password."
         )
         code = "news_database_unavailable"
     return ServiceError(503, message, code)
@@ -572,8 +572,8 @@ async def health() -> dict[str, Any]:
     return {
         "success": True,
         "service": "news-analyzer",
-        "database": "supabase-postgres",
-        "databaseConfigured": bool(settings.supabase_db_url),
+        "database": "local-postgres",
+        "databaseConfigured": bool(settings.database_url),
         "databaseReady": database_ready,
         "databaseError": database_error,
         "databaseSchema": settings.db_schema,
@@ -596,7 +596,7 @@ async def list_news_sessions(userId: UserQuery) -> dict[str, Any]:
 async def analyze_news(body: NewsAnalysisRequest, request: Request) -> dict[str, Any]:
     if not settings.openrouter_api_key:
         raise ServiceError(503, "News analysis is temporarily unavailable", "news_agent_not_configured")
-    if not settings.supabase_db_url:
+    if not settings.database_url:
         raise ServiceError(
             503,
             "News analysis is temporarily unavailable",
@@ -616,7 +616,7 @@ async def analyze_news(body: NewsAnalysisRequest, request: Request) -> dict[str,
 async def analyze_automation(body: AutomationAnalysisRequest, request: Request) -> dict[str, Any]:
     if not settings.openrouter_api_key:
         raise ServiceError(503, "Automation analysis is temporarily unavailable", "automation_agent_not_configured")
-    if not settings.supabase_db_url:
+    if not settings.database_url:
         raise ServiceError(503, "Automation storage is temporarily unavailable", "automation_database_not_configured")
     try:
         return await asyncio.to_thread(
