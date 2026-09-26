@@ -11,9 +11,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from .errors import AppError
-from .local_application_data import LocalApplicationData
+from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
-from .runtime_store import ConvexRuntimeStore
 
 TABLES = {
     "strategies": "strategies",
@@ -112,6 +111,75 @@ def _project(rows: list[dict[str, Any]], columns: str) -> list[dict[str, Any]]:
     return [{name: row.get(name) for name in names} for row in rows]
 
 
+def _sort_and_project(rows: list[dict[str, Any]], params: dict[str, str]) -> list[dict[str, Any]]:
+    for ordering in reversed(params.get("order", "").split(",")):
+        if not ordering:
+            continue
+        field, _, direction = ordering.partition(".")
+        rows.sort(key=lambda row: (row.get(field) is not None, row.get(field) or ""), reverse=direction == "desc")
+    offset = int(params.get("offset", "0"))
+    limit = int(params.get("limit", str(len(rows))))
+    return _project(rows[offset : offset + limit], params.get("select", "*"))
+
+
+class AutomationSettings:
+    """Per-user automation preferences stored on ``trade.users`` plus the shared analysis row."""
+
+    fields = ("enabled", "model_id", "minimum_follow_up_minutes", "maximum_agent_runs_per_day")
+
+    def __init__(self, data: LocalApplicationData) -> None:
+        self.data = data
+
+    async def select(self, params: dict[str, str], *, raw: bool = False) -> list[dict[str, Any]]:
+        user_filter = params.get("user_id", "")
+        if user_filter.startswith("eq."):
+            one = await self.data.request("settings:automationForUser", {"userId": user_filter[3:]})
+            rows = [one] if one is not None else []
+        else:
+            enabled_filter = params.get("enabled", "")
+            enabled: bool | None = None
+            if enabled_filter in {"eq.true", "neq.false"}:
+                enabled = True
+            elif enabled_filter in {"eq.false", "neq.true"}:
+                enabled = False
+            rows = []
+            cursor = None
+            while True:
+                page = await self.data.request(
+                    "settings:automationPage",
+                    {
+                        "paginationOpts": {"numItems": 100, "cursor": cursor},
+                        **({"enabled": enabled} if enabled is not None else {}),
+                    },
+                )
+                rows.extend(page["page"])
+                if page["isDone"]:
+                    break
+                cursor = page["continueCursor"]
+            if user_filter != "neq.global":
+                global_settings = await self.data.request("settings:automationForUser", {"userId": "global"})
+                if global_settings:
+                    rows.append(global_settings)
+        for field, expression in params.items():
+            if field in OPTIONS:
+                continue
+            op, _, value = expression.partition(".")
+            if op not in {"eq", "neq"}:
+                raise AppError(500, "Unsupported settings filter", "unsupported_record_query")
+            rows = [row for row in rows if (str(row.get(field)).lower() == value.lower()) == (op == "eq")]
+        return rows if raw else _sort_and_project(rows, params)
+
+    async def write(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        current = await self.select({"user_id": f"eq.{payload['user_id']}"})
+        value = {**DEFAULT_AUTOMATION, **(current[0] if current else {}), **payload}
+        row = await self.data.request(
+            "settings:saveAutomation",
+            {"userId": payload["user_id"], "value": {key: value[key] for key in self.fields}},
+            mutation=True,
+        )
+        return [row]
+
+
 def _timestamp(value: Any, fallback: datetime | None = None) -> datetime | None:
     if value is None:
         return fallback
@@ -126,11 +194,11 @@ class LocalRuntimeStore:
         self.pool = pool
         self.data = LocalApplicationData(pool)
         self.data.control = LocalControl(self)
-        self.settings_adapter = ConvexRuntimeStore(self.data)
+        self.automation_settings = AutomationSettings(self.data)
 
     async def select(self, table: str, params: dict[str, str], *, raw: bool = False) -> list[dict[str, Any]]:
         if table == "automation_settings":
-            return await self.settings_adapter.select(table, params, raw=raw)
+            return await self.automation_settings.select(params, raw=raw)
         if table not in TABLES:
             raise AppError(500, "Unknown local record table", "unsupported_record_query")
         where, values = _filters(table, params)
@@ -228,12 +296,11 @@ class LocalRuntimeStore:
                     **item[0], "status": "available", "strategy_id": None, "proposal_id": None,
                     "reserved_at": None, "released_at": datetime.now(UTC).isoformat(),
                 }, existing=True)
-            await connection.execute("select trade.mark_closed_recovery(%s)", (row["id"],))
         return row
 
     async def write(self, table: str, payload: dict[str, Any], conflict: str | None = None) -> list[dict[str, Any]]:
         if table == "automation_settings":
-            return await self.settings_adapter.write(table, payload, conflict)
+            return await self.automation_settings.write(payload)
         if table not in TABLES:
             raise AppError(500, "Unknown local record table", "unsupported_record_query")
         now = datetime.now(UTC).isoformat()
@@ -489,29 +556,30 @@ class LocalRuntimeStore:
 
     async def _cancel_followups(self, args: dict[str, Any]) -> int:
         count = 0
+        fixed = ["asia_session", "london_session", "new_york_session", "pre_expiry", "midnight_review"]
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("select data from trade.analysis_jobs where status='scheduled' for update")
-            pending = [record["data"] for record in await cursor.fetchall()]
-            fixed = {"asia_session", "london_session", "new_york_session", "pre_expiry", "midnight_review"}
-            for row in pending:
-                if row.get("trigger") != "agent_follow_up":
-                    continue
-                if any(
-                    other["user_id"] == row["user_id"]
-                    and other.get("trigger") in fixed
-                    and _timestamp(other["scheduled_for"]) <= _timestamp(row["scheduled_for"])
-                    for other in pending
-                ):
-                    await self._save(
-                        connection,
-                        "automation_agent_runs",
-                        {
-                            **row,
-                            "status": "cancelled",
-                            "completed_at": datetime.now(UTC).isoformat(),
-                            "error": "A fixed session review is already scheduled first",
-                        },
-                        existing=True,
-                    )
-                    count += 1
+            # Indexed per-owner check; cost grows with redundant follow-ups, not with every scheduled run.
+            await cursor.execute(
+                """select f.data from trade.analysis_jobs f
+                   where f.status='scheduled' and f.data->>'trigger'='agent_follow_up'
+                     and exists (
+                       select 1 from trade.analysis_jobs x
+                       where x.status='scheduled' and x.owner_id=f.owner_id
+                         and x.data->>'trigger' = any(%s) and x.scheduled_for <= f.scheduled_for)
+                   for update of f""",
+                (fixed,),
+            )
+            for record in await cursor.fetchall():
+                await self._save(
+                    connection,
+                    "automation_agent_runs",
+                    {
+                        **record["data"],
+                        "status": "cancelled",
+                        "completed_at": datetime.now(UTC).isoformat(),
+                        "error": "A fixed session review is already scheduled first",
+                    },
+                    existing=True,
+                )
+                count += 1
         return count
