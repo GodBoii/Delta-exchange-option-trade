@@ -175,7 +175,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
       <SectionHeading
         title="Strategy history"
         actions={
-          <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
+          <button type="button" className="button secondary small" onClick={() => void load()} disabled={loading}>
             <IconSwap showB={loading} a={<RefreshCw />} b={<RefreshCw className="spin" />} />
             Refresh
           </button>
