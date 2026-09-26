@@ -26,7 +26,7 @@ from .charts import (
     render_volume_chart,
 )
 from .market import MarketIntelligenceTools
-from .storage import ChartArtifact, SupabaseChartStorage
+from .storage import ChartArtifact, ChartStorage
 from .tools import AutomationStrategyTools, DropStrategyTools, read_parent_run_context, save_market_snapshot
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def run_automation_team(
         news_result = news_future.result()
     chart_artifacts = _chart_artifacts(market_packet)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
-    stored_charts = SupabaseChartStorage(settings).upload_run_charts(
+    stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
         charts=chart_artifacts,
@@ -253,6 +253,8 @@ def run_automation_team(
             add_datetime_to_context=True,
             timezone_identifier="Asia/Kolkata",
             store_events=True,
+            # Charts live in ai.chart_images; sessions keep text, not base64 image copies.
+            store_media=False,
             tool_call_limit=24,
             debug_mode=False,
             telemetry=False,
@@ -260,7 +262,9 @@ def run_automation_team(
 
         images = [
             Image(
-                url=chart.signed_url,
+                content=chart.content,
+                format="png",
+                mime_type="image/png",
                 id=chart.id,
                 alt_text=chart.alt_text,
                 detail="high",
@@ -328,7 +332,7 @@ def run_activation_recheck(
     market_packet = market_tools.collect_btc_market_packet()
     chart_artifacts = _recheck_chart_artifacts(market_packet)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
-    stored_charts = SupabaseChartStorage(settings).upload_run_charts(
+    stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
         charts=chart_artifacts,
@@ -400,7 +404,10 @@ def run_activation_recheck(
         telemetry=False,
     )
     images = [
-        Image(url=chart.signed_url, id=chart.id, alt_text=chart.alt_text, detail="high") for chart in stored_charts
+        Image(
+            content=chart.content, format="png", mime_type="image/png",
+            id=chart.id, alt_text=chart.alt_text, detail="high",
+        ) for chart in stored_charts
     ]
     stored_session_id = f"activation-recheck:{user_id}:{session_id}"
     response = agent.run(
