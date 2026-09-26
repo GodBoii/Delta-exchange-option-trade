@@ -1,22 +1,22 @@
 # Delta Strategy Desk
 
-A client-facing Delta Exchange India options strategy workstation with a Next.js frontend, Supabase Auth/Postgres/Vault, and a Dockerized Python FastAPI trading backend.
+A client-facing Delta Exchange India options strategy workstation with a Next.js frontend, Supabase Auth, and a Dockerized Python FastAPI trading backend backed by PostgreSQL on the Ubuntu server.
 
 ## Architecture
 
 - Next.js runs on Vercel at `https://www.tradecognition.online`.
-- Supabase provides Auth, profiles, AI reports, Agno sessions and private chart storage.
-- Convex stores account settings, encrypted Delta credentials, the strategy catalog, global analysis jobs and trading state.
+- Supabase provides login and the `profiles` row only.
+- PostgreSQL on the Ubuntu server (`trade-postgres`) stores everything else. The `trade` schema holds accounts, encrypted Delta credentials, the strategy library, analysis jobs and trading state. The `ai` schema holds analysis reports, chart images and Agno sessions.
 - The Ubuntu FastAPI backend owns exchange execution. The private Agno service runs one shared research workflow per review event.
 - Public Binance and Delta market data is collected once and shared with clients.
 - Account balances, position sizing, exchange orders and fills remain private to each account.
 
-The current storage and deployment contract is in [Global analysis cutover](docs/22-global-analysis-cutover.md).
-Earlier migration instructions below describe the original installation. Do not replay them against the cut-over database.
+The storage layout and the move off Convex and Supabase storage are in [Local storage](docs/25-local-only-storage.md).
+Supabase SQL migrations below describe the original installation. Only `profiles` is still read from Supabase.
 
-The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies the token with Supabase before accessing any user-scoped data.
+The frontend never receives a Delta secret or Supabase service-role key. It sends the user's Supabase access token to the Python API, which verifies its signature locally against the project's published signing keys before accessing any user-scoped data.
 
-The frontend also supports a backend-optional design mode. Supabase sign-in, the persistent saved-strategy library, strategy configuration, automatic browser recovery storage, and JSON export/import work without the Python service. Delta connection, live contract preview, scheduling, execution, dashboard data, and run history require the local Docker backend.
+Without the Python service, Supabase sign-in, strategy configuration, browser draft storage and JSON export/import still work. The saved library is read-only then. Delta connection, live contract preview, scheduling, execution, dashboard data and run history need the backend.
 
 ## Repository layout
 
@@ -78,9 +78,7 @@ Migration `009` replaces the original per-account built-in strategies with one s
 
 Then apply migrations `010` through `018` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, `016` links follow-ups to the run that requested them so they receive its full final response, `017` adds the pre-expiry review, and `018` unifies every agent on one OpenRouter model. Apply later migrations in order; migration `026` moves current and future agent runs to `xiaomi/mimo-v2.6-pro`.
 
-After deploying the current engine, run `python -m scripts.seed_default_strategies` from `backend` to add the seven unhedged templates, bringing the active built-in library to thirteen. This insert-only command preserves existing definitions and history. The additions cover single-sided premium selling, ITM directional positions, and next-day-expiry range/expansion trades. See [strategy coverage](docs/14-automated-strategy-system.md#additional-built-in-market-choices).
-
-The current Convex-owned library also supports two bounded-risk credit spreads. After deploying its new library mutation and backend, run `python -m scripts.seed_credit_spreads --apply` from `backend` to add them, bringing the active BTC catalog to fifteen. This command only creates missing templates and leaves saved versions, active runs and historical snapshots untouched. See [spread gates and rollout checks](docs/22-defined-risk-credit-spreads.md).
+Shared strategy templates live in `trade.saved_strategies`. From `backend`, `python -m scripts.shared_library seed` lists canonical templates that are missing, `descriptions` lists description drift, and `take-profit` sets a 50% take profit. Each prints the plan; add `--apply` to commit. Updates increment the template version, and `take-profit --apply` refuses while runs are open. See [spread gates and rollout checks](docs/22-defined-risk-credit-spreads.md).
 
 ### Apply the account phone-number migration
 
@@ -116,17 +114,11 @@ Compose creates the requested containers:
 
 - `Delta-exchange`: existing authenticated Delta trading API and scheduler.
 - `Binace`: public Binance `BTCUSDT` Spot analysis API. The spelling intentionally matches the requested container name.
-- `news-analyzer`: private Agno/OpenRouter research service with Supabase PostgreSQL session persistence.
+- `news-analyzer`: private Agno/OpenRouter research service. It stores sessions, reports and charts in the `ai` schema.
+- `trade-postgres`: PostgreSQL 17 on the private `trade-data` network, with no host port.
+- `trade-postgres-backup`: a daily `pg_dump` into `data/backups`, kept for seven days.
 
-For News Analyzer persistence, copy the **Session pooler** URI from the same
-Supabase project used by the application into
-`backend/.env` as `SUPABASE_DB_URL`. Shared-pooler usernames use
-`postgres.<project-ref>`; a project mismatch or stale database password will
-make `databaseReady` false at `GET /health`. By default, Agno stores the
-session row in `ai.news_agent_sessions`. Non-secret News Analyzer settings are
-code constants in `backend/news_agent/config.py` and
-`backend/news_agent/tools.py`; `backend/.env` contains only the OpenRouter key
-and Supabase database URI.
+Create `deploy/local-postgres.env` from its example and set `LOCAL_DATABASE_URL`, `AI_DATABASE_URL`, `CREDENTIAL_ENCRYPTION_KEY` and `ANALYSIS_SERVICE_SECRET` in `backend/.env` (see `backend/.env.example`). The trading writer applies migrations and creates or updates the analysis and reader roles at startup. The analysis role can read and write only the `ai` schema; trading changes go through the writer's internal API. `databaseReady` at the analyzer's `GET /health` shows whether it can reach its schema.
 
 The market service exposes:
 
@@ -196,7 +188,6 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 NEXT_PUBLIC_SITE_URL=https://www.tradecognition.online
 NEXT_PUBLIC_API_URL=https://api.tradecognition.online
 NEXT_PUBLIC_BINANCE_API_URL=https://market-api.tradecognition.online
-NEXT_PUBLIC_CONVEX_URL=https://your-production-deployment.convex.cloud
 ```
 
 Do not add `SUPABASE_SERVICE_ROLE_KEY`, Delta API secrets, or the Cloudflare tunnel token to Vercel. Redeploy the production deployment after changing any `NEXT_PUBLIC_` value because Next.js embeds these values during the build.
@@ -219,7 +210,7 @@ https://www.tradecognition.online/auth/callback
 
 Deploy all three application services to an always-on Docker host. The Delta service still needs a stable outbound public IP because the tunnel changes inbound routing only. On the server, create the ignored `.env.local` containing the server variables.
 
-Compose waits for the news analyzer's health check before starting the Delta backend. The automation scheduler also checks analyzer readiness before claiming a due run, leaving it scheduled during temporary outages. The existing ten-minute lateness limit still applies. Manual runs return a temporary-unavailable message before creating a run if the analyzer is not ready.
+Every application service waits for PostgreSQL to report healthy. The automation scheduler also checks analyzer readiness before claiming a due run, leaving it scheduled during temporary outages. The existing ten-minute lateness limit still applies. Manual runs return a temporary-unavailable message before creating a run if the analyzer is not ready.
 
 After pulling code, use `docker compose up -d --build` to rebuild and apply the service configuration. Restarting or recreating the analyzer during an active analysis can still interrupt that run; readiness checks cannot preserve work inside a stopped process. Deploy between analyses. A disconnected analysis request is not automatically resubmitted because it may already have recorded a strategy or follow-up. The backend checks for a committed outcome before marking it failed.
 
@@ -245,16 +236,14 @@ https://tradecognition.online
 https://www.tradecognition.online
 ```
 
-Set `CONVEX_URL` to the same production deployment and give `CONVEX_SYNC_SECRET` the same random value in Docker and that Convex deployment. `CONVEX_DEPLOY_KEY` belongs only in the deployment pipeline.
-
-Run exactly one `Delta-exchange` container and one Uvicorn worker. Multiple scheduler replicas require a separate database lease design. `Binace` is isolated from Supabase and Delta credentials and only accesses public market endpoints. `news-analyzer` owns Agno, OpenRouter, and `SUPABASE_DB_URL`; it does not import or call Delta or Binance.
+Run exactly one trading writer (`Delta-exchange`, one Uvicorn worker); it owns the scheduler and exchange orders. Read traffic scales out with `docker compose --profile read-replicas up -d`: readers use the read-only role, reject writes, and receive the same change notifications through PostgreSQL `LISTEN`. `Binace` only accesses public market endpoints. `news-analyzer` owns Agno and OpenRouter and never sees Delta credentials.
 
 Add the backend server's static public IP to the Delta API key allowlist. Vercel's IP is not used for Delta requests.
 
 ## Scheduling behavior
 
 1. The authenticated user creates or selects a reusable definition from `saved_strategies`.
-2. Builder changes are saved to Supabase; the browser also keeps a recovery copy.
+2. Builder changes are saved to the backend library; the browser also keeps a draft copy.
 3. The user previews and schedules the selected definition.
 4. A separate immutable run is inserted into `strategies` and linked through `saved_strategy_id`.
 5. The Python scheduler finds due entries every two seconds.
@@ -270,7 +259,7 @@ Every scheduled strategy is a separate run identified by its generated UUID. Str
 
 ## Saved strategy library
 
-- **Current strategy** switches between reusable definitions already saved in Supabase.
+- **Current strategy** switches between reusable definitions already saved in the library.
 - **New strategy** saves a fresh short-straddle definition with new entry/exit times and selects it without modifying the previous strategy.
 - Builder edits are saved automatically after a short delay. **Save strategy** is available for an immediate explicit save.
 - Switching or scheduling first flushes pending changes, so the selected definition and the scheduled run use the same snapshot.
@@ -287,14 +276,14 @@ Delta cannot atomically submit option legs with different product IDs. A later l
 On `https://delta-exchange-option-trade.vercel.app` without the Docker service:
 
 - Email/password and configured Google authentication continue to work through Supabase.
-- Saved strategies can be created, edited, deleted, and switched through Supabase RLS.
+- The saved library is read-only until the backend returns.
 - The full leg and strategy builder remains usable.
 - The current strategy is also cached automatically in browser storage for recovery.
 - Use **Export** to download a strategy JSON file.
 
 At home, start Docker and the local frontend, sign in, and use **Import** to load that JSON file. You can then connect Delta, preview live contracts, schedule, or execute.
 
-The Supabase strategy library follows the signed-in user across origins and devices. Browser recovery storage is still isolated by website origin; export/import remains available for portable files and offline recovery.
+The strategy library follows the signed-in user across origins and devices. Browser draft storage is isolated by website origin; export/import remains available for portable files.
 
 ## Validation
 

@@ -1,5 +1,7 @@
 # Global analysis and storage cutover
 
+> Superseded: Convex and the recovery mirror are retired. See [Local storage](25-local-only-storage.md).
+
 Deployed September 23, 2026. This supersedes the storage instructions in documents 17–19.
 
 ## Storage

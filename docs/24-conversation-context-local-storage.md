@@ -1,5 +1,7 @@
 # Conversation context: Trade Cognition local storage migration
 
+> Superseded: Convex and the recovery mirror are retired. See [Local storage](25-local-only-storage.md).
+
 This file is a handoff for a new coding agent. Read it before changing the storage architecture, deploying to Ubuntu, or touching the Convex projects.
 
 ## User’s original goal

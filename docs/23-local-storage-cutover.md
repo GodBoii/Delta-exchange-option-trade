@@ -1,5 +1,7 @@
 # Trade Cognition local storage cutover
 
+> Superseded: Convex and the recovery mirror are retired. See [Local storage](25-local-only-storage.md).
+
 This runbook applies only to Trade Cognition. Supabase Auth, Agno sessions, analysis reports and chart storage stay where they are. PostgreSQL on Ubuntu becomes authoritative. Convex keeps a delayed, private recovery copy and sanitized read-only views. The cutover requires the existing trading writer to be paused with no open exchange exposure.
 
 ## Current stop conditions
