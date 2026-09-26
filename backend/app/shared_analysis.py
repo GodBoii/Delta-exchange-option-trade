@@ -6,9 +6,7 @@ SHARED_USER_ID = "global"
 
 
 def enabled(settings: Any) -> bool:
-    return bool(
-        getattr(settings, "convex_runtime_enabled", False) and getattr(settings, "shared_analysis_enabled", True)
-    )
+    return bool(getattr(settings, "shared_analysis_enabled", True))
 
 
 def history_filter(settings: Any, user_id: str) -> str:

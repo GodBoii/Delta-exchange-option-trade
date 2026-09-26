@@ -1,5 +1,4 @@
 from functools import lru_cache
-from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,20 +10,19 @@ class Settings(BaseSettings):
     supabase_url: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_URL")
     supabase_publishable_key: str = Field(validation_alias="NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
     supabase_service_role_key: str = Field(validation_alias="SUPABASE_SERVICE_ROLE_KEY")
-    application_storage: Literal["convex", "local"] = "convex"
-    local_database_url: str | None = None
-    local_reader_database_url: str | None = None
-    recovery_mirror_enabled: bool = True
-    convex_url: str | None = Field(default=None, validation_alias="CONVEX_URL")
-    convex_sync_secret: str | None = Field(default=None, validation_alias="CONVEX_SYNC_SECRET")
-    convex_trading_secret: str | None = Field(default=None, validation_alias="CONVEX_TRADING_SECRET")
-    convex_order_journal_enabled: bool = False
-    convex_library_enabled: bool = False
-    convex_accounts_enabled: bool = False
-    convex_runtime_enabled: bool = False
+    local_database_url: str = Field(validation_alias="LOCAL_DATABASE_URL")
+    local_reader_database_url: str | None = Field(default=None, validation_alias="LOCAL_READER_DATABASE_URL")
+    # The writer keeps the analysis service's least-privilege role in sync with this URL.
+    ai_database_url: str | None = Field(default=None, validation_alias="AI_DATABASE_URL")
+    database_pool_size: int = Field(default=20, ge=2, le=200)
+    # Fernet key for Delta API credentials at rest. Changing it makes stored credentials unreadable.
+    credential_encryption_key: str = Field(validation_alias="CREDENTIAL_ENCRYPTION_KEY")
+    # Authenticates the analysis service and signs short-lived chart links.
+    analysis_service_secret: str = Field(min_length=16, validation_alias="ANALYSIS_SERVICE_SECRET")
     shared_analysis_enabled: bool = True
-    convex_credential_key: str | None = None
-    analysis_service_secret: str | None = None
+    auth_profile_cache_seconds: float = Field(default=60, ge=0, le=3600)
+    chart_retention_days: int = Field(default=90, ge=1, le=3650)
+    chart_link_seconds: int = Field(default=3_600, ge=60, le=86_400)
     delta_events_enabled: bool = False
     delta_public_ws_url: str = "wss://public-socket.india.delta.exchange"
     delta_private_ws_url: str = "wss://socket.india.delta.exchange"
@@ -55,35 +53,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     @model_validator(mode="after")
-    def validate_convex_cutover(self) -> "Settings":
-        if self.application_storage == "local":
-            if not self.local_database_url:
-                raise ValueError("Local application storage requires LOCAL_DATABASE_URL")
-            if not self.trading_writer_enabled and not self.local_reader_database_url:
-                raise ValueError("Local read replicas require LOCAL_READER_DATABASE_URL")
-            if not self.analysis_service_secret:
-                raise ValueError("Local application storage requires ANALYSIS_SERVICE_SECRET")
-            if self.recovery_mirror_enabled and (not self.convex_url or not self.convex_trading_secret):
-                raise ValueError("Local application storage requires Convex recovery-mirror credentials")
-            if not all((self.convex_runtime_enabled, self.convex_library_enabled,
-                        self.convex_accounts_enabled, self.convex_order_journal_enabled)):
-                raise ValueError("Local application storage requires the complete trading cutover")
-            return self
-        if self.convex_runtime_enabled and not all(
-            (self.convex_library_enabled, self.convex_accounts_enabled, self.convex_order_journal_enabled)
-        ):
-            raise ValueError("Convex runtime requires library, account and order-journal storage together")
-        if any(
-            (
-                self.convex_runtime_enabled,
-                self.convex_library_enabled,
-                self.convex_accounts_enabled,
-                self.convex_order_journal_enabled,
-            )
-        ) and not all((self.convex_url, self.convex_trading_secret)):
-            raise ValueError("Enabled Convex storage requires its URL and trading service secret")
-        if self.convex_accounts_enabled and not self.convex_credential_key:
-            raise ValueError("Convex account storage requires CONVEX_CREDENTIAL_KEY")
+    def validate_database_roles(self) -> "Settings":
+        if not self.trading_writer_enabled and not self.local_reader_database_url:
+            raise ValueError("Read replicas require LOCAL_READER_DATABASE_URL")
         return self
 
     @field_validator("scheduler_poll_seconds")
@@ -104,6 +76,13 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip().rstrip("/") for origin in self.frontend_origins.split(",") if origin.strip()]
+
+    @property
+    def database_url(self) -> str:
+        """The writer uses its own role; read replicas connect with the read-only role."""
+        if self.trading_writer_enabled:
+            return self.local_database_url
+        return self.local_reader_database_url or self.local_database_url
 
 
 @lru_cache
