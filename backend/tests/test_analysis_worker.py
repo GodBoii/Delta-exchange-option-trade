@@ -34,7 +34,7 @@ async def test_recheck_endpoint_assigns_a_five_minute_worker_deadline(monkeypatc
         return {"success": True}
 
     monkeypatch.setattr(main, "run_in_worker", worker)
-    monkeypatch.setattr(main, "settings", SimpleNamespace(openrouter_api_key="test", supabase_db_url="test"))
+    monkeypatch.setattr(main, "settings", SimpleNamespace(openrouter_api_key="test", database_url="test"))
     request = SimpleNamespace(state=SimpleNamespace(trace_id="test"))
     body = SimpleNamespace(trigger="activation_recheck")
     assert await main.analyze_automation(body, request) == {"success": True}

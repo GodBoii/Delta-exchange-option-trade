@@ -1,12 +1,10 @@
 import json
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
-import httpx
 import pytest
 
 from app.automation import automation_overview, build_account_context, verified_decision_report
@@ -24,7 +22,6 @@ from automation_agent.charts import (
     render_volume_chart,
 )
 from automation_agent.market import compact_btc_market_packet
-from automation_agent.storage import ChartArtifact, SupabaseChartStorage
 from automation_agent.tools import AutomationStrategyTools, materialize_live_definition
 from news_agent.config import NewsAgentSettings
 
@@ -242,8 +239,17 @@ def test_tool_does_not_claim_rejection_when_commit_status_cannot_be_read(monkeyp
 
 @pytest.mark.asyncio
 async def test_automation_overview_separates_history_from_upcoming_runs() -> None:
+    class Charts:
+        async def available(self, run_ids: list[str]) -> set[tuple[str, str]]:
+            assert run_ids == ["completed"]
+            return {("completed", "btc-daily")}
+
+        def signed_path(self, run_id: str, chart_id: str) -> str:
+            return f"/api/charts/{run_id}/{chart_id}?expires=1&signature=s"
+
     class Database:
         run_queries: list[dict] = []
+        charts = Charts()
 
         async def select(self, table: str, params: dict) -> list[dict]:
             if table == "automation_settings":
@@ -254,7 +260,10 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
                 return []
             if table == "automation_market_snapshots":
                 assert params["select"] == "id,chart_images:market_json->chartImages"
-                return [{"id": "snapshot-1", "chart_images": []}]
+                return [{"id": "snapshot-1", "run_id": "completed", "chart_images": [
+                    {"id": "btc-daily", "label": "BTC daily", "runId": "completed"},
+                    {"id": "btc-expired", "label": "Removed by retention", "runId": "completed"},
+                ]}]
             if table == "automation_agent_runs":
                 self.run_queries.append(params)
                 if params["status"] == "eq.scheduled":
@@ -294,6 +303,10 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
     overview = await automation_overview(request, {"id": "user-1"})  # type: ignore[arg-type]
 
     assert [run["id"] for run in overview["runs"]] == ["completed"]
+    assert overview["runs"][0]["charts"] == [{
+        "id": "btc-daily", "label": "BTC daily", "altText": "BTC daily",
+        "url": "/api/charts/completed/btc-daily?expires=1&signature=s",
+    }]
     assert [run["id"] for run in overview["upcomingRuns"]] == ["upcoming"]
     assert any(query.get("status") == "in.(running,completed,failed)" for query in database.run_queries)
     assert any(query.get("order") == "scheduled_for.asc" for query in database.run_queries)
@@ -543,36 +556,6 @@ def test_agent_market_packet_excludes_raw_candles_and_delta_data() -> None:
 
     assert "candles" not in json.dumps(compact_market)
     assert "delta" not in json.dumps(compact_market).casefold()
-
-
-def test_private_chart_upload_returns_signed_url() -> None:
-    requests: list[tuple[str, str]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append((request.method, request.url.path))
-        if request.method == "GET":
-            return httpx.Response(404)
-        if request.url.path.endswith("/storage/v1/bucket"):
-            return httpx.Response(200, json={"name": "automation-charts"})
-        if "/object/sign/" in request.url.path:
-            return httpx.Response(200, json={"signedURL": "/object/sign/automation-charts/chart.png?token=x"})
-        return httpx.Response(200, json={"Key": "chart.png"})
-
-    settings = replace(
-        NewsAgentSettings.load(),
-        supabase_url="https://project.supabase.co",
-        supabase_service_role_key="service-key",
-    )
-    storage = SupabaseChartStorage(settings, transport=httpx.MockTransport(handler))
-    stored = storage.upload_run_charts(
-        user_id="11111111-1111-4111-8111-111111111111",
-        agent_run_id="22222222-2222-4222-8222-222222222222",
-        charts=[ChartArtifact(id="btc-price", label="BTC price", alt_text="BTC price chart", content=b"png")],
-    )
-
-    assert stored[0].signed_url.startswith("https://project.supabase.co/storage/v1/object/sign/")
-    assert any(path.endswith("/storage/v1/bucket") for _, path in requests)
-    assert any("/storage/v1/object/automation-charts/" in path for _, path in requests)
 
 
 @pytest.mark.asyncio

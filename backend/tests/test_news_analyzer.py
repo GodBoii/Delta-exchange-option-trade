@@ -30,10 +30,10 @@ def test_automation_request_accepts_new_fixed_triggers(trigger: str) -> None:
     assert request.trigger == trigger
 
 
-def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
+def test_session_database_factory_uses_agno_postgres(monkeypatch) -> None:
     settings = replace(
         NewsAgentSettings.load(),
-        supabase_db_url="postgresql://postgres:secret@example.supabase.co:5432/postgres",
+        database_url="postgresql://trade_ai:secret@trade-postgres:5432/trade_cognition",
     )
     captured: dict = {}
     fake_db = SimpleNamespace()
@@ -50,9 +50,10 @@ def test_supabase_database_factory_uses_agno_postgres(monkeypatch) -> None:
     assert captured["create_schema"] is settings.db_create_schema
     parsed_url = urlsplit(captured["db_url"])
     assert parsed_url.scheme == "postgresql+psycopg"
-    assert parse_qs(parsed_url.query)["sslmode"] == ["require"]
+    assert parsed_url.hostname == "trade-postgres"
+    assert parse_qs(parsed_url.query)["keepalives"] == ["1"]
     assert "connect_timeout" not in parse_qs(parsed_url.query)
-def test_saved_supabase_session_shapes_current_and_history() -> None:
+def test_saved_session_shapes_current_and_history() -> None:
     session_id = "news:user-9:btc-news-desk"
     session = AgentSession(
         session_id=session_id,
@@ -133,12 +134,12 @@ def test_session_list_is_user_scoped_and_returns_saved_session_summaries(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_health_reports_supabase_postgres(monkeypatch) -> None:
-    monkeypatch.setattr(main, "settings", replace(main.settings, supabase_db_url="postgresql+psycopg://configured"))
+async def test_health_reports_local_postgres(monkeypatch) -> None:
+    monkeypatch.setattr(main, "settings", replace(main.settings, database_url="postgresql+psycopg://configured"))
     monkeypatch.setattr(main, "_database_status", lambda: (True, None))
     response = await main.health()
     assert response["service"] == "news-analyzer"
-    assert response["database"] == "supabase-postgres"
+    assert response["database"] == "local-postgres"
     assert response["databaseConfigured"] is True
     assert response["databaseReady"] is True
     assert response["sessionTable"] == main.settings.session_table
