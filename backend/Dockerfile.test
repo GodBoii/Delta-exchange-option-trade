@@ -1,17 +1,17 @@
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
-    SCHEDULER_ENABLED=false CONVEX_ORDER_JOURNAL_ENABLED=false CONVEX_LIBRARY_ENABLED=false
+    SCHEDULER_ENABLED=false AUTOMATION_SCHEDULER_ENABLED=false DELTA_EVENTS_ENABLED=false
 WORKDIR /app
 COPY requirements*.txt ./
 RUN pip install -r requirements-dev.txt
-ENV AUTOMATION_SCHEDULER_ENABLED=false
-ENV CONVEX_RUNTIME_ENABLED=false CONVEX_ACCOUNTS_ENABLED=false DELTA_EVENTS_ENABLED=false
 COPY app ./app
 COPY automation_agent ./automation_agent
 COPY news_agent ./news_agent
 COPY news_analyzer ./news_analyzer
 COPY scripts ./scripts
+COPY db ./db
 COPY tests ./tests
 COPY pyproject.toml ./
+# Database-backed tests run when TEST_LOCAL_DATABASE_URL points at a disposable PostgreSQL 17 database.
 CMD ["python", "-m", "pytest", "-q"]
