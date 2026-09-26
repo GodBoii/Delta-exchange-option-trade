@@ -1,55 +1,14 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { ConvexProviderWithAuth, ConvexReactClient, useConvexAuth, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { apiOrigin } from "@/lib/api";
 
 type Revisions = { automation?: number; strategies?: number };
 const RealtimeContext = createContext<Revisions>({});
-const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-const client = url ? new ConvexReactClient(url) : null;
-const localStorageEnabled = process.env.NEXT_PUBLIC_APPLICATION_STORAGE === "local";
 
-function useSupabaseAuth() {
-  const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
-
-  useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
-    void supabase.auth.getSession().then(({ data }) => {
-      setAuthenticated(Boolean(data.session));
-      setLoading(false);
-    });
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthenticated(Boolean(session));
-      setLoading(false);
-    });
-    return () => data.subscription.unsubscribe();
-  }, []);
-
-  const fetchAccessToken = useCallback(async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
-    const supabase = getSupabaseBrowserClient();
-    const result = forceRefreshToken ? await supabase.auth.refreshSession() : await supabase.auth.getSession();
-    return result.data.session?.access_token ?? null;
-  }, []);
-
-  return useMemo(() => ({ isLoading: loading, isAuthenticated: authenticated, fetchAccessToken }), [authenticated, fetchAccessToken, loading]);
-}
-
-function SignalBridge({ onChange }: { onChange: (value: Revisions) => void }) {
-  const { isAuthenticated } = useConvexAuth();
-  const automation = useQuery(api.signals.latest, isAuthenticated ? { scope: "automation" } : "skip");
-  const strategies = useQuery(api.signals.latest, isAuthenticated ? { scope: "strategies" } : "skip");
-
-  useEffect(() => {
-    onChange({ automation: automation?.updatedAt, strategies: strategies?.updatedAt });
-  }, [automation?.updatedAt, onChange, strategies?.updatedAt]);
-  return null;
-}
-
-function LocalSignalBridge({ onChange }: { onChange: (value: Revisions) => void }) {
+/** Backend revision stream: each change event tells subscribed views to refetch. */
+function RevisionStream({ onChange }: { onChange: (value: Revisions) => void }) {
   useEffect(() => {
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
@@ -100,19 +59,10 @@ function LocalSignalBridge({ onChange }: { onChange: (value: Revisions) => void 
 
 export function RealtimeSignalsProvider({ children }: { children: ReactNode }) {
   const [revisions, setRevisions] = useState<Revisions>({});
-  if (localStorageEnabled) return (
-    <RealtimeContext.Provider value={revisions}>
-      <LocalSignalBridge onChange={setRevisions} />
-      {children}
-    </RealtimeContext.Provider>
-  );
-  if (!client) return children;
   return (
     <RealtimeContext.Provider value={revisions}>
-      <ConvexProviderWithAuth client={client} useAuth={useSupabaseAuth}>
-        <SignalBridge onChange={setRevisions} />
-        {children}
-      </ConvexProviderWithAuth>
+      <RevisionStream onChange={setRevisions} />
+      {children}
     </RealtimeContext.Provider>
   );
 }
