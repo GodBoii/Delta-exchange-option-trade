@@ -1,6 +1,65 @@
 services:
+  # The only application database. No host port; services reach it on the private network.
+  trade-postgres:
+    image: postgres:17.11-alpine3.24
+    env_file:
+      - ./deploy/local-postgres.env
+    command:
+      - postgres
+      - -c
+      - fsync=on
+      - -c
+      - synchronous_commit=on
+      - -c
+      - full_page_writes=on
+      - -c
+      - max_connections=200
+    volumes:
+      - trade-postgres:/var/lib/postgresql/data
+    networks:
+      - trade-data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # Daily compressed dump kept for seven days under ./data/backups.
+  trade-postgres-backup:
+    image: postgres:17.11-alpine3.24
+    env_file:
+      - ./deploy/local-postgres.env
+    environment:
+      PGHOST: trade-postgres
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        export PGPASSWORD="$$POSTGRES_PASSWORD";
+        while :; do
+        file="/backups/trade-$$(date -u +%Y%m%dT%H%M%SZ).dump";
+        pg_dump -Fc -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f "$$file.partial" && mv "$$file.partial" "$$file";
+        find /backups -name 'trade-*.dump' -mtime +7 -delete;
+        sleep 86400;
+        done
+    volumes:
+      - ./data/backups:/backups
+    networks:
+      - trade-data
+    depends_on:
+      trade-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   delta-exchange:
     container_name: Delta-exchange
+    depends_on:
+      trade-postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - trade-data
     volumes:
       - trading-state:/app/state
     build:
@@ -28,6 +87,12 @@ services:
 
   delta-exchange-reader:
     profiles: [read-replicas]
+    depends_on:
+      trade-postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - trade-data
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -58,10 +123,18 @@ services:
     env_file:
       - .env.local
       - ./backend/.env
+    depends_on:
+      trade-postgres:
+        condition: service_healthy
+    networks:
+      - default
+      - trade-data
     environment:
       NEWS_LOG_LEVEL: DEBUG
-      CONVEX_TRADING_SECRET: ""
-      CONVEX_CREDENTIAL_KEY: ""
+      # The analysis service uses its own AI_DATABASE_URL role and never sees trading credentials.
+      LOCAL_DATABASE_URL: ""
+      LOCAL_READER_DATABASE_URL: ""
+      CREDENTIAL_ENCRYPTION_KEY: ""
     expose:
       - "8002"
     restart: unless-stopped
@@ -108,3 +181,8 @@ services:
 volumes:
   trading-state:
   market-history:
+  trade-postgres:
+
+networks:
+  trade-data:
+    internal: true
