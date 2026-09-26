@@ -33,10 +33,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from .auth import current_account
 from .config import Settings
+from .database import Database
 from .delta import DeltaClient
 from .delta_events import DeltaEvents
 from .errors import AppError
-from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def now_ms() -> int:
 
 class PortfolioStream:
     def __init__(
-        self, websocket: WebSocket, db: SupabaseAdmin, engine: Any, events: DeltaEvents, user_id: str, token: str
+        self, websocket: WebSocket, db: Database, engine: Any, events: DeltaEvents, user_id: str, token: str
     ) -> None:
         self.websocket, self.db, self.engine, self.events = websocket, db, engine, events
         self.user_id, self.token = user_id, token
@@ -276,7 +276,7 @@ async def authenticate(websocket: WebSocket) -> str:
     return token
 
 
-async def serve_portfolio(websocket: WebSocket, db: SupabaseAdmin, engine: Any, settings: Settings) -> None:
+async def serve_portfolio(websocket: WebSocket, db: Database, engine: Any, settings: Settings) -> None:
     if not origin_allowed(websocket.headers.get("origin"), settings):
         await websocket.close(code=1008, reason="origin_not_allowed")
         return

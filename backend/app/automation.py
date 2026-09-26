@@ -14,12 +14,13 @@ from pydantic import BaseModel, ConfigDict
 from .auth import current_account, require_owner, require_user
 from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
 from .capital import percentage_concurrency_limit
+from .chart_images import chart_link
+from .database import Database
 from .decision_report import committed_action_text, replace_model_decision
 from .engine import TradingEngine, iso_now
 from .errors import AppError
 from .shared_analysis import SHARED_USER_ID, history_filter
 from .shared_analysis import enabled as shared_enabled
-from .supabase import SupabaseAdmin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automation", tags=["automation"])
@@ -28,6 +29,7 @@ MODEL_ID = "xiaomi/mimo-v2.6-pro"
 FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
 FIXED_RUN_CATCH_UP = timedelta(minutes=5)
 FIXED_RUN_SYNC_SECONDS = 60.0
+CHART_PRUNE_SECONDS = 6 * 60 * 60.0
 MAX_AUTOMATION_RUN_LATENESS = timedelta(minutes=10)
 AUTOMATION_ANALYSIS_TIMEOUT_SECONDS = 45 * 60
 # Allow account-context collection and result persistence around the HTTP request.
@@ -57,7 +59,7 @@ def verified_decision_report(outcome: str, report: str, *, shared: bool) -> str:
     return f"## Verified action\n\n{action}\n\n{report}"
 
 
-async def ensure_settings(db: SupabaseAdmin, user_id: str) -> dict[str, Any]:
+async def ensure_settings(db: Database, user_id: str) -> dict[str, Any]:
     rows = await db.select("automation_settings", {"select": "*", "user_id": f"eq.{user_id}", "limit": "1"})
     if rows:
         return rows[0]
@@ -131,7 +133,7 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
 
 
 async def build_activation_recheck_context(
-    db: SupabaseAdmin,
+    db: Database,
     user_id: str,
     proposal_id: str,
 ) -> dict[str, Any]:
@@ -203,7 +205,7 @@ async def build_activation_recheck_context(
     }
 
 
-async def build_shared_recheck_context(db: SupabaseAdmin, proposal_id: str) -> dict[str, Any]:
+async def build_shared_recheck_context(db: Database, proposal_id: str) -> dict[str, Any]:
     proposals = await db.select("strategy_proposals", {"id": f"eq.{proposal_id}", "user_id": f"eq.{SHARED_USER_ID}"})
     if not proposals or proposals[0]["status"] != "scheduled":
         raise AppError(409, "Shared decision is no longer scheduled", "shared_decision_unavailable")
@@ -261,7 +263,7 @@ async def require_analyzer_ready() -> None:
 
 async def execute_automation_run(
     *,
-    db: SupabaseAdmin,
+    db: Database,
     engine: TradingEngine,
     user_id: str,
     run_id: str,
@@ -403,27 +405,9 @@ async def execute_automation_run(
         raise
 
 
-async def _signed_chart(db: SupabaseAdmin, chart: dict[str, Any]) -> dict[str, str] | None:
-    bucket = chart.get("bucket")
-    path = chart.get("path")
-    if not isinstance(bucket, str) or not isinstance(path, str):
-        return None
-    try:
-        url = await db.signed_storage_url(bucket, path)
-    except AppError as error:
-        logger.warning("Could not sign automation chart path=%s: %s", path, error.message)
-        return None
-    return {
-        "id": str(chart.get("id") or path),
-        "label": str(chart.get("label") or "Market chart"),
-        "altText": str(chart.get("altText") or chart.get("label") or "Market chart"),
-        "url": url,
-    }
-
-
 @router.get("/overview")
 async def automation_overview(request: Request, user: RequiredUser) -> dict[str, Any]:
-    db: SupabaseAdmin = request.app.state.db
+    db: Database = request.app.state.db
     user_id = str(user["id"])
     settings, capital_policy, strategies, runs, upcoming_runs, proposals = await asyncio.gather(
         ensure_settings(db, user_id),
@@ -488,11 +472,18 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         if snapshot_ids
         else []
     )
-    stored_charts = {str(snapshot["id"]): snapshot.get("chart_images") or [] for snapshot in snapshots}
+    # Only link charts that still exist; retention removes old images while reports remain.
+    available = await db.charts.available([str(row["run_id"]) for row in snapshots if row.get("run_id")])
     charts_by_snapshot: dict[str, list[dict[str, str]]] = {}
-    for snapshot_id, chart_rows in stored_charts.items():
-        signed = await asyncio.gather(*(_signed_chart(db, chart) for chart in chart_rows if isinstance(chart, dict)))
-        charts_by_snapshot[snapshot_id] = [chart for chart in signed if chart is not None]
+    for snapshot in snapshots:
+        run_id = str(snapshot.get("run_id") or "")
+        charts_by_snapshot[str(snapshot["id"])] = [
+            link
+            for chart in snapshot.get("chart_images") or []
+            if isinstance(chart, dict)
+            and (run_id, str(chart.get("id"))) in available
+            and (link := chart_link(db.charts, run_id, chart)) is not None
+        ]
     return {
         "success": True,
         "settings": {
@@ -549,7 +540,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
 async def update_automation_settings(
     request: Request, body: AutomationSettingsUpdate, user: RequiredUser
 ) -> dict[str, Any]:
-    db: SupabaseAdmin = request.app.state.db
+    db: Database = request.app.state.db
     user_id = str(user["id"])
     rows = await db.upsert(
         "automation_settings",
@@ -598,7 +589,7 @@ async def update_automation_settings(
 
 @router.post("/run")
 async def run_automation(request: Request, body: AutomationRunRequest, user: RequiredUser) -> dict[str, Any]:
-    db: SupabaseAdmin = request.app.state.db
+    db: Database = request.app.state.db
     engine: TradingEngine = request.app.state.engine
     user_id = str(user["id"])
     await require_owner(db, user)
@@ -646,7 +637,7 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
 
 
 class AutomationScheduler:
-    def __init__(self, db: SupabaseAdmin, engine: TradingEngine, poll_seconds: float = 30.0) -> None:
+    def __init__(self, db: Database, engine: TradingEngine, poll_seconds: float = 30.0) -> None:
         self.db = db
         self.engine = engine
         self.poll_seconds = max(10.0, poll_seconds)
@@ -658,7 +649,8 @@ class AutomationScheduler:
         self.analysis_concurrency = getattr(settings, "automation_analysis_concurrency", MAX_PARALLEL_AUTOMATION_RUNS)
         self.recheck_concurrency = getattr(settings, "automation_recheck_concurrency", MAX_PARALLEL_RECHECK_RUNS)
         self.last_fixed_sync = 0.0
-        self.recovered = not getattr(getattr(db, "settings", None), "convex_runtime_enabled", False)
+        self.last_chart_prune = 0.0
+        self.recovered = False
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="automation-agent-scheduler")
@@ -700,10 +692,22 @@ class AutomationScheduler:
                 await self._process_due_runs()
                 if shared_enabled(getattr(self.db, "settings", None)):
                     await self._allocate_shared_decisions()
+                if monotonic_now - self.last_chart_prune >= CHART_PRUNE_SECONDS:
+                    self.last_chart_prune = monotonic_now
+                    await self._prune_charts()
             except Exception:
                 logger.exception("Automation scheduler polling cycle failed")
             with suppress(TimeoutError):
                 await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_seconds)
+
+    async def _prune_charts(self) -> None:
+        charts = getattr(self.db, "charts", None)
+        if charts is None:
+            return
+        days = getattr(getattr(self.db, "settings", None), "chart_retention_days", 90)
+        removed = await charts.delete_expired(days)
+        if removed:
+            logger.info("Removed %d chart images older than %d days", removed, days)
 
     async def _enqueue_session_reviews(self) -> None:
         now = datetime.now(UTC)
