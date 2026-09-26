@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from ipaddress import ip_address
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +41,7 @@ from .models import (
     StrategyDefinition,
 )
 from .news import router as news_router
+from .portfolio_stream import serve_portfolio
 from .recovery_mirror import RecoveryMirror
 from .strategy import delta_expiry
 from .supabase import SupabaseAdmin
@@ -421,6 +422,12 @@ async def account_overview(request: Request, user: RequiredUser) -> dict[str, An
             if (item.get("risk_state") or {}).get("mode") == "combined_premium"
         ],
     }
+
+
+@app.websocket("/ws/portfolio")
+async def portfolio_stream(websocket: WebSocket) -> None:
+    """Live positions, orders, wallet rows and mark/index prices; see ``portfolio_stream``."""
+    await serve_portfolio(websocket, websocket.app.state.db, websocket.app.state.engine, settings)
 
 
 async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
