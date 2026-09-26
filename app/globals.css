@@ -2131,6 +2131,8 @@ time,
   padding-inline: 0;
 }
 
+.button.small.icon-only { width: var(--control-h-sm); }
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -3451,14 +3453,16 @@ time,
   position: sticky;
   top: 0;
   z-index: 60;
-  border-bottom: 1px solid var(--line);
-  background: var(--chrome);
+  /* No rule and the page's own tone: the bar reads as the top of the page,
+     and the blur only matters once content scrolls beneath it. */
+  background: color-mix(in srgb, var(--canvas) 84%, transparent);
   backdrop-filter: var(--chrome-blur);
+  -webkit-backdrop-filter: var(--chrome-blur);
 }
 
 /* A blurred bar over scrolling content needs the fallback to stay legible. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .topbar { background: var(--chrome-solid); }
+  .topbar { background: var(--canvas); }
 }
 
 .topbar-row {
@@ -7330,9 +7334,18 @@ kbd {
   .live-pill-text { display: none; }
   .live-pill { padding-inline: var(--s-2); }
 
-  /* Identity collapses to the mark. The section name is restated above the
-     surface, so the subtitle here is redundant on a narrow screen. */
-  .topbar-row > .brand .brand-text { display: none; }
+  /* The wordmark stays; only the subtitle goes, since the section name is
+     restated above the surface. */
+  .topbar-row > .brand { gap: var(--s-2); }
+  .topbar-row > .brand .brand-text strong { white-space: nowrap; }
+  .topbar-row > .brand .brand-text small { display: none; }
+
+  /* Refresh-style actions are secondary to the figures they reload, so they
+     stay compact instead of taking the full 44px control height. */
+  .section-heading-actions > .button.small,
+  .panel-header-actions > .button.small { min-height: 36px; }
+  .section-heading-actions > .button.small:last-child { margin-left: auto; }
+  .button.small.icon-only { width: 36px; }
 
   .account-trigger {
     min-width: var(--control-h);
@@ -7806,8 +7819,11 @@ kbd {
   .entry-card { padding: var(--s-5); }
   .panel-header { flex-direction: column; align-items: stretch; }
   .panel-header-actions { width: 100%; }
-  .panel-header-actions > .button,
-  .section-heading-actions > .button { flex: 1 1 auto; }
+  .panel-header-actions > .button:not(.small),
+  .section-heading-actions > .button:not(.small) { flex: 1 1 auto; }
+  /* A panel whose only action is a compact reload keeps it beside the title. */
+  .capital-panel .panel-header { flex-direction: row; align-items: center; }
+  .capital-panel .panel-header-actions { width: auto; }
 
   .callout > .button { width: 100%; }
   .button-row { display: grid; grid-template-columns: minmax(0, 1fr); }
