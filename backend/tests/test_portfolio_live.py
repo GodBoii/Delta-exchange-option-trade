@@ -177,8 +177,7 @@ async def test_shared_feeds_keep_index_symbols_apart_from_contracts(monkeypatch)
 
 def engine_settings() -> SimpleNamespace:
     return SimpleNamespace(
-        convex_library_enabled=False, convex_order_journal_enabled=False,
-        delta_events_enabled=True, delta_production_url="https://api.india.delta.exchange",
+                delta_events_enabled=True, delta_production_url="https://api.india.delta.exchange",
         delta_public_ws_url="wss://public.example", delta_private_ws_url="wss://private.example",
         delta_mark_max_age_seconds=5,
     )
@@ -190,7 +189,7 @@ async def test_a_watcher_keeps_the_session_but_never_blocks_a_credential_change(
         "api_key": keys["current"], "api_secret": "secret", "delta_user_id": user_id,
     }))
     monkeypatch.setattr(DeltaEvents, "start", lambda self, kinds=("public", "private"): None)
-    engine = TradingEngine(SimpleNamespace(), engine_settings())
+    engine = TradingEngine(SimpleNamespace(runtime=SimpleNamespace(pool=None)), engine_settings())
     try:
         async with engine.watch_account("owner") as events:
             session = engine.sessions["owner"]
@@ -201,6 +200,8 @@ async def test_a_watcher_keeps_the_session_but_never_blocks_a_credential_change(
             assert "owner" in engine.sessions, "an idle sweep must not close a watched session"
 
             keys["current"] = "rotated"
+            # Reconnecting an account invalidates its cached credentials.
+            await engine.invalidate_credentials("owner")
             client = await engine.client_for_user("owner")
             await client.close()
             assert events.closed, "the replaced session ends the live view"
@@ -215,7 +216,7 @@ async def test_watch_requires_live_events(monkeypatch):
         "api_key": "k", "api_secret": "s", "delta_user_id": "1",
     }))
     settings = SimpleNamespace(**{**vars(engine_settings()), "delta_events_enabled": False})
-    engine = TradingEngine(SimpleNamespace(), settings)
+    engine = TradingEngine(SimpleNamespace(runtime=SimpleNamespace(pool=None)), settings)
     try:
         with pytest.raises(engine_module.AppError) as error:
             async with engine.watch_account("owner"):
@@ -267,13 +268,18 @@ def fake_db(token: str = "good") -> SimpleNamespace:
     async def auth_user(value: str):
         return {"id": "owner", "email": "owner@example.com"} if value == token else None
 
-    async def select(table: str, _params: dict[str, str]):
-        if table == "exchange_connections":
-            return [{"id": "c", "delta_user_id": "57709647", "account_name": "Main", "status": "connected"}]
-        return [{}]
+    async def request(path: str, _args: dict, *, mutation: bool = False):
+        assert path == "accounts:overview"
+        return {"connection": {"id": "c", "delta_user_id": "57709647", "account_name": "Main", "status": "connected"}}
 
-    return SimpleNamespace(settings=SimpleNamespace(convex_accounts_enabled=False), auth_user=auth_user,
-                           select=select)
+    async def profile(_user_id: str) -> dict:
+        return {}
+
+    return SimpleNamespace(
+        auth_user=auth_user,
+        profile=profile,
+        credential_store=SimpleNamespace(data=SimpleNamespace(request=request)),
+    )
 
 
 def stream_app(db: SimpleNamespace, engine: FakeEngine) -> FastAPI:

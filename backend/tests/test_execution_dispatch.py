@@ -6,7 +6,7 @@ from app.engine import TradingEngine
 
 
 async def test_dispatch_bounds_parallel_accounts_and_serializes_exchange_aliases():
-    engine = TradingEngine(SimpleNamespace(), SimpleNamespace(convex_runtime_enabled=True))
+    engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
     async def groups(_path, args):
         return [
             {"userId": user_id, "accountId": str(int(user_id.removeprefix("user-")) // 2)}

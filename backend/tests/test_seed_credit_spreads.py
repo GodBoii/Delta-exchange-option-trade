@@ -1,11 +1,16 @@
 from datetime import UTC, datetime
 
-from scripts.seed_credit_spreads import DEFAULT_IDS, new_defaults
+from app.default_strategies import default_strategy_definitions
+from scripts.shared_library import FIXED_IDS
 
 
-def test_seed_payload_contains_only_new_bounded_market_order_strategies():
-    definitions = new_defaults(datetime(2026, 9, 24, tzinfo=UTC))
-    assert set(definitions) == set(DEFAULT_IDS)
+def test_credit_spread_templates_are_bounded_market_order_strategies():
+    definitions = {
+        item.name: item.model_dump(mode="json", exclude_none=True)
+        for item in default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC))
+        if item.name in FIXED_IDS
+    }
+    assert set(definitions) == set(FIXED_IDS)
     for name, definition in definitions.items():
         assert definition["name"] == name
         assert definition["enabledForAi"] is True

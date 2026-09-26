@@ -9,6 +9,7 @@ from app.delta import DeltaClient
 from app.engine import TradingEngine
 from app.errors import AppError
 from app.models import StrategyDefinition
+from tests.fakes import FakeApplicationData
 
 
 class FakeDB:
@@ -317,14 +318,7 @@ async def test_same_name_creates_independent_strategy_runs() -> None:
     class SaveDB:
         def __init__(self) -> None:
             self.strategies: list[dict] = []
-
-        async def select(self, table: str, query: dict) -> list[dict]:
-            assert table == "saved_strategies"
-            return (
-                [{"id": "saved-1"}]
-                if query["id"] == "eq.saved-1" and query["or"] == "(user_id.eq.user-1,user_id.is.null)"
-                else []
-            )
+            self.local_data = FakeApplicationData(saved=[{"id": "saved-1"}])
 
         async def insert(self, table: str, value: dict) -> list[dict]:
             assert table == "strategies"
@@ -614,15 +608,17 @@ async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> 
                 "entry_at": (datetime.now(UTC) - timedelta(seconds=2)).isoformat(),
                 "entry_execution_at": None,
                 "last_error": None,
+                "user_id": "user-1",
             }
             self.proposal_status: dict = {}
+            self.local_data = FakeApplicationData()
 
         async def select(self, table: str, query: dict) -> list[dict]:
             if table == "strategy_proposals":
                 return []
             assert table == "strategies"
             if query.get("status") == "eq.scheduled" and self.strategy["status"] == "scheduled":
-                return [{"id": self.strategy["id"], "entry_at": self.strategy["entry_at"]}]
+                return [{key: self.strategy[key] for key in ("id", "user_id", "entry_at")}]
             return []
 
         async def update(self, table: str, value: dict, query: dict) -> list[dict]:

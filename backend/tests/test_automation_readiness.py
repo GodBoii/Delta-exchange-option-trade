@@ -9,6 +9,9 @@ import pytest
 from app import automation
 from app.errors import AppError
 
+# Per-account analysis; the shared-analysis path has its own tests.
+PRIVATE_ANALYSIS = SimpleNamespace(shared_analysis_enabled=False)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["healthy", "starting", "wrong_service", "invalid_json", "http_error", "offline"])
@@ -52,6 +55,8 @@ async def test_scheduled_run_waits_unclaimed_until_service_recovers(monkeypatch)
     claims = []
 
     class Database:
+
+        settings = PRIVATE_ANALYSIS
         async def update(self, *_args):
             return []
 
@@ -84,7 +89,9 @@ async def test_scheduled_run_waits_unclaimed_until_service_recovers(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_manual_run_does_not_create_a_failed_run_while_service_starts(monkeypatch) -> None:
-    db = SimpleNamespace(insert=AsyncMock(), select=AsyncMock(return_value=[{"user_type": "owner"}]), settings=SimpleNamespace(convex_runtime_enabled=False))
+    db = SimpleNamespace(
+        insert=AsyncMock(), profile=AsyncMock(return_value={"user_type": "owner"}), settings=PRIVATE_ANALYSIS
+    )
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=db, engine=object())))
     monkeypatch.setattr(automation, "current_account", AsyncMock())
     monkeypatch.setattr(automation, "ensure_settings", AsyncMock(return_value={"enabled": True}))

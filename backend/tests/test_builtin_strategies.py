@@ -135,6 +135,7 @@ async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definiti
         close=AsyncMock(),
     )
     engine = TradingEngine(database, SimpleNamespace())
+    engine.startup_recovered = True
     engine.client_for_user = AsyncMock(return_value=client)
     engine.capital_policy = AsyncMock(return_value=CapitalPolicy())
 
@@ -190,6 +191,7 @@ async def test_credit_spread_entry_buys_protection_before_selling_short(definiti
         close=AsyncMock(),
     )
     engine = TradingEngine(database, SimpleNamespace())
+    engine.startup_recovered = True
     engine.client_for_user = AsyncMock(return_value=client)
     engine.capital_policy = AsyncMock(return_value=CapitalPolicy())
 
@@ -211,6 +213,7 @@ async def test_new_templates_trigger_the_existing_monitor(definition, exit_reaso
     database.row["status"] = "active"
     client = SimpleNamespace(ticker=AsyncMock(), close=AsyncMock())
     engine = TradingEngine(database, SimpleNamespace())
+    engine.startup_recovered = True
     engine.client_for_user = AsyncMock(return_value=client)
     engine.contract_value = AsyncMock(return_value=Decimal("0.001"))
     orders = [
@@ -251,6 +254,7 @@ async def test_risk_checks_continue_between_persisted_snapshots():
         close=AsyncMock(),
     )
     engine = TradingEngine(database, SimpleNamespace(risk_state_persist_seconds=10))
+    engine.startup_recovered = True
     engine.client_for_user = AsyncMock(return_value=client)
     engine.contract_value = AsyncMock(return_value=Decimal("0.001"))
     orders = [

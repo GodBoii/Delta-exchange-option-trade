@@ -110,6 +110,7 @@ def entry_engine(*, mark="100", emergency=True, failure=None):
     )
     db = SimpleNamespace(insert=AsyncMock(return_value=[{"id": "execution"}]), update=AsyncMock(return_value=[]))
     engine = TradingEngine(db, settings())
+    engine.startup_recovered = True
     engine.strategy_by_id = AsyncMock(return_value=row)
     engine.client_for_user = AsyncMock(return_value=client)
     engine.capital_policy = AsyncMock(
@@ -187,6 +188,7 @@ async def test_failed_account_close_keeps_protective_orders():
     from app.errors import DeltaOrderRejected
 
     engine = TradingEngine(None, settings())
+    engine.startup_recovered = True
     client = SimpleNamespace(cancel_order=AsyncMock(), close=AsyncMock())
     engine.client_for_user = AsyncMock(return_value=client)
     engine.account_exposure = AsyncMock(

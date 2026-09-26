@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,9 @@ from app.automation_schedule import (
     previous_fixed_run,
     utc_text,
 )
+
+# Per-account analysis; the shared-analysis path has its own tests.
+PRIVATE_ANALYSIS = SimpleNamespace(shared_analysis_enabled=False)
 
 
 def test_utc_and_ist_inputs_resolve_to_the_same_instant() -> None:
@@ -145,6 +149,7 @@ def test_daily_limit_uses_ist_calendar_boundaries() -> None:
 @pytest.mark.asyncio
 async def test_scheduler_precreates_fixed_reviews_in_one_database_call() -> None:
     class Database:
+        settings = PRIVATE_ANALYSIS
         payload: list[dict] = []
         reconciled = False
 
@@ -189,6 +194,8 @@ async def test_scheduler_claims_due_run_and_passes_follow_up_signals(monkeypatch
     }
 
     class Database:
+
+        settings = PRIVATE_ANALYSIS
         async def select(self, table: str, _params: dict) -> list[dict]:
             if table == "automation_settings":
                 return [{"user_id": "user-1"}]
@@ -232,6 +239,8 @@ async def test_scheduler_cancels_stale_run_without_executing_it() -> None:
     }
 
     class Database:
+
+        settings = PRIVATE_ANALYSIS
         updates: list[dict] = []
 
         async def select(self, table: str, _params: dict) -> list[dict]:
@@ -258,6 +267,7 @@ async def test_scheduler_cancels_stale_run_without_executing_it() -> None:
 @pytest.mark.asyncio
 async def test_committed_outcome_survives_provider_timeout(monkeypatch) -> None:
     class Database:
+        settings = PRIVATE_ANALYSIS
         updates: list[dict] = []
 
         async def select(self, _table: str, _params: dict) -> list[dict]:
@@ -305,6 +315,8 @@ async def test_rechecks_have_capacity_while_all_analysis_slots_are_busy(monkeypa
     claimed = []
 
     class Database:
+
+        settings = PRIVATE_ANALYSIS
         async def select(self, table, params):
             if table == "automation_settings":
                 return [{"user_id": "user-1"}]

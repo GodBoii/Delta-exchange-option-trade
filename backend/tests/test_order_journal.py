@@ -3,34 +3,41 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import httpx
 import pytest
 
 from app.engine import TradingEngine
 from app.errors import AppError, DeltaOrderRejected
-from app.order_journal import ConvexOrderJournal
+from app.order_journal import OrderJournal
+
+
+class MemoryJournal(OrderJournal):
+    """Dispatch rules under test; storage is a dictionary."""
+
+    def __init__(self, account_id: str = "account") -> None:
+        self.account_id = account_id
+        self.records: dict[str, dict] = {}
+
+    async def call(self, path, args, *, query=False):
+        key = args["clientOrderId"]
+        if path == "orderIntents:begin":
+            existing = self.records.get(key)
+            if existing is None:
+                self.records[key] = {"kind": "unknown"}
+            return {"dispatch": existing is None, "outcome": deepcopy(self.records[key])}
+        self.records[key] = args["outcome"]
+        return None
+
+
+class UnavailableJournal(OrderJournal):
+    account_id = "account"
+
+    async def call(self, path, args, *, query=False):
+        raise AppError(503, "Trading journal unavailable; order outcome must be checked", "journal_unavailable")
 
 
 @pytest.fixture
-async def journal():
-    records = {}
-
-    def respond(request):
-        body = json.loads(request.content)
-        args = body["args"]
-        key = args["clientOrderId"]
-        if body["path"] == "orderIntents:begin":
-            existing = records.get(key)
-            if existing is None:
-                records[key] = {"kind": "unknown"}
-            value = {"dispatch": existing is None, "outcome": deepcopy(records[key])}
-        else:
-            records[key] = args["outcome"]
-            value = None
-        return httpx.Response(200, json={"status": "success", "value": value})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-        yield ConvexOrderJournal("https://journal.test", "secret", "account", client)
+def journal():
+    return MemoryJournal()
 
 
 async def test_lost_exchange_response_uses_lookup_without_resubmission(journal):
@@ -65,12 +72,10 @@ async def test_explicit_rejection_is_retained(journal):
 
 
 async def test_journal_outage_blocks_dispatch():
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as client:
-        journal = ConvexOrderJournal("https://journal.test", "secret", "account", client)
-        send = AsyncMock()
-        with pytest.raises(AppError, match="journal unavailable"):
-            await journal.submit({"client_order_id": "original"}, send, AsyncMock())
-        send.assert_not_awaited()
+    send = AsyncMock()
+    with pytest.raises(AppError, match="journal unavailable"):
+        await UnavailableJournal().submit({"client_order_id": "original"}, send, AsyncMock())
+    send.assert_not_awaited()
 
 
 @pytest.mark.parametrize("lookup_fails", [False, True])
@@ -86,7 +91,7 @@ async def test_restart_recovers_order_record_or_preserves_unknown_outcome(lookup
             {"product_id": 1, "product_symbol": "CALL", "side": "sell", "size": 2, "order_type": "market_order"}
         ),
     }
-    journal = ConvexOrderJournal("https://journal.test", "secret", "india:1", None)
+    journal = MemoryJournal("india:1")
     journal.strategy_intents = AsyncMock(return_value=[intent])
     journal.call = AsyncMock()
     lookup = AsyncMock(

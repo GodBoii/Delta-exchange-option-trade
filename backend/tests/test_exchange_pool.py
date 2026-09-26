@@ -12,11 +12,10 @@ async def test_account_sessions_share_http_pool_without_sharing_signing_keys(mon
     })
     monkeypatch.setattr(engine_module, "credentials_for_user", credentials)
     settings = SimpleNamespace(
-        convex_library_enabled=False, convex_order_journal_enabled=False,
-        delta_events_enabled=False, delta_production_url="https://api.india.delta.exchange",
+                delta_events_enabled=False, delta_production_url="https://api.india.delta.exchange",
         delta_mark_max_age_seconds=5,
     )
-    engine = TradingEngine(SimpleNamespace(), settings)
+    engine = TradingEngine(SimpleNamespace(runtime=SimpleNamespace(pool=None)), settings)
     clients = [await engine.client_for_user(f"user-{index}") for index in range(110)]
     try:
         assert len(engine.sessions) == 110
@@ -39,12 +38,11 @@ async def test_account_private_streams_share_one_public_mark_source(monkeypatch)
     started = []
     monkeypatch.setattr(DeltaEvents, "start", lambda _self, kinds=("public", "private"): started.append(kinds))
     settings = SimpleNamespace(
-        convex_library_enabled=False, convex_order_journal_enabled=False,
-        delta_events_enabled=True, delta_production_url="https://api.india.delta.exchange",
+                delta_events_enabled=True, delta_production_url="https://api.india.delta.exchange",
         delta_public_ws_url="wss://public.example", delta_private_ws_url="wss://private.example",
         delta_mark_max_age_seconds=5,
     )
-    engine = TradingEngine(SimpleNamespace(), settings)
+    engine = TradingEngine(SimpleNamespace(runtime=SimpleNamespace(pool=None)), settings)
     first = await engine.client_for_user("one")
     second = await engine.client_for_user("two")
     try:
