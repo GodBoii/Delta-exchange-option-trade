@@ -1,4 +1,4 @@
-"""Verify research decisions keep their Convex transaction guarantees locally."""
+"""Verify research decisions commit atomically in the local PostgreSQL store."""
 
 import asyncio
 import json
@@ -168,3 +168,71 @@ async def test_account_schedule_creates_strategy_proposal_and_recheck_atomically
         ] == "activation_recheck"
         with pytest.raises(AppError):
             await runtime.data.request("runtimeAutomation:schedule", args, mutation=True)
+
+        # The recheck may drop only the strategy bound to it, identified by name and activation time.
+        recheck_id = result["activationRecheckRunId"]
+        await runtime.update("automation_agent_runs", {"status": "running"}, {"id": f"eq.{recheck_id}"})
+        drop = {
+            "userId": user_id, "runId": recheck_id, "proposalId": result["proposalId"], "drop": True,
+            "name": "Account spread", "activation": activation, "reason": "Range broke",
+        }
+        for mismatch in ({"name": "Long call"}, {"activation": (now + timedelta(minutes=21)).isoformat()}):
+            with pytest.raises(AppError):
+                await runtime.data.request("runtimeAutomation:recheck", {**drop, **mismatch}, mutation=True)
+        dropped = await runtime.data.request("runtimeAutomation:recheck", drop, mutation=True)
+        assert dropped["outcome"] == "strategy_dropped"
+        assert (await runtime.select("strategies", {"id": f"eq.{result['scheduledStrategyId']}"}))[0][
+            "status"
+        ] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_followup_records_its_parent_and_child_context_returns_it():
+    async with AsyncConnectionPool(os.environ["TEST_LOCAL_DATABASE_URL"], open=False) as pool:
+        await pool.open()
+        runtime = LocalRuntimeStore(pool)
+        user_id, run_id, snapshot_id = (str(uuid4()) for _ in range(3))
+        now = datetime.now(UTC)
+        async with pool.connection() as db:
+            await db.execute(
+                """insert into trade.users (user_id,connection,automation,capital,record)
+                   values (%s,null,%s,%s,%s)""",
+                (
+                    user_id,
+                    Jsonb({"enabled": True, "minimum_follow_up_minutes": 5, "maximum_agent_runs_per_day": 3}),
+                    Jsonb({"allocation_mode": "half_balance"}),
+                    Jsonb({"userId": user_id}),
+                ),
+            )
+        await runtime.write(
+            "automation_agent_runs",
+            {
+                "id": run_id, "user_id": user_id, "status": "running", "trigger": "asia_session",
+                "run_key": f"asia:{run_id}", "scheduled_for": now.isoformat(),
+            },
+        )
+        follow_up_at = now + timedelta(minutes=20)
+        result = await runtime.data.request(
+            "runtimeAutomation:followup",
+            {
+                "userId": user_id, "runId": run_id, "next": follow_up_at.isoformat(),
+                "reason": "Wait for the breakout to confirm", "signals": ["volume"],
+                "fixed": (now + timedelta(hours=2)).isoformat(),
+                "previous": (now - timedelta(hours=2)).isoformat(),
+                "dayStart": (now - timedelta(hours=12)).isoformat(),
+                "dayEnd": (now + timedelta(hours=12)).isoformat(),
+                "snapshotId": snapshot_id, "newsId": None,
+            },
+            mutation=True,
+        )
+        assert result["outcome"] == "wait_and_run_again"
+        child = (await runtime.select("automation_agent_runs", {"id": f"eq.{result['scheduledRunId']}"}))[0]
+        assert child["parent_agent_run_id"] == run_id
+        assert child["market_snapshot_id"] == snapshot_id
+        context = await runtime.data.request("runtimeAutomation:context", {"userId": user_id, "runId": child["id"]})
+        assert context["parent"]["id"] == run_id
+        assert context["parent"]["outcome"] == "wait_and_run_again"
+        with pytest.raises(AppError):
+            await runtime.data.request(
+                "runtimeAutomation:context", {"userId": str(uuid4()), "runId": child["id"]}
+            )

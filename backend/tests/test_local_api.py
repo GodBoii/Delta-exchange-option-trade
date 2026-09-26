@@ -1,4 +1,4 @@
-"""Authenticated local library and research endpoints respect the recovery gate."""
+"""Authenticated library and private research endpoints; read replicas reject writes."""
 
 import asyncio
 import os
@@ -34,9 +34,8 @@ async def test_local_library_and_private_research_endpoint(monkeypatch):
     async with AsyncConnectionPool(os.environ["TEST_LOCAL_DATABASE_URL"], open=False) as pool:
         await pool.open()
         main.app.state.db = SimpleNamespace(local_data=LocalApplicationData(pool))
-        main.app.state.recovery_pending = False
         monkeypatch.setattr(main, "settings", SimpleNamespace(
-            application_storage="local", trading_writer_enabled=True, analysis_service_secret="research-key"
+            trading_writer_enabled=True, analysis_service_secret="research-key"
         ))
         main.app.dependency_overrides[main.require_user] = lambda: {"id": user_id}
         try:
@@ -59,7 +58,17 @@ async def test_local_library_and_private_research_endpoint(monkeypatch):
                     "X-Analysis-Secret": "research-key",
                 }, json={"path": "accounts:overview", "args": {"userId": user_id}})
                 assert allowed.status_code == 200
-                main.app.state.recovery_pending = True
+                mismatched = await client.put(f"/api/library/{uuid4()}", json=body)
+                assert mismatched.status_code == 422
+                monkeypatch.setattr(main, "settings", SimpleNamespace(
+                    trading_writer_enabled=False, analysis_service_secret="research-key"
+                ))
                 assert (await client.delete(f"/api/library/{identifier}?expectedVersion=1")).status_code == 503
+                monkeypatch.setattr(main, "settings", SimpleNamespace(
+                    trading_writer_enabled=True, analysis_service_secret="research-key"
+                ))
+                assert (await client.delete(f"/api/library/{identifier}?expectedVersion=1")).status_code == 200
+                listed = await client.get("/api/library")
+                assert all(item["id"] != identifier for item in listed.json()["result"])
         finally:
             main.app.dependency_overrides.clear()

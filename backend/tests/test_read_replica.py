@@ -1,7 +1,9 @@
 import importlib
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from starlette.requests import Request
 
 
@@ -35,6 +37,7 @@ async def test_read_replica_serves_reads_and_writer_still_accepts_changes(monkey
     assert await main.require_trading_writer(request, call_next) is response
 
 
+@pytest.mark.skipif(not os.getenv("TEST_LOCAL_DATABASE_URL"), reason="No isolated local PostgreSQL test URL")
 async def test_read_replica_lifespan_starts_no_writer_jobs_or_private_streams(monkeypatch):
     main = app_module(monkeypatch)
     from app.config import Settings
@@ -42,6 +45,7 @@ async def test_read_replica_lifespan_starts_no_writer_jobs_or_private_streams(mo
     settings = Settings(
         trading_writer_enabled=False, scheduler_enabled=False,
         automation_scheduler_enabled=False, delta_events_enabled=True,
+        LOCAL_READER_DATABASE_URL=os.environ["TEST_LOCAL_DATABASE_URL"],
     )
     monkeypatch.setattr(main, "settings", settings)
     async with main.lifespan(main.app):
@@ -49,3 +53,4 @@ async def test_read_replica_lifespan_starts_no_writer_jobs_or_private_streams(mo
         assert main.app.state.scheduler.task is None
         assert main.app.state.automation_scheduler.task is None
         assert not main.app.state.engine.settings.delta_events_enabled
+        assert main.app.state.db.pool.get_stats()["pool_size"] >= 1

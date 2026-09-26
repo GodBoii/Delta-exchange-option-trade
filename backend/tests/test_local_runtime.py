@@ -1,15 +1,17 @@
 """Exercise indexed runtime reads and durable writes against disposable PostgreSQL."""
 
 import asyncio
+import json
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import psycopg
 import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.errors import AppError
-from app.local_journal import LocalOrderJournal
 from app.local_runtime import LocalRuntimeStore
 
 pytestmark = pytest.mark.skipif(
@@ -32,7 +34,7 @@ async def runtime():
 
 
 @pytest.mark.asyncio
-async def test_due_query_and_risk_only_mirror_skip(runtime: LocalRuntimeStore):
+async def test_due_query_and_risk_only_updates_do_not_notify(runtime: LocalRuntimeStore):
     strategy_id = str(uuid4())
     user_id = str(uuid4())
     await runtime.write(
@@ -57,20 +59,26 @@ async def test_due_query_and_risk_only_mirror_skip(runtime: LocalRuntimeStore):
         },
     )
     assert due == [{"id": strategy_id, "name": "Risk test", "status": "scheduled"}]
-    await runtime.update("strategies", {"status": "active"}, {"id": f"eq.{strategy_id}"})
-    async with runtime.pool.connection() as connection:
-        initial = await connection.execute(
-            "select count(*) from trade.recovery_outbox where entity_type='strategies' and entity_key=%s",
-            (strategy_id,),
-        )
-        assert (await initial.fetchone())[0] == 2
-    await runtime.update("strategies", {"risk_state": {"profit": "1"}}, {"id": f"eq.{strategy_id}"})
-    async with runtime.pool.connection() as connection:
-        after = await connection.execute(
-            "select count(*) from trade.recovery_outbox where entity_type='strategies' and entity_key=%s",
-            (strategy_id,),
-        )
-        assert (await after.fetchone())[0] == 2
+    async with await psycopg.AsyncConnection.connect(
+        os.environ["TEST_LOCAL_DATABASE_URL"], autocommit=True
+    ) as listener:
+        await listener.execute("listen trade_changes")
+
+        async def notices(limit: float = 0.5) -> list[dict]:
+            found = []
+            try:
+                async with asyncio.timeout(limit):
+                    async for notice in listener.notifies():
+                        found.append(json.loads(notice.payload))
+            except TimeoutError:
+                pass
+            return found
+
+        await runtime.update("strategies", {"status": "active"}, {"id": f"eq.{strategy_id}"})
+        assert {"table": "strategies", "owner": user_id} in await notices()
+        # Risk-display refreshes run every few seconds per strategy; they must not wake browsers.
+        await runtime.update("strategies", {"risk_state": {"profit": "1"}}, {"id": f"eq.{strategy_id}"})
+        assert [item for item in await notices() if item["owner"] == user_id] == []
     with pytest.raises(AppError):
         await runtime.update("strategies", {}, {"id": f"eq.{strategy_id}"}, remove=True)
 
@@ -112,53 +120,47 @@ async def test_capital_reservation_and_agent_claim_are_atomic(runtime: LocalRunt
 
 
 @pytest.mark.asyncio
-async def test_completed_strategy_marks_order_recovery_records_closed(runtime: LocalRuntimeStore):
-    user_id, strategy_id, execution_id, order_id = (str(uuid4()) for _ in range(4))
-    client_order_id = f"ord_{uuid4().hex[:16]}"
-    delta_account = str(uuid4())
-    account_id = f"india:{delta_account}"
+async def test_completed_strategy_releases_its_capital_slot(runtime: LocalRuntimeStore):
+    user_id, strategy_id = str(uuid4()), str(uuid4())
     async with runtime.pool.connection() as connection:
         await connection.execute(
             """insert into trade.users (user_id,connection,automation,capital,record)
                values (%s,%s,%s,%s,%s)""",
-            (user_id, Jsonb({"status": "connected", "delta_user_id": delta_account}),
+            (user_id, Jsonb({"status": "connected", "delta_user_id": str(uuid4())}),
              Jsonb({"enabled": False}), Jsonb({"allocation_mode": "half_balance"}),
              Jsonb({"userId": user_id})),
         )
     await runtime.write("strategies", {"id": strategy_id, "user_id": user_id, "status": "active"})
-    await runtime.write("executions", {
-        "id": execution_id, "strategy_id": strategy_id, "status": "completed", "kind": "entry",
+    reservation = await runtime.rpc("reserve_strategy_capital_slot", {
+        "p_user_id": user_id, "p_strategy_id": strategy_id,
+        "p_maximum_slots": 1, "p_budget": "50", "p_total_balance": "100",
     })
-    await runtime.write("execution_orders", {
-        "id": order_id, "execution_id": execution_id, "state": "settled",
-        "client_order_id": client_order_id, "delta_order_id": "exchange_closed",
-    })
-    journal = LocalOrderJournal(runtime.pool, account_id)
-    await journal.call("orderIntents:begin", {
-        "clientOrderId": client_order_id, "payload": '{}', "context": {"strategyId": strategy_id},
-    })
-    await journal.call("orderIntents:resolve", {
-        "clientOrderId": client_order_id, "outcome": {"kind": "accepted", "response": '{"result":{"id":1}}'},
-    })
-    await journal.call("exchangeFills:ingest", {"fills": [{
-        "fillId": "fill_closed", "productId": "101", "orderId": "exchange_closed",
-        "side": "buy", "quantity": "1", "price": "10", "commission": None,
-        "occurredAt": "2026-09-24T12:00:00+00:00",
-    }]})
+    assert reservation["created"] is True
     await runtime.update("strategies", {"status": "completed"}, {"id": f"eq.{strategy_id}"})
-    async with runtime.pool.connection() as connection:
-        for table, key in (("executions", execution_id), ("execution_orders", order_id)):
-            result = await connection.execute(
-                f"select data->>'recovery_closed_at' from trade.{table} where id=%s", (key,)
-            )
-            assert (await result.fetchone())[0]
-        intent = await connection.execute(
-            "select recovery_closed_at from trade.order_intents where account_id=%s and client_order_id=%s",
-            (account_id, client_order_id),
-        )
-        fill = await connection.execute(
-            "select recovery_closed_at from trade.exchange_fills where account_id=%s and fill_id=%s",
-            (account_id, "fill_closed"),
-        )
-        assert (await intent.fetchone())[0] is not None
-        assert (await fill.fetchone())[0] is not None
+    slots = await runtime.select("strategy_capital_slots", {"user_id": f"eq.{user_id}"})
+    assert [(slot["status"], slot["strategy_id"]) for slot in slots] == [("available", None)]
+
+
+@pytest.mark.asyncio
+async def test_redundant_followups_are_cancelled_per_owner(runtime: LocalRuntimeStore):
+    first, second = str(uuid4()), str(uuid4())
+    runs = {}
+    for owner, trigger, minutes in (
+        (first, "agent_follow_up", 30), (first, "london_session", 20),
+        (second, "agent_follow_up", 30), (second, "london_session", 40),
+    ):
+        run_id = str(uuid4())
+        runs[(owner, trigger)] = run_id
+        scheduled = (datetime.now(UTC) + timedelta(minutes=minutes)).isoformat()
+        await runtime.write("automation_agent_runs", {
+            "id": run_id, "user_id": owner, "trigger": trigger, "run_key": f"{trigger}:{run_id}",
+            "scheduled_for": scheduled,
+        })
+    assert await runtime.rpc("cancel_redundant_automation_followups", {}) >= 1
+    status = {
+        key: (await runtime.select("automation_agent_runs", {"id": f"eq.{run_id}"}))[0]["status"]
+        for key, run_id in runs.items()
+    }
+    assert status[(first, "agent_follow_up")] == "cancelled"
+    assert status[(second, "agent_follow_up")] == "scheduled"
+    assert status[(first, "london_session")] == status[(second, "london_session")] == "scheduled"
