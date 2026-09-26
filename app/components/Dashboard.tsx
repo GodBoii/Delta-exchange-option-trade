@@ -151,7 +151,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
             <span className="refresh-state">
               <SwapText>{refreshedAt ? `Updated ${formatClock(refreshedAt.getTime())}` : "Loading"}</SwapText>
             </span>
-            <button type="button" className="button secondary" onClick={() => void load()} disabled={loading}>
+            <button type="button" className="button secondary small" onClick={() => void load()} disabled={loading}>
               {/* Both glyphs share one slot, so the control keeps its width while
                   the request is in flight and the row cannot reflow. */}
               <IconSwap
