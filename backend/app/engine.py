@@ -3,8 +3,8 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
-from contextlib import suppress
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -87,6 +87,8 @@ class AccountSession:
     credentials: dict[str, str]
     events: DeltaEvents | None
     leases: int = 0
+    # Live views keep the private stream alive without blocking credential changes.
+    watchers: int = 0
     last_used: float = 0
 
 
@@ -302,7 +304,7 @@ class TradingEngine:
                 session = None
             if session is None:
                 for owner, idle in list(self.sessions.items()):
-                    if idle.leases == 0 and time.monotonic() - idle.last_used > 300:
+                    if idle.leases == 0 and idle.watchers == 0 and time.monotonic() - idle.last_used > 300:
                         await self.close_session(owner)
                 events = (
                     DeltaEvents(
@@ -362,6 +364,29 @@ class TradingEngine:
                 client.client,
             )
         return client
+
+    @asynccontextmanager
+    async def watch_account(self, user_id: str) -> AsyncIterator[DeltaEvents]:
+        """Keeps an account's private stream open for a live view.
+
+        A live view can stay open for hours, so it must not hold a lease: a lease
+        makes a credential change fail with ``account_credentials_changed``. A
+        watcher only exempts the session from idle cleanup. When the session is
+        replaced or closed, ``events.closed`` turns true and the view reconnects.
+        """
+        client = await self.client_for_user(user_id)
+        session = self.sessions.get(user_id)
+        try:
+            if session is None or session.events is None:
+                raise AppError(503, "Live account events are disabled", "live_events_unavailable")
+            session.watchers += 1
+        finally:
+            await client.close()
+        try:
+            yield session.events
+        finally:
+            session.watchers -= 1
+            session.last_used = time.monotonic()
 
     async def close_session(self, user_id: str) -> None:
         session = self.sessions.pop(user_id, None)
