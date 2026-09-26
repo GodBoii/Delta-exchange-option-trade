@@ -387,7 +387,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
   liveEnabled: boolean;
   backendOnline: boolean;
 }) {
-  const localLibraryOffline = process.env.NEXT_PUBLIC_APPLICATION_STORAGE === "local" && !backendOnline;
+  // The library lives on the trading backend; while it is unreachable, saved strategies are read-only.
+  const libraryOffline = !backendOnline;
   const draftKey = `${DRAFT_STORAGE_KEY}:${userId}`;
   const draftIdKey = `${DRAFT_ID_STORAGE_KEY}:${userId}`;
   const localDraftKey = `${LOCAL_DRAFT_KEY}:${userId}`;
@@ -402,7 +403,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const [savedFingerprint, setSavedFingerprint] = useState("");
   const [libraryState, setLibraryState] = useState<LibraryState>("loading");
-  const [recoveryAt, setRecoveryAt] = useState<number | null>(null);
   const [confirmNew, setConfirmNew] = useState(false);
   const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -455,7 +455,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
     savedId: string | null,
     notify = false
   ): Promise<SavedStrategy | null> => {
-    if (recoveryAt !== null || localLibraryOffline) {
+    if (libraryOffline) {
       onNotice({ tone: "error", text: "The saved library is read-only while the trading backend is offline." });
       return null;
     }
@@ -490,7 +490,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
       if (notify) onNotice({ tone: "error", text: message });
       return null;
     }
-  }, [onNotice, savedStrategies, isOwner, localDraftKey, recoveryAt, localLibraryOffline]);
+  }, [onNotice, savedStrategies, isOwner, localDraftKey, libraryOffline]);
 
   // Browser recovery copy, isolated by the signed-in user's UUID.
   useEffect(() => {
@@ -521,9 +521,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
     async function loadLibrary() {
       setLibraryState("loading");
       try {
-        const { rows, recoveryAt: mirroredAt } = await readStrategyLibrary();
+        const rows = await readStrategyLibrary();
         if (cancelled) return;
-        setRecoveryAt(mirroredAt);
 
         const parsed = rows
           .map(savedStrategyFromRow)
@@ -721,7 +720,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
   }
 
   async function deleteStrategy() {
-    if (recoveryAt !== null || localLibraryOffline) return;
+    if (libraryOffline) return;
     if (!activeSavedId || (activeSaved?.isDefault && !isOwner)) return;
     const deletedId = activeSavedId;
     setLibraryState("saving");
@@ -1163,9 +1162,9 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
               <SwapText>{library.label}</SwapText>
               <small>{activeSaved?.isDefault ? "Shared default" : "Draft recovery on"}</small>
             </p>
-            {recoveryAt !== null && (
+            {libraryOffline && (
               <p role="status" className="library-state tone-warning">
-                Recovery copy from {new Date(recoveryAt).toLocaleString()}. Saved strategies are read-only until the trading backend returns.
+                The trading backend is offline. Saved strategies are read-only until it returns.
               </p>
             )}
             <div className="button-row">
@@ -1175,7 +1174,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                 data-liked={savedToLibrary}
                 ref={saveButton}
                 onClick={() => void persist(strategy, activeSavedId, true)}
-                disabled={busy || recoveryAt !== null || localLibraryOffline}
+                disabled={busy || libraryOffline}
               >
                 <span className="t-like-icon" aria-hidden="true"><Save /></span>
                 {saveParticles}
@@ -1194,7 +1193,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                 type="button"
                 className="button ghost icon-only"
                 onClick={() => setConfirmDelete(true)}
-                disabled={!activeSaved || (activeSaved.isDefault && !isOwner) || busy || recoveryAt !== null || localLibraryOffline}
+                disabled={!activeSaved || (activeSaved.isDefault && !isOwner) || busy || libraryOffline}
                 aria-label="Delete saved strategy"
                 title={activeSaved?.isDefault && !isOwner ? "Built-in strategies cannot be deleted" : "Delete saved strategy"}
               >
