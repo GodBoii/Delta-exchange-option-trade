@@ -283,7 +283,12 @@ async def serve_portfolio(websocket: WebSocket, db: SupabaseAdmin, engine: Any, 
     await websocket.accept()
     try:
         token = await authenticate(websocket)
-        user = await db.auth_user(token)
+        try:
+            user = await db.auth_user(token)
+        except AppError as error:
+            # Supabase answers a malformed or expired token with 403, which
+            # auth_user reports as a verification failure rather than None.
+            raise StreamClosed(CLOSE_UNAUTHORIZED, error.code) from error
         if not user:
             raise StreamClosed(CLOSE_UNAUTHORIZED, "not_authenticated")
         try:
