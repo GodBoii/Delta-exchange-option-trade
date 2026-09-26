@@ -9,9 +9,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
+from psycopg_pool import AsyncConnectionPool
+
 from app.auth import delta_client_for_user
 from app.config import get_settings
-from app.supabase import SupabaseAdmin
+from app.database import Database
 
 
 def open_position_count(response: dict[str, Any]) -> int:
@@ -34,7 +36,9 @@ def open_position_count(response: dict[str, Any]) -> int:
 
 async def inspect(user_id: str) -> dict[str, Any]:
     settings = get_settings()
-    db = SupabaseAdmin(settings)
+    pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=2, open=False)
+    await pool.open(wait=True)
+    db = Database(settings, pool)
     client = None
     try:
         client = await delta_client_for_user(db, settings, user_id)
@@ -77,6 +81,7 @@ async def inspect(user_id: str) -> dict[str, Any]:
         if client is not None:
             await client.close()
         await db.close()
+        await pool.close()
 
 
 def main() -> None:
