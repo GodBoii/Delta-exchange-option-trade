@@ -43,6 +43,16 @@ const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news",
 const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news", "automation"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
+/**
+ * Where a session lands when nothing has been picked yet, or when the picked
+ * tab stops being available: the portfolio once Delta is connected, the
+ * connection step when it can be completed, and public market data otherwise.
+ */
+function landingTab(connected: boolean, backendStatus: BackendStatus): Tab {
+  if (connected) return "dashboard";
+  return backendStatus === "online" ? "connect" : "market";
+}
+
 /** Cheap enough to run alongside the run list without straining rate limits. */
 const ATTENTION_POLL_MS = 60_000;
 
@@ -60,7 +70,9 @@ export default function Home() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
-  const [tab, setTab] = useState<Tab>("builder");
+  // Null until the operator picks a section, so the landing surface follows the
+  // session state once it is known instead of a hard-coded default.
+  const [selectedTab, setTab] = useState<Tab | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [attention, setAttention] = useState(0);
@@ -109,10 +121,9 @@ export default function Home() {
       ? UNCONNECTED_TABS
       : OFFLINE_TABS;
 
-  useEffect(() => {
-    if (availableTabs.includes(tab)) return;
-    setTab(backendStatus === "online" && !connected ? "connect" : "builder");
-  }, [availableTabs, backendStatus, connected, tab]);
+  const tab = selectedTab && availableTabs.includes(selectedTab)
+    ? selectedTab
+    : landingTab(connected, backendStatus);
 
   /**
    * Runs that did not complete cleanly are surfaced on the navigation itself, so
@@ -167,7 +178,7 @@ export default function Home() {
       setUser(null);
       setAccount(null);
       setBackendStatus("offline");
-      setTab("builder");
+      setTab(null);
     } catch (error) {
       setNotice({ tone: "error", text: errorMessage(error) });
     }
