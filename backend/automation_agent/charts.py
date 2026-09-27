@@ -191,16 +191,21 @@ def _ema(values: list[float], period: int) -> list[float]:
 
 
 def render_candlestick_chart(
-    label: str, candles: list[dict[str, Any]], *, as_of_ms: int | None = None, context: dict[str, Any] | None = None
+    label: str,
+    candles: list[dict[str, Any]],
+    *,
+    as_of_ms: int | None = None,
+    context: dict[str, Any] | None = None,
+    base: str = "BTC",
 ) -> bytes:
     usable = _candles(candles)
     if not usable:
         return b""
-    chart = _Chart(f"BTCUSDT | Candlesticks | {label}", as_of_ms, context)
+    chart = _Chart(f"{base}USDT | Candlesticks | {label}", as_of_ms, context)
     xs, ticks, title = _timeline(usable)
     high, low = max(float(c["high"]) for c in usable), min(float(c["low"]) for c in usable)
     pad = max((high - low) * 0.06, high * 0.0001)
-    chart.axes(xs, max(0, low - pad), high + pad, "Price | USDT per BTC", ticks, title)
+    chart.axes(xs, max(0, low - pad), high + pad, f"Price | USDT per {base}", ticks, title)
     step = min((b - a for a, b in zip(xs, xs[1:], strict=False)), default=1)
     width = min(9, max(1, (RIGHT - LEFT) * step / (chart.xmax - chart.xmin) * 0.6))
     closes = [float(c["close"]) for c in usable]
@@ -252,7 +257,7 @@ def render_candlestick_chart(
             ("Shown high / low", f"{_fmt(high)} / {_fmt(low)}"),
             ("Shown close-to-close return", f"{(closes[-1] / closes[0] - 1) * 100:+.2f}%"),
             ("EMA 20 / EMA 50", f"{_fmt(ema20[-1])} / {_fmt(ema50[-1])}"),
-            ("Window VWAP | HLC3 weighted by BTC", _fmt(vwap_values[-1])),
+            (f"Window VWAP | HLC3 weighted by {base}", _fmt(vwap_values[-1])),
             ("Sample", f"{len(usable)} bars | {label}"),
             ("Latest bar opens", _time(latest.get("openTime"))),
         ]
@@ -265,16 +270,21 @@ def render_candlestick_chart(
 
 
 def render_volume_chart(
-    label: str, candles: list[dict[str, Any]], *, as_of_ms: int | None = None, context: dict[str, Any] | None = None
+    label: str,
+    candles: list[dict[str, Any]],
+    *,
+    as_of_ms: int | None = None,
+    context: dict[str, Any] | None = None,
+    base: str = "BTC",
 ) -> bytes:
     usable = _candles(candles)
     volumes = [_volume(c) for c in usable]
     if not usable or all(v is None for v in volumes):
         return b""
-    chart = _Chart(f"BTCUSDT | Traded volume | {label}", as_of_ms, context)
+    chart = _Chart(f"{base}USDT | Traded volume | {label}", as_of_ms, context)
     xs, ticks, title = _timeline(usable)
     maximum = max(v or 0 for v in volumes)
-    chart.axes(xs, 0, maximum * 1.12 if maximum else 1, "Volume | BTC per bar", ticks, title)
+    chart.axes(xs, 0, maximum * 1.12 if maximum else 1, f"Volume | {base} per bar", ticks, title)
     step = min((b - a for a, b in zip(xs, xs[1:], strict=False)), default=1)
     width = min(12, max(1, (RIGHT - LEFT) * step / (chart.xmax - chart.xmin) * 0.65))
     completed = []
@@ -306,22 +316,22 @@ def render_volume_chart(
     ratio = last_closed / comparison if last_closed is not None and comparison else None
     chart.describe(
         [
-            ("Latest completed volume | BTC", _fmt(last_closed)),
-            ("Previous 20 completed bars | mean BTC", _fmt(comparison)),
+            (f"Latest completed volume | {base}", _fmt(last_closed)),
+            (f"Previous 20 completed bars | mean {base}", _fmt(comparison)),
             (
                 "Relative volume | completed / mean",
                 f"{ratio:.2f}x"
                 if ratio is not None
                 else ("Undefined: baseline volume is zero" if comparison == 0 else "Insufficient completed bars"),
             ),
-            ("Latest shown bar", f"{_fmt(volumes[-1])} BTC\n{_status(usable[-1], chart.now)}"),
-            ("Shown total | includes live bar", f"{_fmt(sum(v for v in volumes if v is not None))} BTC"),
+            ("Latest shown bar", f"{_fmt(volumes[-1])} {base}\n{_status(usable[-1], chart.now)}"),
+            ("Shown total | includes live bar", f"{_fmt(sum(v for v in volumes if v is not None))} {base}"),
             ("Sample", f"{len(usable)} bars | {sum(v is None for v in volumes)} missing volumes"),
             ("Interpretation", "Traded base-asset volume. Candle colors are not buy/sell volume."),
         ]
     )
     chart.notes(
-        "Bars measure traded BTC, not USDT turnover. Green/red follow candle direction.",
+        f"Bars measure traded {base}, not USDT turnover. Green/red follow candle direction.",
         "Gold outline marks partial volume. Compare completed bars; do not infer weak flow from an unfinished bar.",
     )
     return chart.save()
@@ -348,10 +358,11 @@ def render_volatility_chart(
     *,
     as_of_ms: int | None = None,
     context: dict[str, Any] | None = None,
+    base: str = "BTC",
 ) -> bytes:
     if periods_per_year <= 0:
         raise ValueError("periods_per_year must be positive")
-    chart = _Chart(f"BTCUSDT | Rolling realized volatility | {label}", as_of_ms, context)
+    chart = _Chart(f"{base}USDT | Rolling realized volatility | {label}", as_of_ms, context)
     usable = [c for c in _candles(candles) if _status(c, chart.now) != "LIVE / incomplete"]
     if len(usable) < 21:
         return b""
@@ -407,12 +418,16 @@ def _book_levels(raw: list[Any], reverse: bool) -> list[tuple[float, float]]:
 
 
 def render_order_book_chart(
-    order_book: dict[str, Any], *, as_of_ms: int | None = None, context: dict[str, Any] | None = None
+    order_book: dict[str, Any],
+    *,
+    as_of_ms: int | None = None,
+    context: dict[str, Any] | None = None,
+    base: str = "BTC",
 ) -> bytes:
     bids, asks = _book_levels(order_book.get("bids") or [], True), _book_levels(order_book.get("asks") or [], False)
     if not bids or not asks:
         return b""
-    chart = _Chart("BTCUSDT | Cumulative order-book depth", as_of_ms, context)
+    chart = _Chart(f"{base}USDT | Cumulative order-book depth", as_of_ms, context)
     bid, ask = bids[0][0], asks[0][0]
     mid = (bid + ask) / 2
     bid_total, ask_total = sum(q for _, q in bids), sum(q for _, q in asks)
@@ -424,9 +439,9 @@ def render_order_book_chart(
         xs,
         0,
         max(bid_total, ask_total) * 1.12,
-        "Cumulative resting quantity | BTC",
+        f"Cumulative resting quantity | {base}",
         ticks,
-        "Limit price | USDT per BTC",
+        f"Limit price | USDT per {base}",
     )
     for levels, color in ((bids, UP), (asks, DOWN)):
         total = 0.0
@@ -444,8 +459,8 @@ def render_order_book_chart(
             ("Best bid / best ask | USDT", f"{_fmt(bid)} / {_fmt(ask)}"),
             ("Spread | USDT and basis points", f"{_fmt(ask - bid)} USDT | {(ask - bid) / mid * 10000:.4f} bps"),
             ("Midpoint | USDT", f"{mid:,.3f}"),
-            (f"Bid depth | {len(bids)} supplied levels", f"{_fmt(bid_total)} BTC"),
-            (f"Ask depth | {len(asks)} supplied levels", f"{_fmt(ask_total)} BTC"),
+            (f"Bid depth | {len(bids)} supplied levels", f"{_fmt(bid_total)} {base}"),
+            (f"Ask depth | {len(asks)} supplied levels", f"{_fmt(ask_total)} {base}"),
             ("Displayed-depth imbalance", f"{(bid_total - ask_total) / (bid_total + ask_total) * 100:+.2f}%"),
             ("Feed timestamp", _time(order_book.get("eventTime"))),
             (
@@ -456,6 +471,6 @@ def render_order_book_chart(
     )
     chart.notes(
         "Bids accumulate from best bid toward lower prices; asks from best ask toward higher prices.",
-        "Imbalance = (bid BTC - ask BTC) / total BTC. Resting orders can cancel; this is not executed flow.",
+        f"Imbalance = (bid {base} - ask {base}) / total {base}. Resting orders can cancel; this is not executed flow.",
     )
     return chart.save()
