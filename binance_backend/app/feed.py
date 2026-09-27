@@ -340,7 +340,7 @@ class BinanceSpotFeed:
             "type": "market_update",
             "sequence": self.sequence,
             "receivedAt": self.last_event_at or int(time.time() * 1000),
-            "symbol": "BTCUSDT",
+            "symbol": self.settings.binance_symbol,
             "source": "Binance Spot",
             "ticker": dict(self.ticker),
             "candles": {interval: dict(candle) for interval, candle in self.current_candles.items()},
