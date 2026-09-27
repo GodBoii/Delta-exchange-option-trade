@@ -42,6 +42,7 @@ def create_news_agent(
     debug_mode: bool = True,
     include_research_tools: bool = True,
     persist_session: bool = True,
+    asset: str = "BTC",
 ) -> Agent:
     """Build the structured second-stage news analysis agent."""
     settings = settings or NewsAgentSettings.load()
@@ -71,7 +72,7 @@ def create_news_agent(
         [
             "Prefer primary official sources, then independently corroborated established or licensed reporting.",
             "Record publication timing, event status, source class, contradictions, corrections, and missing facts.",
-            "Separate BTC directional impact from volatility impact. Direction may be mixed or uncertain.",
+            f"Separate {asset} directional impact from volatility impact. Direction may be mixed or uncertain.",
             (
                 "For political news, identify the mechanism: tariffs, inflation, rates, USD, regulation, fiscal "
                 "policy, or risk appetite."
@@ -110,7 +111,7 @@ def create_news_agent(
         model=model,
         description=(
             "A financial-news research agent that finds current evidence, distinguishes claims from facts, "
-            "and assesses possible BTC volatility and directional transmission channels."
+            f"and assesses possible {asset} volatility and directional transmission channels."
         ),
         instructions=instructions,
         expected_output=(
