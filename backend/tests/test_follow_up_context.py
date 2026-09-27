@@ -63,10 +63,10 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
     captured = {}
     monkeypatch.setattr(team, "read_parent_run_context", lambda *_, **__: previous)
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
-        collect_btc_market_packet=lambda: {"source": "Binance Spot"}, collect_delta_option_context=lambda: {},
+        collect_market_packet=lambda: {"source": "Binance Spot"}, collect_delta_option_context=lambda: {},
     ))
     monkeypatch.setattr(team, "ChartStorage", lambda _: SimpleNamespace(save_run_charts=lambda **_: []))
-    monkeypatch.setattr(team, "_chart_artifacts", lambda _: [
+    monkeypatch.setattr(team, "_chart_artifacts", lambda *_: [
         SimpleNamespace(id="btc-test", context={"readingNotes": ["Main chart instructions"]})
     ])
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: SNAPSHOT)
