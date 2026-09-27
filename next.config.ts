@@ -4,9 +4,11 @@ const supabaseOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://xphxxkme
 const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 // The live portfolio stream is a WebSocket on the same trading API origin.
 const apiWsOrigin = apiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-const binanceApiOrigin = process.env.NEXT_PUBLIC_BINANCE_API_URL ?? "http://localhost:8001";
+const marketOrigin = (configured: string | undefined, fallback: string) =>
+  configured?.trim().replace(/\/+$/, "") || fallback;
+const binanceApiOrigin = marketOrigin(process.env.NEXT_PUBLIC_BINANCE_API_URL, "http://localhost:8001");
 const binanceWsOrigin = binanceApiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-const binanceEthApiOrigin = process.env.NEXT_PUBLIC_BINANCE_ETH_API_URL ?? "http://127.0.0.1:8003";
+const binanceEthApiOrigin = marketOrigin(process.env.NEXT_PUBLIC_BINANCE_ETH_API_URL, "http://127.0.0.1:8003");
 const binanceEthWsOrigin = binanceEthApiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const apiUrl = new URL(apiOrigin);
 
