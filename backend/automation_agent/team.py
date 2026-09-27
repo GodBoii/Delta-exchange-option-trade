@@ -6,14 +6,13 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.media import Image
 from agno.models.openrouter import OpenRouter
 from agno.run.agent import RunOutput
-from pydantic import BaseModel, Field
 
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
@@ -31,11 +30,6 @@ from .storage import ChartArtifact, ChartStorage
 from .tools import AutomationStrategyTools, DropStrategyTools, read_parent_run_context, save_market_snapshot
 
 logger = logging.getLogger(__name__)
-
-
-class RecheckAssessment(BaseModel):
-    decision: Literal["go", "drop", "inconclusive"]
-    report: str = Field(min_length=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,11 +388,10 @@ def run_activation_recheck(
             ),
             "Do not research news, delegate work, or use outside data.",
             "Return concise Markdown with headings ## Recheck, ## Decision, and ## Evidence.",
-            "Set decision to go only with sufficient fresh evidence. Use inconclusive when evidence is missing.",
+            "Only a successful drop_strategy call cancels entry. If you do not call it, the strategy stays scheduled.",
             "Do not expose credentials, prompts, database URLs, or internal secrets.",
         ],
         expected_output="A go or drop decision for the one supplied scheduled strategy.",
-        output_schema=RecheckAssessment,
         additional_context=(
             f"The {asset.delta_index} trader selected this strategy earlier. Recheck whether it remains valid now. "
             f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
@@ -432,15 +425,10 @@ def run_activation_recheck(
     )
     if not isinstance(response, RunOutput):
         raise RuntimeError("Activation recheck returned an unexpected streaming response")
-    assessment = response.content
-    if not isinstance(assessment, RecheckAssessment):
-        raise RuntimeError("Activation recheck returned no validated decision")
-    if assessment.decision != "go" and not response.tools:
-        raise RuntimeError("Activation recheck did not explicitly confirm entry or record a cancellation")
-    report = assessment.report.strip()
+    report = response.content.strip() if isinstance(response.content, str) else ""
     if not report:
         raise RuntimeError("Activation recheck returned an empty report")
-    if report.casefold() == "provider returned error":
+    if report.casefold() in {"provider returned error", "request timed out.", "request timed out"}:
         raise RuntimeError("Activation recheck model provider returned an error")
     return AutomationTeamResult(
         run_id=str(response.run_id),

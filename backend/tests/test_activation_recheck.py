@@ -115,8 +115,12 @@ def test_market_tool_and_charts_exclude_delta():
     assert team._chart_artifacts({"deltaExecutionContext": {"openInterestHistory": [{"close": 1}] * 3}}) == []
 
 
-@pytest.mark.parametrize("decision", ["go", "inconclusive"])
-def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkeypatch, decision):
+@pytest.mark.parametrize("report", [
+    "## Decision\n\nGo. The setup still holds.",
+    "## Decision\n\nInconclusive. Fresh evidence is limited.",
+    '{"decision": "go", "report": "unfinished',
+])
+def test_recheck_without_drop_uses_plain_report(monkeypatch, report):
     captured = {}
     packet = {"source": "Binance Spot", "timeframes": {}}
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
@@ -137,7 +141,7 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
 
         def run(self, prompt, **kwargs):
             captured["input"] = kwargs
-            return RunOutput(content=team.RecheckAssessment(decision=decision, report="## Decision\n\nEvidence."))
+            return RunOutput(content=report)
 
     monkeypatch.setattr(team, "Agent", Agent)
     kwargs = dict(
@@ -149,10 +153,6 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
                          "selectedStrategy": {"name": "Short strangle", "activationTime": ACTIVATION.isoformat()},
                          "originalSelection": {"finalResponse": "Exact original report"}},
     )
-    if decision == "inconclusive":
-        with pytest.raises(RuntimeError, match="did not explicitly confirm"):
-            team.run_activation_recheck(**kwargs)
-        return
     result = team.run_activation_recheck(**kwargs)
     assert captured["model"].reasoning_effort == "low"
     assert captured["model"].timeout == 240
@@ -160,6 +160,9 @@ def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkey
     assert "Recheck chart instructions" in captured["additional_context"]
     assert len(captured["tools"]) == 1
     assert set(captured["tools"][0].functions) == {"drop_strategy"}
+    assert "output_schema" not in captured
     assert captured["input"]["images"][0].content == b"png-bytes"
     assert captured["input"]["images"][0].url is None
     assert result.member_responses == []
+    assert result.tool_calls == []
+    assert result.report == report
