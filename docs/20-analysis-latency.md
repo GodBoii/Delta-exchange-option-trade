@@ -12,8 +12,9 @@ research through an Agno Team. Saved results retain the existing `memberResponse
 the news report remains available to current readers.
 
 Rechecks are independent jobs, scheduled at activation minus seven minutes. They retain fresh
-market collection and the two short-term charts. The model must return an explicit validated
-decision. An inconclusive response without a recorded cancellation cannot confirm entry.
+market collection and the two short-term charts. A completed model response with no
+`drop_strategy` call reconfirms the entry. A successful `drop_strategy` call cancels it.
+Missing responses and provider errors still fail the run.
 
 An isolated worker process enforces the 300-second recheck deadline, including market I/O,
 model inference, and persistence. The caller allows ten additional seconds for cleanup and
@@ -105,7 +106,7 @@ is still in the future. Running and imminent jobs remain unchanged.
 
 Regression tests cover per-tool budgets, nested dossier limits, concurrent downloads, cache reuse,
 duplicate bodies, private redirects, oversized responses, cancellation, process termination,
-independent claims, reserved recheck capacity, schedule migration and inconclusive rechecks.
+independent claims, reserved recheck capacity, schedule migration and no-tool rechecks.
 Local verification passed 309 Python tests and 32 Convex tests, TypeScript checking, targeted
 Ruff checks and `git diff --check`. Database migrations and production deployment have not run.
 Logs now separate fetch, parse, tool and model token usage. End-to-end model speed and deployed
