@@ -8,7 +8,11 @@ from app.automation_schedule import IST, fixed_runs_between
 STEP_MS = 600_000
 
 
-def session_history(payload: dict[str, Any], now: datetime, trigger: str | None = None) -> dict[str, Any]:
+def session_history(
+    payload: dict[str, Any], now: datetime, trigger: str | None = None, *, base: str = "BTC"
+) -> dict[str, Any]:
+    # The market service stores base-asset volume as ``volumeBtc`` for every symbol.
+    unit = base.capitalize()
     now = now.astimezone(UTC)
     boundaries = fixed_runs_between(now - timedelta(days=3), now)
     matching = [b for b in boundaries if b.trigger == (trigger or boundaries[-1].trigger)]
@@ -33,9 +37,9 @@ def session_history(payload: dict[str, Any], now: datetime, trigger: str | None 
             "averageVolatilityAnnualizedPercent": (
                 sum(r["volatilityAnnualizedPercent"] for r in selected) / count if count else None
             ),
-            "observedTradedVolumeBtc": sum(r["volumeBtc"] for r in selected) if count else None,
+            f"observedTradedVolume{unit}": sum(r["volumeBtc"] for r in selected) if count else None,
             "observedTradedVolumeUsdt": sum(r["volumeUsdt"] for r in selected) if count else None,
-            "averageTenMinuteVolumeBtc": sum(r["volumeBtc"] for r in selected) / count if count else None,
+            f"averageTenMinuteVolume{unit}": sum(r["volumeBtc"] for r in selected) / count if count else None,
         }
 
     return {
