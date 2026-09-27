@@ -21,13 +21,21 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.default_strategies import default_strategy_definitions
+from app.default_strategies import builtin_strategy_definitions
 from app.models import StrategyDefinition
 
 # Stable identities for templates added after the original catalog, so reruns stay idempotent.
 FIXED_IDS = {
     "Bull put credit spread": "10000000-0000-4000-8000-000000000014",
     "Bear call credit spread": "10000000-0000-4000-8000-000000000015",
+}
+ETH_FIXED_IDS = {
+    "ETH Long call": "20000000-0000-4000-8000-000000000001",
+    "ETH Long put": "20000000-0000-4000-8000-000000000002",
+    "ETH Long ATM straddle": "20000000-0000-4000-8000-000000000003",
+    "ETH Short ATM straddle": "20000000-0000-4000-8000-000000000004",
+    "ETH Long ATM straddle - next-day expiry": "20000000-0000-4000-8000-000000000005",
+    "ETH Short ATM straddle - next-day expiry": "20000000-0000-4000-8000-000000000006",
 }
 OPEN_STATUSES = ("scheduled", "executing_entry", "active", "executing_exit", "attention")
 
@@ -57,7 +65,7 @@ def seed(cursor: psycopg.Cursor, apply: bool) -> int:
     existing = {row["name"] for row in shared_templates(cursor)}
     now = datetime.now(UTC)
     created = 0
-    for item in default_strategy_definitions(now):
+    for item in builtin_strategy_definitions(now):
         if item.name in existing:
             continue
         print(f"{'Creating' if apply else 'Would create'}: {item.name}")
@@ -68,7 +76,7 @@ def seed(cursor: psycopg.Cursor, apply: bool) -> int:
                    (id,user_id,name,definition_json,enabled_for_ai,version,source_run_id,created_at,updated_at)
                    values (%s,null,%s,%s,true,1,null,%s,%s)""",
                 (
-                    FIXED_IDS.get(item.name, str(uuid4())),
+                    {**FIXED_IDS, **ETH_FIXED_IDS}.get(item.name, str(uuid4())),
                     item.name,
                     Jsonb(item.model_dump(mode="json", exclude_none=True)),
                     now,
@@ -79,7 +87,7 @@ def seed(cursor: psycopg.Cursor, apply: bool) -> int:
 
 
 def descriptions(cursor: psycopg.Cursor, apply: bool) -> int:
-    expected = {item.name: item.description for item in default_strategy_definitions(datetime.now(UTC))}
+    expected = {item.name: item.description for item in builtin_strategy_definitions(datetime.now(UTC))}
     rows = shared_templates(cursor)
     unknown = sorted(row["name"] for row in rows if row["name"] not in expected)
     if unknown:
