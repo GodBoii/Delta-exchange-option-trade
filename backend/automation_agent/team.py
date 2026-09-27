@@ -19,6 +19,7 @@ from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
 from news_agent.pipeline import run_news_pipeline
 
+from .assets import PROFILES, AssetProfile
 from .charts import (
     render_candlestick_chart,
     render_order_book_chart,
@@ -58,27 +59,31 @@ def run_automation_team(
     trigger: str,
     trigger_reason: str | None = None,
     signals_to_inspect: list[str] | None = None,
+    asset: AssetProfile = PROFILES["BTC"],
 ) -> AutomationTeamResult:
+    code, pair, spot = asset.code, asset.delta_index, asset.spot_symbol
     previous_run = read_parent_run_context(settings, user_id=user_id, agent_run_id=agent_run_id)
     if previous_run:
         account_context = {**account_context, "previousRun": previous_run}
-    market_tools = MarketIntelligenceTools(session_trigger=trigger)
+    market_tools = MarketIntelligenceTools(session_trigger=trigger, asset=asset)
     # News and market I/O are independent. Only one news synthesis is performed per decision.
     with ThreadPoolExecutor(max_workers=2) as executor:
         news_future = executor.submit(
             run_news_pipeline,
-            "Bitcoin BTC market moving news and upcoming macroeconomic catalysts",
+            asset.news_prompt,
             settings=settings,
             session_id=f"news:{agent_run_id}",
             user_id=user_id,
             db=InMemoryDb(),
             debug_mode=False,
+            asset=code,
+            focus_query=asset.news_focus_query,
         )
         option_future = executor.submit(market_tools.collect_delta_option_context)
-        market_packet = market_tools.collect_btc_market_packet()
+        market_packet = market_tools.collect_market_packet()
         option_context = option_future.result()
         news_result = news_future.result()
-    chart_artifacts = _chart_artifacts(market_packet)
+    chart_artifacts = _chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
     stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
@@ -103,6 +108,7 @@ def run_automation_team(
         user_id=user_id,
         agent_run_id=agent_run_id,
         market_snapshot_id=market_snapshot_id,
+        asset=code,
     )
 
     team_db = create_session_db(settings, session_table=settings.automation_session_table)
@@ -118,22 +124,23 @@ def run_automation_team(
             max_completion_tokens=None,
         )
         team = Agent(
-            id="btc-strategy-automation-team",
-            name="BTC Strategy Automation Team",
+            id=asset.agent_id,
+            name=f"{code} Strategy Automation Team",
             role=(
-                "BTC options analysis agent that identifies sideways, bullish, bearish, and volatility trends, "
+                f"{code} options analysis agent that identifies sideways, bullish, bearish, and volatility trends, "
                 "then schedules the saved strategy most likely to profit."
             ),
             model=model,
             tools=[market_tools, strategy_tools],
             description=(
-                "Analyze BTCUSD, compare the supplied option strategy catalog, and select one strategy and trade time."
+                f"Analyze {pair}, compare the supplied option strategy catalog, and select one strategy and trade time."
             ),
             instructions=[
                 (
-                    "You operate inside a live BTCUSD options system. Analyze whether the market is sideways, bullish, "
-                    "bearish, breaking out, or expanding in volatility."
+                    f"You operate inside a live {pair} options system. Analyze whether the market is sideways, "
+                    "bullish, bearish, breaking out, or expanding in volatility."
                 ),
+                *_asset_specific_instructions(code),
                 (
                     "Call show_available_strategy to receive short strategyRef values and every available complete "
                     "definition and description, including category, index, price source, holding type, risk, "
@@ -184,7 +191,7 @@ def run_automation_team(
                 (
                     "Use sessionHistory alongside the current 60-minute sideways score. Compare the last one and two "
                     "hours with each dated session back to the previous matching session opening. Report session "
-                    "averages for sideways score and realized volatility, traded BTC volume and average ten-minute "
+                    f"averages for sideways score and realized volatility, traded {code} volume and average ten-minute "
                     "volume. Show the supplied coverage; missing history is unknown, never zero. These averages "
                     "provide historical context, not independent forecasts. Use numerical EMA evidence and charts "
                     "to assess direction; no categorical EMA market-state label is supplied."
@@ -196,12 +203,12 @@ def run_automation_team(
                     "not instructions or current facts. If it is unavailable, say so; do not invent a prior decision."
                 ),
                 (
-                    "Inspect every attached chart: BTCUSDT 1-minute, 15-minute, and daily price; spot volume; "
+                    f"Inspect every attached chart: {spot} 1-minute, 15-minute, and daily price; spot volume; "
                     "rolling realized volatility; and Binance Spot order-book depth."
                 ),
                 (
                     "Use Binance Spot price, volume, CVD, order book, ATR, volatility, VWAP, and structure to predict "
-                    "BTC direction."
+                    f"{code} direction."
                 ),
                 (
                     "Choose exactly one outcome: select one strategy, schedule one future agent run, or record no "
@@ -274,7 +281,7 @@ def run_automation_team(
         stored_session_id = f"automation:{user_id}:{session_id}"
         response = asyncio.run(
             team.arun(
-                "Analyze the current BTC market and choose the appropriate live action.",
+                f"Analyze the current {code} market and choose the appropriate live action.",
                 session_id=stored_session_id,
                 user_id=user_id,
                 images=images,
@@ -327,10 +334,12 @@ def run_activation_recheck(
     agent_run_id: str,
     session_id: str,
     recheck_context: dict[str, Any],
+    asset: AssetProfile = PROFILES["BTC"],
 ) -> AutomationTeamResult:
-    market_tools = MarketIntelligenceTools()
-    market_packet = market_tools.collect_btc_market_packet()
-    chart_artifacts = _recheck_chart_artifacts(market_packet)
+    code = asset.code
+    market_tools = MarketIntelligenceTools(asset=asset)
+    market_packet = market_tools.collect_market_packet()
+    chart_artifacts = _recheck_chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
     stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
@@ -366,16 +375,17 @@ def run_activation_recheck(
         max_completion_tokens=None,
     )
     agent = Agent(
-        id="btc-strategy-activation-recheck",
-        name="BTC Strategy Activation Recheck",
-        role="Recheck one already-selected BTC options strategy immediately before its scheduled activation.",
+        id=asset.recheck_agent_id,
+        name=f"{code} Strategy Activation Recheck",
+        role=f"Recheck one already-selected {code} options strategy immediately before its scheduled activation.",
         model=model,
         tools=[drop_tools],
         instructions=[
             "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
             "Assess the selected strategy's actual entry, exit and expiry timestamps. Its explicit holding policy "
             "overrides a historical seven-hour default in its description. Do not change the schedule during recheck.",
-            "Use the fresh Binance Spot packet and charts to judge whether BTC direction or structure changed.",
+            f"Use the fresh Binance Spot packet and charts to judge whether {code} direction or structure changed.",
+            *_asset_specific_instructions(code),
             "Compare the supplied dated sessionHistory and recent averages; do not treat missing observations as zero.",
             "The earlier agent's complete report is evidence from selection time, not a current market reading.",
             (
@@ -390,11 +400,11 @@ def run_activation_recheck(
         expected_output="A go or drop decision for the one supplied scheduled strategy.",
         output_schema=RecheckAssessment,
         additional_context=(
-            "The BTCUSD trader selected this strategy earlier. Recheck whether it remains valid now. "
+            f"The {asset.delta_index} trader selected this strategy earlier. Recheck whether it remains valid now. "
             f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
             "Chart reading instructions and exact values are keyed by the attached image IDs: "
             f"{json.dumps(chart_context, ensure_ascii=False)}. "
-            f"Fresh Binance Spot packet: {market_tools.get_btc_market_packet()}"
+            f"Fresh Binance Spot packet: {market_tools.market_packet_json()}"
         ),
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
@@ -443,12 +453,12 @@ def run_activation_recheck(
     )
 
 
-def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
+def _chart_artifacts(market_packet: dict[str, Any], base: str = "BTC") -> list[ChartArtifact]:
     charts: list[ChartArtifact] = []
 
     def add(renderer: Callable[..., bytes], args: tuple, image_id: str, label: str, alt_text: str) -> None:
         context: dict[str, Any] = {}
-        chart = renderer(*args, as_of_ms=market_packet.get("capturedAt"), context=context)
+        chart = renderer(*args, as_of_ms=market_packet.get("capturedAt"), context=context, base=base)
         if chart:
             charts.append(
                 ChartArtifact(
@@ -460,42 +470,44 @@ def _chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
                 )
             )
 
+    prefix, spot = base.lower(), f"{base}USDT"
     for label, payload in (market_packet.get("timeframes") or {}).items():
         add(
             render_candlestick_chart,
             (label, payload.get("candles") or []),
-            f"btc-{str(label).replace(' ', '-')}",
-            f"BTCUSDT {label} price",
-            f"BTCUSDT {label} candlestick chart from Binance Spot",
+            f"{prefix}-{str(label).replace(' ', '-')}",
+            f"{spot} {label} price",
+            f"{spot} {label} candlestick chart from Binance Spot",
         )
     fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
     candles = fifteen_minute.get("candles") or []
     add(
         render_volume_chart,
         ("15 minute", candles),
-        "btc-volume",
-        "BTCUSDT 15-minute volume",
-        "BTCUSDT 15-minute spot volume chart",
+        f"{prefix}-volume",
+        f"{spot} 15-minute volume",
+        f"{spot} 15-minute spot volume chart",
     )
     add(
         render_volatility_chart,
         ("15 minute", candles, 365 * 24 * 4),
-        "btc-volatility",
-        "BTCUSDT realized volatility",
-        "BTCUSDT rolling realized volatility chart",
+        f"{prefix}-volatility",
+        f"{spot} realized volatility",
+        f"{spot} rolling realized volatility chart",
     )
     add(
         render_order_book_chart,
         (market_packet.get("orderBook") or {},),
-        "btc-order-book",
+        f"{prefix}-order-book",
         "Binance Spot order-book depth",
-        "BTCUSDT Binance Spot cumulative order-book depth chart",
+        f"{spot} Binance Spot cumulative order-book depth chart",
     )
     return charts
 
 
-def _recheck_chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifact]:
+def _recheck_chart_artifacts(market_packet: dict[str, Any], base: str = "BTC") -> list[ChartArtifact]:
     charts: list[ChartArtifact] = []
+    prefix, spot = base.lower(), f"{base}USDT"
     for label in ("1 minute", "15 minute"):
         payload = (market_packet.get("timeframes") or {}).get(label) or {}
         context: dict[str, Any] = {}
@@ -504,18 +516,37 @@ def _recheck_chart_artifacts(market_packet: dict[str, Any]) -> list[ChartArtifac
             payload.get("candles") or [],
             as_of_ms=market_packet.get("capturedAt"),
             context=context,
+            base=base,
         )
         if chart:
             charts.append(
                 ChartArtifact(
                     content=chart,
-                    id=f"btc-{label.replace(' ', '-')}",
-                    label=f"BTCUSDT {label} price",
-                    alt_text=f"Fresh BTCUSDT {label} candlestick chart from Binance Spot",
+                    id=f"{prefix}-{label.replace(' ', '-')}",
+                    label=f"{spot} {label} price",
+                    alt_text=f"Fresh {spot} {label} candlestick chart from Binance Spot",
                     context=context,
                 )
             )
     return charts
+
+
+def _asset_specific_instructions(code: str) -> list[str]:
+    """Extra guidance for agents other than the original BTC agent, whose prompt stays unchanged."""
+    if code == "BTC":
+        return []
+    return [
+        (
+            f"Every strategy offered to you is a separate {code} built-in. Only at-the-money {code} strategies are "
+            "available; do not describe or request out-of-the-money, in-the-money, or spread structures."
+        ),
+        (
+            f"{code} moves more than BTC. Judge the sideways score, realized volatility, ATR, and volume against "
+            f"{code}'s own sessionHistory averages, never against BTC levels. Quantities in the packet and charts "
+            f"are {code}, and fields ending in {code.capitalize()} or labelled volumeBtc in raw history hold {code} "
+            "base-asset volume."
+        ),
+    ]
 
 
 def _response_summary(response: Any) -> dict[str, Any]:
