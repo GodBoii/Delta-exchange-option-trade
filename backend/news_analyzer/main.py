@@ -14,8 +14,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.assets import DEFAULT_ASSET, Asset
 from app.decision_report import replace_model_decision
 from app.shared_analysis import SHARED_USER_ID
+from automation_agent.assets import asset_profile
 from automation_agent.team import run_activation_recheck, run_automation_team
 from automation_agent.tools import confirm_activation_recheck, read_automation_state
 from news_agent.config import NEWS_TIMEOUT_SECONDS, RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
@@ -102,6 +104,8 @@ class AutomationAnalysisRequest(BaseModel):
     )
     triggerReason: str | None = Field(default=None, max_length=1000)
     signalsToInspect: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=10)
+    # Omitted by callers that predate ETH; those runs belong to the BTC agent.
+    asset: Asset = DEFAULT_ASSET
 
 
 def _stored_session_id(user_id: str, public_session_id: str) -> str:
@@ -362,10 +366,11 @@ def _run_analysis(body: NewsAnalysisRequest, trace_id: str = "untracked") -> dic
 def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> dict[str, Any]:
     started_at = time.perf_counter()
     logger.info(
-        "Automation analysis started trace_id=%s run_id=%s user_id=%s model=%s",
+        "Automation analysis started trace_id=%s run_id=%s user_id=%s asset=%s model=%s",
         trace_id,
         body.agentRunId,
         body.userId,
+        body.asset,
         settings.automation_model_id,
     )
     try:
@@ -376,6 +381,7 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
                 agent_run_id=body.agentRunId,
                 session_id=body.sessionId,
                 recheck_context=body.accountContext,
+                asset=asset_profile(body.asset),
             )
             if result.tool_calls:
                 recorded = read_automation_state(settings, user_id=body.userId, agent_run_id=body.agentRunId)
@@ -398,6 +404,7 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
                 trigger=body.trigger,
                 trigger_reason=body.triggerReason,
                 signals_to_inspect=body.signalsToInspect,
+                asset=asset_profile(body.asset),
             )
         state = read_automation_state(
             settings,
