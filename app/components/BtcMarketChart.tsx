@@ -223,6 +223,14 @@ const BOTTOM = 530;
 const EMPTY_CANDLES: Candle[] = [];
 
 export default function BtcMarketChart() {
+  const [asset, setAsset] = useState<"BTC" | "ETH">("BTC");
+  return <MarketChart key={asset} asset={asset} onAssetChange={setAsset} />;
+}
+
+function MarketChart({ asset, onAssetChange }: { asset: "BTC" | "ETH"; onAssetChange: (asset: "BTC" | "ETH") => void }) {
+  const spotSymbol = `${asset}USDT`;
+  const deltaSymbol = `${asset}USD`;
+  const route = deltaSymbol.toLowerCase();
   const [interval, setIntervalValue] = useState("1h");
   const [data, setData] = useState<MarketResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -243,8 +251,8 @@ export default function BtcMarketChart() {
     const requestedInterval = interval;
     if (!quiet) setLoading(true);
     try {
-      const origin = marketDataOrigin();
-      const response = await fetch(`${origin}/api/market/btcusd?interval=${requestedInterval}&limit=240`, {
+      const origin = marketDataOrigin(asset);
+      const response = await fetch(`${origin}/api/market/${route}?interval=${requestedInterval}&limit=240`, {
         cache: "no-store",
         signal: AbortSignal.timeout(8_000),
       });
@@ -255,17 +263,20 @@ export default function BtcMarketChart() {
       if (payload.interval !== requestedInterval) {
         throw new Error(`Market response returned ${payload.interval || "an unknown interval"} instead of ${requestedInterval}`);
       }
+      if (payload.symbol !== spotSymbol || payload.deltaContext?.symbol !== deltaSymbol) {
+        throw new Error(`Market service returned the wrong instrument for ${deltaSymbol}`);
+      }
       if (requestId !== loadRequestRef.current) return;
       setData({ ...payload, candles: normalizeCandles(payload.candles, 240) });
       setUpdatedAt(new Date());
       setError("");
     } catch (nextError) {
       if (requestId !== loadRequestRef.current) return;
-      setError(errorMessage(nextError, "BTCUSDT market data is temporarily unavailable."));
+      setError(errorMessage(nextError, `${spotSymbol} market data is temporarily unavailable.`));
     } finally {
       if (!quiet && requestId === loadRequestRef.current) setLoading(false);
     }
-  }, [interval]);
+  }, [asset, deltaSymbol, interval, route, spotSymbol]);
 
   useEffect(() => {
     setHovered(null);
@@ -283,7 +294,7 @@ export default function BtcMarketChart() {
       if (stopped) return;
       setFeedState(attempt ? "reconnecting" : "connecting");
       try {
-        socket = new WebSocket(`${marketDataWebSocketOrigin()}/ws/market/btcusd`);
+        socket = new WebSocket(`${marketDataWebSocketOrigin(asset)}/ws/market/${route}`);
       } catch (nextError) {
         setFeedError(errorMessage(nextError, "Could not connect to live market updates."));
         setFeedState("offline");
@@ -293,7 +304,7 @@ export default function BtcMarketChart() {
       socket.onmessage = event => {
         try {
           const update = JSON.parse(event.data) as MarketUpdate;
-          if (update.type !== "market_update") return;
+          if (update.type !== "market_update" || update.symbol !== spotSymbol || update.deltaContext?.symbol !== deltaSymbol) return;
           setFeedState(update.realtime.connected ? "live" : "reconnecting");
           setFeedError(update.realtime.lastError ? errorMessage(new Error(update.realtime.lastError), "Live market updates are reconnecting.") : "");
           setUpdatedAt(new Date(update.receivedAt));
@@ -333,7 +344,7 @@ export default function BtcMarketChart() {
       if (reconnectTimer != null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, []);
+  }, [asset, deltaSymbol, route, spotSymbol]);
 
   const allCandles = data?.interval === interval ? data.candles : EMPTY_CANDLES;
   const totalCandles = allCandles.length;
@@ -361,18 +372,21 @@ export default function BtcMarketChart() {
   return <div className="market-page">
     <SectionHeading
       title="Market analysis"
-      actions={
+      actions={<div className="market-heading-actions">
+        <div className="market-asset-toggle" role="group" aria-label="Market instrument">
+          {(["BTC", "ETH"] as const).map(option => <button key={option} type="button" aria-pressed={asset === option} onClick={() => onAssetChange(option)}>{option}USD</button>)}
+        </div>
         <button type="button" className="button secondary small" onClick={() => void load()} disabled={loading}>
           <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
         </button>
-      }
+      </div>}
     />
 
     <section className="market-terminal">
       <header className="market-toolbar">
         <div className="market-symbol">
-          <span className="market-coin">₿</span>
-          <div><strong>BTCUSDT</strong><small>Bitcoin / Tether · Spot market</small></div>
+          <span className="market-coin">{asset === "BTC" ? "₿" : "Ξ"}</span>
+          <div><strong>{spotSymbol}</strong><small>{asset === "BTC" ? "Bitcoin" : "Ethereum"} / Tether · Spot market</small></div>
           <span className="market-source">BINANCE</span>
         </div>
         {/* A small set of mutually exclusive options with a moving highlight,
@@ -402,10 +416,10 @@ export default function BtcMarketChart() {
         {/* The last trade arrives over a websocket and can sit unchanged for
             seconds at a time, so each update re-enters with a blurred slide.
             Without it a price tick is indistinguishable from a static number. */}
-        <div className="market-last-price"><small>BTCUSDT · SPOT</small><strong><AnimatedNumber value={money(data.ticker.lastPrice)} minReplayMs={700} /></strong><span className={positive ? "up" : "down"}>{positive ? "+" : ""}{data.ticker.priceChange.toLocaleString(undefined, { maximumFractionDigits: 1 })} ({positive ? "+" : ""}{data.ticker.priceChangePercent.toFixed(2)}%)</span></div>
+        <div className="market-last-price"><small>{spotSymbol} · SPOT</small><strong><AnimatedNumber value={money(data.ticker.lastPrice)} minReplayMs={700} /></strong><span className={positive ? "up" : "down"}>{positive ? "+" : ""}{data.ticker.priceChange.toLocaleString(undefined, { maximumFractionDigits: 1 })} ({positive ? "+" : ""}{data.ticker.priceChangePercent.toFixed(2)}%)</span></div>
         <MarketStat label="24h high" value={money(data.ticker.highPrice)} />
         <MarketStat label="24h low" value={money(data.ticker.lowPrice)} />
-        <MarketStat label="24h volume" value={`${compact(data.ticker.baseVolume)} BTC`} />
+        <MarketStat label="24h volume" value={`${compact(data.ticker.baseVolume)} ${asset}`} />
         <MarketStat label="24h trades" value={compact(data.ticker.tradeCount)} />
       </div>}
 
@@ -416,7 +430,7 @@ export default function BtcMarketChart() {
           <span>H <b>{price(activeCandle.high)}</b></span>
           <span>L <b>{price(activeCandle.low)}</b></span>
           <span>C <b className={activeCandle.close >= activeCandle.open ? "up" : "down"}>{price(activeCandle.close)}</b></span>
-          <span>Vol <b>{activeCandle.baseVolume.toFixed(2)} BTC</b></span>
+          <span>Vol <b>{activeCandle.baseVolume.toFixed(2)} {asset}</b></span>
           {data?.ticker.bestBid && <span>Bid <b>{price(data.ticker.bestBid)}</b></span>}
           {data?.ticker.bestAsk && <span>Ask <b>{price(data.ticker.bestAsk)}</b></span>}
         </> : <span>Waiting for candles…</span>}
@@ -434,14 +448,14 @@ export default function BtcMarketChart() {
           <button type="button" aria-label="Reset chart" title="Reset to the latest 80 candles (0)" onClick={navigation.reset}><RefreshCw aria-hidden="true" /></button>
         </div>
       </div>}
-      <div className="chart-stage" role="group" aria-label="Interactive BTC chart" aria-describedby={chartHelpId} tabIndex={0} onKeyDown={navigation.onKeyDown}>
-        {loading && !chart.candles.length ? <ChartLoading /> : data && chart.candles.length ? <svg
+      <div className="chart-stage" role="group" aria-label={`Interactive ${asset} chart`} aria-describedby={chartHelpId} tabIndex={0} onKeyDown={navigation.onKeyDown}>
+        {loading && !chart.candles.length ? <ChartLoading symbol={spotSymbol} /> : data && chart.candles.length ? <svg
           ref={navigation.svgRef}
           className={`candlestick-chart${navigation.isDragging ? " grabbing" : ""}`}
           viewBox={`0 0 ${viewWidth} ${VIEW_HEIGHT}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label={`BTCUSDT ${interval} candlestick chart with ${chart.candles.length} candles`}
+          aria-label={`${spotSymbol} ${interval} candlestick chart with ${chart.candles.length} candles`}
           onDoubleClick={navigation.reset}
           onPointerDown={event => {
             event.currentTarget.parentElement?.focus({ preventScroll: true });
@@ -489,7 +503,7 @@ export default function BtcMarketChart() {
             <line x1={LEFT} x2={viewWidth - RIGHT} y1={chart.y(activeCandle.close)} y2={chart.y(activeCandle.close)} />
             <circle cx={LEFT + hoveredIndex * chart.step + chart.step / 2} cy={chart.y(activeCandle.close)} r="4" />
           </g>}
-        </svg> : <ChartError message={error || "No BTCUSDT candles were returned."} onRetry={() => void load()} />}
+        </svg> : <ChartError message={error || `No ${spotSymbol} candles were returned.`} onRetry={() => void load()} />}
         {data && chart.candles.length > 0 && <ChartMinimap
           key={interval}
           candles={allCandles}
@@ -503,35 +517,36 @@ export default function BtcMarketChart() {
 
       <p className="visually-hidden" id={chartHelpId}>Drag to pan · Scroll or pinch to zoom · Shift + scroll to pan · Arrow keys to move · + / − to zoom · Home to fit · End for latest · Double-click or 0 to reset. Prices auto-scale to visible candles.</p>
 
-      {data?.analysis && <AnalysisGrid analysis={data.analysis} />}
+      {data?.analysis && <AnalysisGrid analysis={data.analysis} asset={asset} />}
 
       {data && <MarketDetails
         orderBook={data.orderBook}
         trades={data.recentTrades}
         delta={data.deltaContext}
         spotPrice={data.ticker.lastPrice}
+        asset={asset}
       />}
 
-      {data && <DeltaMarketSection delta={data.deltaContext} binanceSpotPrice={data.ticker.lastPrice} />}
+      {data && <DeltaMarketSection delta={data.deltaContext} binanceSpotPrice={data.ticker.lastPrice} asset={asset} />}
 
       <footer className="market-footer">
-        <span><i /> Binance Spot · Delta BTCUSD</span>
+        <span><i /> Binance Spot · Delta {deltaSymbol}</span>
         <span>{updatedAt ? `Updated ${updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting…"}</span>
       </footer>
     </section>
   </div>;
 }
 
-function marketDataOrigin() {
-  const configured = (process.env.NEXT_PUBLIC_BINANCE_API_URL || "").trim().replace(/\/$/, "");
+function marketDataOrigin(asset: "BTC" | "ETH") {
+  const configured = (asset === "ETH" ? process.env.NEXT_PUBLIC_BINANCE_ETH_API_URL : process.env.NEXT_PUBLIC_BINANCE_API_URL || "")?.trim().replace(/\/$/, "");
   if (configured) return configured;
   if (window.location.protocol === "https:") throw new Error("The Binance market-data service is not configured for this website");
   const host = ["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.hostname : "localhost";
-  return `http://${host}:8001`;
+  return `http://${host}:${asset === "ETH" ? 8003 : 8001}`;
 }
 
-function marketDataWebSocketOrigin() {
-  return marketDataOrigin().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+function marketDataWebSocketOrigin(asset: "BTC" | "ETH") {
+  return marketDataOrigin(asset).replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 }
 
 function mergeCandle(candles: Candle[], candle: Candle, limit: number) {
@@ -726,14 +741,14 @@ function MarketStat({ label, value }: { label: string; value: string }) {
   return <div className="market-stat"><small>{label}</small><strong>{value}</strong></div>;
 }
 
-function AnalysisGrid({ analysis }: { analysis: MarketAnalysis }) {
+function AnalysisGrid({ analysis, asset }: { analysis: MarketAnalysis; asset: "BTC" | "ETH" }) {
   const imbalance = analysis.orderBook.imbalance * 100;
   const cvdPositive = analysis.cvd.baseVolume >= 0;
   return <section className="analysis-grid" aria-label="Real-time spot analysis">
     <AnalysisMetric label={`Average true range · ${analysis.atr.period}`} value={money(analysis.atr.value)} note={`${analysis.atr.percent.toFixed(3)}% of price`} />
     <AnalysisMetric label="Historical volatility" value={`${analysis.historicalVolatility.annualizedPercent.toFixed(1)}%`} note={`${analysis.historicalVolatility.sampleSize} one-minute returns`} />
     <AnalysisMetric label="Rolling volume-weighted price" value={money(analysis.vwap)} note="Last 240 one-minute candles" />
-    <AnalysisMetric label={`Cumulative volume delta · ${analysis.cvd.window}`} value={`${cvdPositive ? "+" : ""}${analysis.cvd.baseVolume.toFixed(3)} BTC`} note={cvdPositive ? "Net market buying" : "Net market selling"} tone={cvdPositive ? "up" : "down"} />
+    <AnalysisMetric label={`Cumulative volume delta · ${analysis.cvd.window}`} value={`${cvdPositive ? "+" : ""}${analysis.cvd.baseVolume.toFixed(3)} ${asset}`} note={cvdPositive ? "Net market buying" : "Net market selling"} tone={cvdPositive ? "up" : "down"} />
     <AnalysisMetric label="Book imbalance" value={`${imbalance >= 0 ? "+" : ""}${imbalance.toFixed(1)}%`} note={`${analysis.orderBook.spreadBps.toFixed(2)} bps spread`} tone={imbalance >= 0 ? "up" : "down"} />
     <AnalysisMetric label="Market structure" value={analysis.marketStructure.state} note={`${analysis.marketStructure.strength.toFixed(0)}% trend separation`} tone={analysis.marketStructure.state === "bullish" ? "up" : analysis.marketStructure.state === "bearish" ? "down" : undefined} />
     <AnalysisMetric label="Range-bound estimate" value={`${analysis.sidewaysProbability.toFixed(0)}%`} note="Based on efficiency, range, and price deviation" />
@@ -744,11 +759,12 @@ function AnalysisMetric({ label, value, note, tone }: { label: string; value: st
   return <div className="analysis-metric"><small>{label}</small><strong className={tone}>{value}</strong><span>{note}</span></div>;
 }
 
-function MarketDetails({ orderBook, trades, delta, spotPrice }: {
+function MarketDetails({ orderBook, trades, delta, spotPrice, asset }: {
   orderBook: OrderBookSnapshot;
   trades: RecentTrade[];
   delta: DeltaContext;
   spotPrice: number;
+  asset: "BTC" | "ETH";
 }) {
   const bids = cumulativeLevels(orderBook.bids);
   const asks = cumulativeLevels(orderBook.asks);
@@ -777,17 +793,17 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
         <span className="bid-balance" style={{ width: `${bidShare}%` }} />
         <span className="ask-balance" style={{ width: `${100 - bidShare}%` }} />
       </div>
-      <div className="balance-labels"><span>Bid depth {compact(bidLiquidity)} BTC</span><span>Ask depth {compact(askLiquidity)} BTC</span></div>
-      <OrderBookTable bids={bids.slice(0, 10)} asks={asks.slice(0, 10)} />
+      <div className="balance-labels"><span>Bid depth {compact(bidLiquidity)} {asset}</span><span>Ask depth {compact(askLiquidity)} {asset}</span></div>
+      <OrderBookTable bids={bids.slice(0, 10)} asks={asks.slice(0, 10)} asset={asset} />
     </article>
 
     <article className="market-detail-card delta-panel">
-      <DetailHeader eyebrow="DELTA EXCHANGE" title="BTCUSD perpetual market" meta="Updates every 5 seconds" />
+      <DetailHeader eyebrow="DELTA EXCHANGE" title={`${asset}USD perpetual market`} meta="Updates every 5 seconds" />
       {delta.available ? <>
         <div className="oi-hero">
           <small>Open interest</small>
           <strong>{currencyCompact(delta.openInterestUsd || 0)}</strong>
-          <span>{compact(delta.openInterestBtc || 0)} BTC outstanding</span>
+          <span>{compact(delta.openInterestBtc || 0)} {asset} outstanding</span>
         </div>
         <OiSparkline points={delta.openInterestHistory || []} markPrice={delta.markPrice || 0} />
         <div className="delta-metrics">
@@ -805,14 +821,14 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
     <article className="market-detail-card trades-panel">
       <DetailHeader eyebrow="BINANCE SPOT" title="Recent trade flow" meta="Market-buy and market-sell volume" />
       <div className="trade-flow-summary">
-        <div><small>Aggressive buys</small><strong className="up">{buyVolume.toFixed(3)} BTC</strong></div>
+        <div><small>Aggressive buys</small><strong className="up">{buyVolume.toFixed(3)} {asset}</strong></div>
         <div className="flow-bar"><span className="buy-flow" style={{ width: `${buyShare}%` }} /><span className="sell-flow" style={{ width: `${100 - buyShare}%` }} /></div>
-        <div><small>Aggressive sells</small><strong className="down">{sellVolume.toFixed(3)} BTC</strong></div>
+        <div><small>Aggressive sells</small><strong className="down">{sellVolume.toFixed(3)} {asset}</strong></div>
       </div>
       <div className="recent-trades-grid" role="table" aria-label="Latest Binance Spot trades">
         {trades.slice(0, 12).map(trade => <div className="trade-tile" role="row" key={`${trade.id}-${trade.time}`}>
           <span className={trade.side === "buy" ? "up" : "down"}>{price(trade.price)}</span>
-          <strong>{trade.quantity.toFixed(4)} BTC</strong>
+          <strong>{trade.quantity.toFixed(4)} {asset}</strong>
           <time>{new Date(trade.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
         </div>)}
       </div>
@@ -820,9 +836,9 @@ function MarketDetails({ orderBook, trades, delta, spotPrice }: {
   </section>;
 }
 
-function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; binanceSpotPrice: number }) {
-  if (!delta.available) return <section className="delta-market-section delta-market-empty" aria-label="Delta BTCUSD market data">
-    <WifiOff /><div><h2>Delta BTCUSD market data</h2><p>{delta.lastError ? errorMessage(new Error(delta.lastError), "Delta market data is temporarily unavailable.") : "Waiting for Delta market data."}</p></div>
+function DeltaMarketSection({ delta, binanceSpotPrice, asset }: { delta: DeltaContext; binanceSpotPrice: number; asset: "BTC" | "ETH" }) {
+  if (!delta.available) return <section className="delta-market-section delta-market-empty" aria-label={`Delta ${asset}USD market data`}>
+    <WifiOff /><div><h2>Delta {asset}USD market data</h2><p>{delta.lastError ? errorMessage(new Error(delta.lastError), "Delta market data is temporarily unavailable.") : "Waiting for Delta market data."}</p></div>
   </section>;
 
   const ltpChange = delta.lastPriceChange24hPercent || 0;
@@ -835,19 +851,19 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
   const asks = delta.orderBook?.asks || [];
   const trades = delta.recentTrades || [];
 
-  return <section className="delta-market-section" aria-label="Complete Delta Exchange BTCUSD public market data">
+  return <section className="delta-market-section" aria-label={`Complete Delta Exchange ${asset}USD public market data`}>
     <header className="delta-section-header">
-      <div><small>DELTA EXCHANGE</small><h2>BTCUSD perpetual market</h2></div>
+      <div><small>DELTA EXCHANGE</small><h2>{asset}USD perpetual market</h2></div>
       <div className="delta-live-state"><i /><span>{delta.tradingStatus || "Live"}</span><time>{delta.receivedAt ? `Updated ${new Date(delta.receivedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting"}</time></div>
     </header>
 
     <div className="delta-tape">
       <DeltaMetric label="Last price" value={money(delta.lastPrice || 0)} note={`${signedPercent(ltpChange)} · 24h`} tone={ltpChange >= 0 ? "up" : "down"} />
       <DeltaMetric label="Mark price" value={money(delta.markPrice || 0)} note={`${signedPercent(delta.markChange24hPercent || 0)} · 24h`} />
-      <DeltaMetric label="Index price" value={money(delta.indexPrice || 0)} note={delta.product?.indexSymbol || ".DEXBTUSD"} />
+      <DeltaMetric label="Index price" value={money(delta.indexPrice || 0)} note={delta.product?.indexSymbol || `${asset} index`} />
       <DeltaMetric label="Open interest" value={currencyCompact(delta.openInterestUsd || 0)} note={`${signedCurrencyCompact(oiChange)} · 6h`} tone={oiChange >= 0 ? "up" : "down"} />
       <DeltaMetric label="Funding rate" value={`${(delta.fundingRatePercent || 0).toFixed(4)}%`} note={`${delta.product?.fundingIntervalHours || 8}h interval`} tone={(delta.fundingRatePercent || 0) >= 0 ? "up" : "down"} />
-      <DeltaMetric label="24h volume" value={`${compact(delta.volume24hBtc || 0)} BTC`} note={`${compact(delta.volume24hContracts || 0)} contracts`} />
+      <DeltaMetric label="24h volume" value={`${compact(delta.volume24hBtc || 0)} ${asset}`} note={`${compact(delta.volume24hContracts || 0)} contracts`} />
       <DeltaMetric label="24h turnover" value={currencyCompact(delta.turnover24hUsd || 0)} note="USD notional" />
       <DeltaMetric label="Mark / Binance basis" value={signedMoney(basisToBinance)} note={`${signedPercent(delta.markBasisPercent || 0)} Delta mark/index`} tone={basisToBinance >= 0 ? "up" : "down"} />
     </div>
@@ -863,7 +879,7 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
     </div>
 
     <div className="delta-history-grid">
-      <DeltaSeriesChart title="Open interest · 48h" points={delta.openInterestHistory || []} format={value => `${compact(value)} BTC`} />
+      <DeltaSeriesChart title="Open interest · 48h" points={delta.openInterestHistory || []} format={value => `${compact(value)} ${asset}`} />
       <DeltaSeriesChart title="Funding rate · 48h" points={delta.fundingHistory || []} format={value => `${value.toFixed(4)}%`} zeroLine />
       <DeltaSeriesChart title="Mark price · 48h" points={delta.markPriceHistory || []} format={value => money(value)} />
     </div>
@@ -872,35 +888,35 @@ function DeltaMarketSection({ delta, binanceSpotPrice }: { delta: DeltaContext; 
       <article className="delta-data-panel delta-book-panel">
         <DetailHeader eyebrow="DELTA EXCHANGE" title="Delta order book" meta="Top 15 levels · 5s snapshot" />
         <div className="delta-quote-row"><span><small>Best bid</small><strong className="up">{bookPrice(delta.bestBid || 0)}</strong><em>{compact(delta.bidSizeContracts || 0)} contracts</em></span><b>{((delta.bestAsk || 0) - (delta.bestBid || 0)).toFixed(2)} spread</b><span><small>Best ask</small><strong className="down">{bookPrice(delta.bestAsk || 0)}</strong><em>{compact(delta.askSizeContracts || 0)} contracts</em></span></div>
-        <DeltaOrderBook bids={bids} asks={asks} />
+        <DeltaOrderBook bids={bids} asks={asks} asset={asset} />
       </article>
 
       <article className="delta-data-panel">
-        <DetailHeader eyebrow="DELTA EXCHANGE" title="Recent BTCUSD trades" meta="Market-buy and market-sell trades" />
+        <DetailHeader eyebrow="DELTA EXCHANGE" title={`Recent ${asset}USD trades`} meta="Market-buy and market-sell trades" />
         <div className="delta-trade-head"><span>Price</span><span>Side</span><span>Size</span><span>Notional</span><span>Time</span></div>
         <div className="delta-trade-list">
           {trades.slice(0, 14).map(trade => <div className="delta-trade-row" key={trade.id}>
-            <strong className={trade.side === "buy" ? "up" : "down"}>{bookPrice(trade.price)}</strong><span className={trade.side}>{trade.side}</span><span>{trade.sizeBtc.toFixed(3)} BTC</span><span>{currencyCompact(trade.notionalUsd)}</span><time>{new Date(trade.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
+            <strong className={trade.side === "buy" ? "up" : "down"}>{bookPrice(trade.price)}</strong><span className={trade.side}>{trade.side}</span><span>{trade.sizeBtc.toFixed(3)} {asset}</span><span>{currencyCompact(trade.notionalUsd)}</span><time>{new Date(trade.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>
           </div>)}
           {!trades.length && <div className="delta-list-empty">Waiting for Delta public trades…</div>}
         </div>
       </article>
 
       <article className="delta-data-panel delta-contract-panel">
-        <DetailHeader eyebrow="CONTRACT" title="BTCUSD specifications" meta="Perpetual futures" />
+        <DetailHeader eyebrow="CONTRACT" title={`${asset}USD specifications`} meta="Perpetual futures" />
         <div className="delta-contract-grid">
           <ContractFact label="Instrument" value={humanize(delta.product?.contractType || delta.instrumentType || "perpetual_futures")} />
-          <ContractFact label="Contract value" value={`${delta.product?.contractValueBtc || delta.contractValueBtc || .001} BTC`} />
+          <ContractFact label="Contract value" value={delta.product?.contractValueBtc || delta.contractValueBtc ? `${delta.product?.contractValueBtc || delta.contractValueBtc} ${asset}` : "Unavailable"} />
           <ContractFact label="Tick size" value={`$${delta.product?.tickSize || delta.tickSize || .5}`} />
           <ContractFact label="Default leverage" value={`${delta.product?.defaultLeverage || delta.leverage || 0}×`} />
-          <ContractFact label="Underlying" value={delta.product?.underlyingAsset || "BTC"} />
+          <ContractFact label="Underlying" value={delta.product?.underlyingAsset || asset} />
           <ContractFact label="Quote / settle" value={`${delta.product?.quotingAsset || "USD"} / ${delta.product?.settlingAsset || "USD"}`} />
           <ContractFact label="Initial margin" value={`${delta.product?.initialMarginPercent || 0}%`} />
           <ContractFact label="Maintenance margin" value={`${delta.product?.maintenanceMarginPercent || 0}%`} />
           <ContractFact label="Maker fee" value={`${(delta.product?.makerFeePercent || 0).toFixed(3)}%`} />
           <ContractFact label="Taker fee" value={`${(delta.product?.takerFeePercent || 0).toFixed(3)}%`} />
           <ContractFact label="Position limit" value={`${compact(delta.product?.positionSizeLimitContracts || 0)} contracts`} />
-          <ContractFact label="Index" value={delta.product?.indexSymbol || ".DEXBTUSD"} />
+          <ContractFact label="Index" value={delta.product?.indexSymbol || "Unavailable"} />
         </div>
       </article>
     </div>
@@ -931,10 +947,10 @@ function DeltaSeriesChart({ title, points, format, zeroLine = false }: { title: 
   </article>;
 }
 
-function DeltaOrderBook({ bids, asks }: { bids: DeltaBookLevel[]; asks: DeltaBookLevel[] }) {
+function DeltaOrderBook({ bids, asks, asset }: { bids: DeltaBookLevel[]; asks: DeltaBookLevel[]; asset: "BTC" | "ETH" }) {
   const maxSize = Math.max(1, ...bids.map(level => level[1]), ...asks.map(level => level[1]));
   const side = (levels: DeltaBookLevel[], kind: "bid" | "ask") => <div className="delta-book-side">
-    <div className="delta-book-head"><span>{kind} price</span><span>Contracts</span><span>BTC</span></div>
+    <div className="delta-book-head"><span>{kind} price</span><span>Contracts</span><span>{asset}</span></div>
     {levels.slice(0, 10).map(level => <div className="delta-book-row" key={`${kind}-${level[0]}`}><i className={kind} style={{ width: `${level[1] / maxSize * 100}%` }} /><strong className={kind === "bid" ? "up" : "down"}>{bookPrice(level[0])}</strong><span>{compact(level[1])}</span><span>{level[3].toFixed(3)}</span></div>)}
   </div>;
   return <div className="delta-order-book">{side(bids, "bid")}{side(asks, "ask")}</div>;
@@ -978,18 +994,18 @@ function DepthChart({ bids, asks, midpoint }: { bids: CumulativeLevel[]; asks: C
   </svg>;
 }
 
-function OrderBookTable({ bids, asks }: { bids: CumulativeLevel[]; asks: CumulativeLevel[] }) {
+function OrderBookTable({ bids, asks, asset }: { bids: CumulativeLevel[]; asks: CumulativeLevel[]; asset: "BTC" | "ETH" }) {
   const maxQuantity = Math.max(1, ...bids.map(level => level.quantity), ...asks.map(level => level.quantity));
   return <div className="order-book-table">
     <div className="book-side">
-      <div className="book-head"><span>Bid price</span><span>Size BTC</span><span>Total</span></div>
+      <div className="book-head"><span>Bid price</span><span>Size {asset}</span><span>Total</span></div>
       {bids.map(level => <div className="book-row" key={`bid-${level.price}`}>
         <i className="bid-level" style={{ width: `${level.quantity / maxQuantity * 100}%` }} />
         <span className="up">{bookPrice(level.price)}</span><span>{level.quantity.toFixed(4)}</span><span>{level.total.toFixed(3)}</span>
       </div>)}
     </div>
     <div className="book-side">
-      <div className="book-head"><span>Ask price</span><span>Size BTC</span><span>Total</span></div>
+      <div className="book-head"><span>Ask price</span><span>Size {asset}</span><span>Total</span></div>
       {asks.map(level => <div className="book-row" key={`ask-${level.price}`}>
         <i className="ask-level" style={{ width: `${level.quantity / maxQuantity * 100}%` }} />
         <span className="down">{bookPrice(level.price)}</span><span>{level.quantity.toFixed(4)}</span><span>{level.total.toFixed(3)}</span>
@@ -1021,8 +1037,8 @@ function ContextMetric({ label, value }: { label: string; value: string }) {
   return <div><small>{label}</small><strong>{value}</strong></div>;
 }
 
-function ChartLoading() {
-  return <div className="chart-loading"><BarChart3 /><span><Shimmer>Loading BTCUSDT candles</Shimmer></span><i /></div>;
+function ChartLoading({ symbol }: { symbol: string }) {
+  return <div className="chart-loading"><BarChart3 /><span><Shimmer>{`Loading ${symbol} candles`}</Shimmer></span><i /></div>;
 }
 
 function ChartError({ message, onRetry }: { message: string; onRetry: () => void }) {

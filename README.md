@@ -47,6 +47,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_API_PORTS=8000,8585,8085,8011
 NEXT_PUBLIC_BINANCE_API_URL=http://localhost:8001
+NEXT_PUBLIC_BINANCE_ETH_API_URL=http://localhost:8003
 SUPABASE_SERVICE_ROLE_KEY=...
 DELTA_PRODUCTION_URL=https://api.india.delta.exchange
 ```
@@ -188,6 +189,7 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 NEXT_PUBLIC_SITE_URL=https://www.tradecognition.online
 NEXT_PUBLIC_API_URL=https://api.tradecognition.online
 NEXT_PUBLIC_BINANCE_API_URL=https://market-api.tradecognition.online
+NEXT_PUBLIC_BINANCE_ETH_API_URL=https://eth-market-api.tradecognition.online
 ```
 
 Do not add `SUPABASE_SERVICE_ROLE_KEY`, Delta API secrets, or the Cloudflare tunnel token to Vercel. Redeploy the production deployment after changing any `NEXT_PUBLIC_` value because Next.js embeds these values during the build.
@@ -226,6 +228,7 @@ Configure these published application routes in the Cloudflare tunnel dashboard.
 | --- | --- |
 | `api.tradecognition.online` | `http://delta-exchange:8000` |
 | `market-api.tradecognition.online` | `http://binace:8001` |
+| `eth-market-api.tradecognition.online` | `http://binace-eth:8001` |
 
 Cloudflare terminates public HTTPS and forwards HTTP inside the private Compose network. The market route also carries `wss://market-api.tradecognition.online/ws/market/btcusd`; Cloudflare Tunnel supports WebSocket upgrades without another connector or port mapping.
 
