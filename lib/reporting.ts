@@ -4,11 +4,12 @@ import type {
 
 /** P&L time filters. Values match the backend's `range` parameter. */
 export const RANGE_OPTIONS: readonly { value: ReportRange; label: string }[] = [
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
-  { value: "90d", label: "90 days" },
-  { value: "1y", label: "1 year" },
-  { value: "all", label: "All time" }
+  // Short labels fit five peers on a phone-width segmented control without truncation.
+  { value: "7d", label: "7D" },
+  { value: "30d", label: "30D" },
+  { value: "90d", label: "90D" },
+  { value: "1y", label: "1Y" },
+  { value: "all", label: "All" }
 ];
 
 export const STATE_LABELS: Record<AccountingState, string> = {

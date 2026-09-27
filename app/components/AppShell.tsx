@@ -416,11 +416,18 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
     if (returnFocus) trigger.current?.focus();
   }
 
+  /* The window mounts a render after `open` flips, so focus waits for the mount. */
+  useEffect(() => {
+    if (!open || !disclosure.mounted) return;
+    const frame = requestAnimationFrame(() => {
+      const root = panel.current;
+      (root?.querySelector<HTMLElement>("[data-autofocus]") ?? root?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, disclosure.mounted]);
+
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => {
-      panel.current?.querySelector<HTMLElement>("[data-autofocus], button:not(:disabled)")?.focus();
-    });
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Node && !container.current?.contains(event.target)) setOpen(false);
     };
@@ -430,7 +437,6 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKey);
     return () => {
-      cancelAnimationFrame(frame);
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKey);
     };
