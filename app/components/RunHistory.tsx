@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity, AlertTriangle, Ban, CircleStop, Info, RefreshCw, Trash2
 } from "@/app/components/icons";
@@ -50,7 +50,7 @@ const ACTION_COPY: Record<ActionKind, {
   delete: {
     title: "Delete this run from history?",
     confirm: "Delete run",
-    describe: name => `${name} and its order, fill, slippage, and settlement history will be permanently deleted. Delta positions are not affected. This cannot be undone.`
+    describe: name => `${name} and its order, fill, slippage, and settlement history will be removed from your history and your P&L. The workspace owner keeps a reporting copy marked as deleted by you. Delta positions are not affected, and you cannot restore the run.`
   }
 };
 
@@ -407,22 +407,33 @@ function riskDetail(key: string, value: unknown, flat: boolean, formatMoneyNumbe
  * what happened and when, what it settled for, what was asked for, and then the
  * order-by-order execution quality.
  */
-function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
+export function RunDetailDialog({ run, refreshToken, onClose, onAction, load, notice }: {
   run: StrategyRun;
   refreshToken: number;
   onClose: () => void;
-  onAction: (kind: ActionKind) => void;
+  /** Omitted for read-only views such as the owner's copy of another user's run. */
+  onAction?: (kind: ActionKind) => void;
+  /** Where the record comes from. Defaults to the signed-in user's own run detail. */
+  load?: () => Promise<RunDetail>;
+  /** Context shown above the record, for example that it is an archived copy. */
+  notice?: ReactNode;
 }) {
   const { currencyCode, formatMoneyNumber } = useCurrency();
   const [record, setRecord] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
+  // Held in a ref so a caller's inline loader does not refetch on every render.
+  const loader = useRef(load);
+  loader.current = load;
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    requestJson<{ result: RunDetail }>(`/api/strategies/${run.id}`)
-      .then(data => { if (active) { setRecord(data.result); setFailure(null); } })
+    const pending = loader.current
+      ? loader.current()
+      : requestJson<{ result: RunDetail }>(`/api/strategies/${run.id}`).then(data => data.result);
+    pending
+      .then(result => { if (active) { setRecord(result); setFailure(null); } })
       .catch(error => { if (active) setFailure(errorMessage(error)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -507,7 +518,7 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
           <span className="dialog-foot-note">
             {settlement.settledAt ? `Settled ${relativeTime(settlement.settledAt)}` : "Figures are rebuilt from the recorded fills."}
           </span>
-          <span className="dialog-foot-actions">
+          {onAction && <span className="dialog-foot-actions">
             {canExit && (
               <button type="button" className="button danger small" onClick={() => onAction("exit")}>
                 <CircleStop aria-hidden="true" />Exit now
@@ -518,10 +529,11 @@ function RunDetailDialog({ run, refreshToken, onClose, onAction }: {
                 <Trash2 aria-hidden="true" />Delete run
               </button>
             )}
-          </span>
+          </span>}
         </>
       }
     >
+      {notice}
       {loading && !record ? (
         <TableSkeleton label="run record" rows={8} />
       ) : failure ? (
