@@ -393,3 +393,41 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
         )
 
     return [StrategyDefinition.model_validate(definition) for definition in definitions]
+
+
+# ATM templates only: their strikes sit at the listed strike nearest spot on both assets.
+# OTM, ITM and spread templates count listed strikes, which land farther from spot on ETH.
+ETH_TEMPLATE_SOURCES = (
+    "Long call",
+    "Long put",
+    "Long ATM straddle",
+    "Short ATM straddle",
+    "Long ATM straddle - next-day expiry",
+    "Short ATM straddle - next-day expiry",
+)
+ETH_INSTRUMENT = {"index": "ETHUSD", "underlying": "ETH", "underlyingFrom": "cash"}
+
+
+def eth_strategy_definitions(now: datetime | None = None) -> list[StrategyDefinition]:
+    """Separate ETH built-ins, copied from the BTC ATM templates with the ETH instrument."""
+    sources = {item.name: item for item in default_strategy_definitions(now)}
+    definitions = []
+    for name in ETH_TEMPLATE_SOURCES:
+        source = sources[name].model_dump(mode="json", exclude_none=True)
+        definitions.append(
+            StrategyDefinition.model_validate(
+                {
+                    **source,
+                    "name": f"ETH {name}",
+                    "description": source["description"].replace("BTC", "ETH"),
+                    "instrument": dict(ETH_INSTRUMENT),
+                }
+            )
+        )
+    return definitions
+
+
+def builtin_strategy_definitions(now: datetime | None = None) -> list[StrategyDefinition]:
+    """Every shared template: the fifteen BTC strategies followed by the six ETH strategies."""
+    now = now or datetime.now(UTC)
+    return [*default_strategy_definitions(now), *eth_strategy_definitions(now)]
