@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from .errors import AppError
+from .owner_ledger import record_policy
 
 DEFAULT_AUTOMATION = {
     "enabled": False,
@@ -204,6 +205,7 @@ class LocalApplicationData:
                 "update trade.users set capital=%s,record=%s where user_id=%s",
                 (Jsonb({key: value[key] for key in ("allocation_mode", "capital_amount")}), Jsonb(record), user_id),
             )
+            await record_policy(connection, user_id, value["allocation_mode"], value["capital_amount"])
 
     async def _library_get(self, args: dict[str, Any]) -> dict[str, Any] | None:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -286,6 +288,83 @@ class LocalApplicationData:
                     (Jsonb(value), Jsonb(record), user_id),
                 )
         return {"user_id": user_id, **value}
+
+    async def set_automation_enabled(
+        self, user_id: str, enabled: bool, *, model_id: str, actor_id: str | None = None
+    ) -> tuple[bool | None, dict[str, Any]]:
+        """
+        Save one account's automation switch and return ``(previous, saved)``.
+
+        The row lock serialises this with allocation and scheduling, which read the
+        switch ``for share``. An owner change is audited in the same transaction.
+        """
+        if user_id == "global":
+            raise AppError(422, "Use the shared analysis settings for the global switch", "automation_target_invalid")
+        await self.ensure_user(user_id)
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                "select automation,record from trade.users where user_id=%s for update", (user_id,)
+            )
+            current = await cursor.fetchone()
+            previous = current["automation"].get("enabled")
+            value = {**DEFAULT_AUTOMATION, **current["automation"], "enabled": enabled, "model_id": model_id}
+            value = {key: value[key] for key in DEFAULT_AUTOMATION}
+            record = {**current["record"], "automation": value, "updatedAt": datetime.now(UTC).isoformat()}
+            await cursor.execute(
+                "update trade.users set automation=%s,record=%s where user_id=%s",
+                (Jsonb(value), Jsonb(record), user_id),
+            )
+            if actor_id is not None:
+                await cursor.execute(
+                    """insert into owner_reporting.automation_changes
+                       (actor_user_id,target_user_id,old_enabled,new_enabled) values (%s,%s,%s,%s)""",
+                    (actor_id, user_id, previous, enabled),
+                )
+        return (bool(previous) if previous is not None else None), {"user_id": user_id, **value}
+
+    async def account_rows(self, user_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Connection, automation and capital policy for owner views. Never credentials."""
+        if len(user_ids) > 100:
+            raise AppError(422, "Account lookup batch too large", "account_batch_invalid")
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                """select user_id,
+                          connection->>'status' as connection_status,
+                          connection->>'account_name' as account_name,
+                          connection->>'email_masked' as email_masked,
+                          connection->>'delta_user_id' as delta_user_id,
+                          coalesce((automation->>'enabled')::boolean, false) as automation_enabled,
+                          capital->>'allocation_mode' as allocation_mode,
+                          capital->>'capital_amount' as capital_amount
+                     from trade.users where user_id = any(%s)""",
+                (user_ids,),
+            )
+            rows = await cursor.fetchall()
+        return {
+            row["user_id"]: {
+                "connectionStatus": row["connection_status"],
+                "accountName": row["account_name"],
+                "email": row["email_masked"],
+                "deltaAccountId": row["delta_user_id"],
+                "automationEnabled": row["automation_enabled"],
+                "allocationMode": row["allocation_mode"],
+                "capitalAmount": row["capital_amount"],
+            }
+            for row in rows
+        }
+
+    async def account_counts(self) -> dict[str, int]:
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                """select count(*) filter (where connection->>'status' = 'connected') as connected,
+                          count(*) filter (where coalesce((automation->>'enabled')::boolean, false)) as automation,
+                          count(*) filter (where coalesce((automation->>'enabled')::boolean, false)
+                                             and coalesce(connection->>'status', '') <> 'connected')
+                            as automation_without_connection
+                     from trade.users"""
+            )
+            row = await cursor.fetchone()
+        return {key: int(value) for key, value in row.items()}
 
     async def saved_strategies(self, user_id: str, strategy_id: str | None = None) -> list[dict[str, Any]]:
         if strategy_id is not None:

@@ -13,6 +13,7 @@ from psycopg_pool import AsyncConnectionPool
 from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
+from .owner_ledger import OwnerLedger, capture_quietly
 
 TABLES = {
     "strategies": "strategies",
@@ -41,6 +42,7 @@ RELATIONS = {
     "strategy_proposals": "strategy_id",
     "automation_agent_runs": "strategy_proposal_id",
 }
+RISK_DISPLAY_FIELDS = frozenset({"risk_state", "risk_monitor_at", "updated_at"})
 UNIQUE_FIELDS = {
     "execution_orders": "client_order_id",
     "strategy_capital_slots": "slot_number",
@@ -180,6 +182,11 @@ class AutomationSettings:
         return [row]
 
 
+def _without_display_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Risk-display refreshes run every few seconds and change nothing the owner ledger keeps."""
+    return {key: value for key, value in row.items() if key not in RISK_DISPLAY_FIELDS}
+
+
 def _timestamp(value: Any, fallback: datetime | None = None) -> datetime | None:
     if value is None:
         return fallback
@@ -192,6 +199,7 @@ def _timestamp(value: Any, fallback: datetime | None = None) -> datetime | None:
 class LocalRuntimeStore:
     def __init__(self, pool: AsyncConnectionPool) -> None:
         self.pool = pool
+        self.ledger = OwnerLedger(pool)
         self.data = LocalApplicationData(pool)
         self.data.control = LocalControl(self)
         self.automation_settings = AutomationSettings(self.data)
@@ -265,15 +273,17 @@ class LocalRuntimeStore:
             row["id"],
         )
         target = sql.Identifier("trade", TABLES[table])
+        previous: dict[str, Any] | None = None
         if existing:
             current = await connection.execute(
-                sql.SQL("select owner_id,relation_id from {} where id=%s for update").format(target), (row["id"],)
+                sql.SQL("select owner_id,relation_id,data from {} where id=%s for update").format(target), (row["id"],)
             )
             stored = await current.fetchone()
             if not stored or stored[0] != owner:
                 raise AppError(409, "Record owner cannot change", "record_owner_changed")
             if table in {"executions", "execution_orders"} and stored[1] != relation:
                 raise AppError(409, "Execution parent cannot change", "record_parent_changed")
+            previous = stored[2]
             await connection.execute(
                 sql.SQL("""update {} set owner_id=%s,status=%s,relation_id=%s,unique_key=%s,
                    created_at=%s,entry_at=%s,exit_at=%s,scheduled_for=%s,activation_time=%s,
@@ -287,6 +297,9 @@ class LocalRuntimeStore:
                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""").format(target),
                 values,
             )
+        run_id = await self._ledger_run(connection, table, row, previous)
+        if run_id is not None:
+            await capture_quietly(self.ledger, connection, run_id)
         if table == "strategies" and status in {"completed", "cancelled"}:
             slots = await connection.execute(
                 "select data from trade.strategy_capital_slots where relation_id=%s for update", (row["id"],)
@@ -297,6 +310,25 @@ class LocalRuntimeStore:
                     "reserved_at": None, "released_at": datetime.now(UTC).isoformat(),
                 }, existing=True)
         return row
+
+    @staticmethod
+    async def _ledger_run(
+        connection: Any, table: str, row: dict[str, Any], previous: dict[str, Any] | None
+    ) -> str | None:
+        """The run whose owner copy this write changes, or ``None`` when nothing reportable moved."""
+        if table == "strategies":
+            if previous is not None and _without_display_fields(previous) == _without_display_fields(row):
+                return None
+            return str(row["id"])
+        if table == "executions":
+            return str(row["strategy_id"])
+        if table == "execution_orders":
+            parent = await connection.execute(
+                "select relation_id from trade.executions where id=%s", (row["execution_id"],)
+            )
+            found = await parent.fetchone()
+            return str(found[0]) if found and found[0] else None
+        return None
 
     async def write(self, table: str, payload: dict[str, Any], conflict: str | None = None) -> list[dict[str, Any]]:
         if table == "automation_settings":
@@ -364,6 +396,9 @@ class LocalRuntimeStore:
                         if (row.get("entry_execution_at") and not row.get("exit_execution_at")
                                 and risk.get("exposureStatus") != "flat"):
                             raise AppError(409, "Unresolved exposure cannot be deleted", "live_exposure_delete")
+                        # The owner copy commits with the deletion or neither happens.
+                        if not await self.ledger.capture(connection, str(row["id"]), deleted=True):
+                            raise AppError(409, "Run changed before it could be archived", "record_archive_failed")
                         await self._delete_strategy_children(connection, row["id"])
                     await cursor.execute(sql.SQL("delete from {} where id=%s").format(target), (record["id"],))
                     output.append(row)
