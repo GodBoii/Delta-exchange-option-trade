@@ -85,7 +85,9 @@ def test_eth_market_tool_reads_the_eth_market_service_and_delta_eth_options(monk
         if request.url.path == "/v2/tickers":
             assert request.url.params["underlying_asset_symbols"] == "ETH"
             return httpx.Response(200, json={"result": []})
-        return httpx.Response(200, json={"symbol": "ETHUSDT", "candles": [], "analysis": {}})
+        return httpx.Response(200, json={
+            "symbol": "ETHUSDT", "deltaContext": {"symbol": "ETHUSD"}, "candles": [], "analysis": {},
+        })
 
     client = httpx.Client
     monkeypatch.setattr(
@@ -100,6 +102,26 @@ def test_eth_market_tool_reads_the_eth_market_service_and_delta_eth_options(monk
     assert tools.collect_delta_option_context()["underlying"] == "ETH"
     assert all("/api/market/ethusd" in url for url in requested if "eth.test" in url)
     assert any(url.endswith("/api/market/ethusd/history") for url in requested)
+
+
+@pytest.mark.parametrize("wrong_symbol,wrong_delta", [("BTCUSDT", "ETHUSD"), ("ETHUSDT", "BTCUSD")])
+def test_eth_market_tool_rejects_cross_asset_data(monkeypatch, wrong_symbol, wrong_delta):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "symbol": wrong_symbol,
+            "deltaContext": {"symbol": wrong_delta},
+            "candles": [],
+            "analysis": {},
+        })
+
+    client = httpx.Client
+    monkeypatch.setattr(
+        "automation_agent.market.httpx.Client",
+        lambda **kwargs: client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    tools = MarketIntelligenceTools(asset=PROFILES["ETH"], binance_url="http://eth.test")
+    with pytest.raises(ValueError, match="wrong .* symbol"):
+        tools.collect_market_packet()
 
 
 def test_eth_packet_and_charts_use_eth_units():

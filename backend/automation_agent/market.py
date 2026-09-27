@@ -112,7 +112,15 @@ class MarketIntelligenceTools(Toolkit):
                     params={"interval": interval, "limit": limit},
                 )
                 response.raise_for_status()
-                return label, response.json()
+                payload = response.json()
+                if not isinstance(payload, dict) or payload.get("symbol") != self.asset.spot_symbol:
+                    raise ValueError(f"{self.asset.code} market service returned the wrong spot symbol")
+                delta_context = payload.get("deltaContext")
+                if not isinstance(delta_context, dict) or delta_context.get("symbol") != self.asset.delta_index:
+                    raise ValueError(f"{self.asset.code} market service returned the wrong Delta symbol")
+                if not isinstance(payload.get("candles"), list) or not isinstance(payload.get("analysis"), dict):
+                    raise ValueError(f"{self.asset.code} market service returned incomplete analysis")
+                return label, payload
 
         with ThreadPoolExecutor(max_workers=len(TIMEFRAMES) + 1) as executor:
             history = executor.submit(load_history)

@@ -5,6 +5,11 @@ from app.config import Settings
 from app.delta_context import DeltaMarketContextClient
 
 
+def test_market_service_rejects_cross_asset_configuration() -> None:
+    with pytest.raises(ValueError, match="same supported asset"):
+        Settings(binance_symbol="BTCUSDT", delta_symbol="ETHUSD")
+
+
 @pytest.mark.asyncio
 async def test_normalizes_public_delta_derivative_context() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -49,6 +54,35 @@ async def test_normalizes_public_delta_derivative_context() -> None:
     assert result["bestBid"] == 64_805.5
     assert result["bestAsk"] == 64_806.0
     assert result["exchangeTimestamp"] == 1_786_275_818_200
+
+
+@pytest.mark.asyncio
+async def test_eth_contract_value_applies_before_product_refresh() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v2/tickers/ETHUSD":
+            return httpx.Response(200, json={"success": True, "result": {"symbol": "ETHUSD", "close": 3000}})
+        if request.url.path == "/v2/l2orderbook/ETHUSD":
+            return httpx.Response(200, json={"success": True, "result": {
+                "symbol": "ETHUSD", "buy": [{"price": 3000, "size": 10}], "sell": [],
+            }})
+        if request.url.path == "/v2/trades/ETHUSD":
+            return httpx.Response(200, json={"success": True, "result": [
+                {"price": 3000, "size": 10, "buyer_role": "taker"},
+            ]})
+        return httpx.Response(404)
+
+    client = DeltaMarketContextClient(
+        Settings(delta_symbol="ETHUSD", binance_symbol="ETHUSDT"),
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        snapshot = await client.snapshot()
+    finally:
+        await client.close()
+
+    assert snapshot["orderBook"]["bids"][0][3] == pytest.approx(0.1)
+    assert snapshot["recentTrades"][0]["sizeBtc"] == pytest.approx(0.1)
+    assert snapshot["recentTrades"][0]["notionalUsd"] == pytest.approx(300)
 
 
 @pytest.mark.asyncio

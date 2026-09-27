@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     @classmethod
     def clean_base_url(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @field_validator("delta_symbol")
+    @classmethod
+    def supported_delta_symbol(cls, value: str) -> str:
+        if value not in {"BTCUSD", "ETHUSD"}:
+            raise ValueError("DELTA_SYMBOL must be BTCUSD or ETHUSD")
+        return value
+
+    @model_validator(mode="after")
+    def matching_market_symbols(self) -> "Settings":
+        if self.binance_symbol != f"{self.base_asset}USDT" or self.delta_symbol != f"{self.base_asset}USD":
+            raise ValueError("BINANCE_SYMBOL and DELTA_SYMBOL must refer to the same supported asset")
+        return self
 
     @property
     def market_route(self) -> str:

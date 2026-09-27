@@ -352,6 +352,7 @@ class BinanceSpotFeed:
             },
             "recentTrades": list(self.recent_trades)[:30],
             "deltaContext": {
+                "symbol": self.settings.delta_symbol,
                 **self.delta_context,
                 "available": bool(self.delta_context),
                 "lastError": self.delta_context_error,

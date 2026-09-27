@@ -17,7 +17,8 @@ class DeltaMarketContextClient:
 
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.settings = settings
-        self.contract_value = 0.001
+        # Use the exchange's listed contract value until the product refresh replaces it.
+        self.contract_value = {"BTCUSD": 0.001, "ETHUSD": 0.01}[settings.delta_symbol]
         self.http = httpx.AsyncClient(
             base_url=settings.delta_public_base_url,
             timeout=httpx.Timeout(10.0, connect=4.0),
@@ -32,6 +33,8 @@ class DeltaMarketContextClient:
         raw = await self._result(f"/v2/tickers/{self.settings.delta_symbol}")
         if not isinstance(raw, dict):
             raise DeltaContextError(f"Delta returned no {self.settings.delta_symbol} derivative context")
+        if raw.get("symbol") != self.settings.delta_symbol:
+            raise DeltaContextError(f"Delta returned the wrong derivative for {self.settings.delta_symbol}")
         return normalize_delta_ticker(raw)
 
     async def snapshot(self, include_slow_data: bool = False) -> dict[str, Any]:
@@ -53,13 +56,19 @@ class DeltaMarketContextClient:
             start = now - 48 * 60 * 60
             product_result, oi_result, funding_result, mark_result = await asyncio.gather(
                 self._result(f"/v2/products/{self.settings.delta_symbol}"),
-                self._result("/v2/history/candles", {"resolution": "1h", "symbol": f"OI:{self.settings.delta_symbol}", "start": start, "end": now}),
-                self._result("/v2/history/candles", {"resolution": "1h", "symbol": f"FUNDING:{self.settings.delta_symbol}", "start": start, "end": now}),
-                self._result("/v2/history/candles", {"resolution": "1h", "symbol": f"MARK:{self.settings.delta_symbol}", "start": start, "end": now}),
+                self._result("/v2/history/candles", {
+                    "resolution": "1h", "symbol": f"OI:{self.settings.delta_symbol}", "start": start, "end": now,
+                }),
+                self._result("/v2/history/candles", {
+                    "resolution": "1h", "symbol": f"FUNDING:{self.settings.delta_symbol}", "start": start, "end": now,
+                }),
+                self._result("/v2/history/candles", {
+                    "resolution": "1h", "symbol": f"MARK:{self.settings.delta_symbol}", "start": start, "end": now,
+                }),
                 return_exceptions=True,
             )
             if isinstance(product_result, dict):
-                product = normalize_delta_product(product_result)
+                product = normalize_delta_product(product_result, self.settings.delta_symbol)
                 self.contract_value = product["contractValueBtc"] or self.contract_value
                 snapshot["product"] = product
             if isinstance(oi_result, list):
@@ -123,7 +132,7 @@ def normalize_delta_ticker(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_delta_product(raw: dict[str, Any]) -> dict[str, Any]:
+def normalize_delta_product(raw: dict[str, Any], expected_symbol: str = "BTCUSD") -> dict[str, Any]:
     underlying = raw.get("underlying_asset") if isinstance(raw.get("underlying_asset"), dict) else {}
     quoting = raw.get("quoting_asset") if isinstance(raw.get("quoting_asset"), dict) else {}
     settling = raw.get("settling_asset") if isinstance(raw.get("settling_asset"), dict) else {}
@@ -131,12 +140,12 @@ def normalize_delta_product(raw: dict[str, Any]) -> dict[str, Any]:
     specs = raw.get("product_specs") if isinstance(raw.get("product_specs"), dict) else {}
     return {
         "productId": int(raw.get("id") or 0),
-        "symbol": str(raw.get("symbol") or "BTCUSD"),
-        "description": str(raw.get("description") or raw.get("short_description") or "Bitcoin perpetual"),
+        "symbol": str(raw.get("symbol") or expected_symbol),
+        "description": str(raw.get("description") or raw.get("short_description") or f"{expected_symbol} perpetual"),
         "state": str(raw.get("state") or "unknown"),
         "tradingStatus": str(raw.get("trading_status") or "unknown"),
         "contractType": str(raw.get("contract_type") or "perpetual_futures"),
-        "underlyingAsset": str(underlying.get("symbol") or "BTC"),
+        "underlyingAsset": str(underlying.get("symbol") or expected_symbol.removesuffix("USD")),
         "quotingAsset": str(quoting.get("symbol") or "USD"),
         "settlingAsset": str(settling.get("symbol") or "USD"),
         "indexSymbol": str(spot_index.get("symbol") or ""),
@@ -158,7 +167,10 @@ def normalize_delta_order_book(raw: dict[str, Any], contract_value: float) -> di
     def levels(side: str) -> list[list[float]]:
         values = raw.get(side) if isinstance(raw.get(side), list) else []
         return [
-            [number(level.get("price")), number(level.get("size")), number(level.get("depth")), number(level.get("size")) * contract_value]
+            [
+                number(level.get("price")), number(level.get("size")), number(level.get("depth")),
+                number(level.get("size")) * contract_value,
+            ]
             for level in values[:15]
             if isinstance(level, dict)
         ]
@@ -189,7 +201,13 @@ def normalize_delta_trades(raw: list[Any], contract_value: float) -> list[dict[s
 
 def normalize_delta_history(raw: list[Any]) -> list[dict[str, float | int]]:
     points = [
-        {"time": int(point.get("time") or 0) * 1000, "open": number(point.get("open")), "high": number(point.get("high")), "low": number(point.get("low")), "close": number(point.get("close"))}
+        {
+            "time": int(point.get("time") or 0) * 1000,
+            "open": number(point.get("open")),
+            "high": number(point.get("high")),
+            "low": number(point.get("low")),
+            "close": number(point.get("close")),
+        }
         for point in raw
         if isinstance(point, dict)
     ]
