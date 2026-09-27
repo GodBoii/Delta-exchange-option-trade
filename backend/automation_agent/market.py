@@ -12,6 +12,7 @@ from urllib.parse import quote
 import httpx
 from agno.tools import Toolkit
 
+from .assets import PROFILES, AssetProfile
 from .history import session_history
 
 TIMEFRAMES: tuple[tuple[str, str, int], ...] = (
@@ -28,32 +29,47 @@ class MarketIntelligenceTools(Toolkit):
         binance_url: str | None = None,
         delta_url: str | None = None,
         session_trigger: str | None = None,
+        asset: AssetProfile | None = None,
         **kwargs: Any,
     ) -> None:
+        self.asset = asset or PROFILES["BTC"]
         self.session_trigger = session_trigger
-        self.binance_url = (binance_url or os.getenv("BINANCE_INTERNAL_URL") or "http://binace:8001").rstrip("/")
+        self.binance_url = (binance_url or self.asset.market_base_url).rstrip("/")
         self.delta_url = (delta_url or os.getenv("DELTA_PUBLIC_BASE_URL") or "https://api.india.delta.exchange").rstrip(
             "/"
         )
-        self._btc_cache: dict[str, Any] | None = None
+        self._packet_cache: dict[str, Any] | None = None
+        # The tool keeps the asset in its name so each agent reads only its own market.
+        tool = self.get_eth_market_packet if self.asset.code == "ETH" else self.get_btc_market_packet
         super().__init__(
             name="market_intelligence_tools",
-            tools=[self.get_btc_market_packet],
-            instructions="Use Binance Spot data for BTC direction, volume, volatility, and order-flow analysis.",
+            tools=[tool],
+            instructions=(
+                f"Use Binance Spot data for {self.asset.code} direction, volume, volatility, and order-flow analysis."
+            ),
             add_instructions=True,
             **kwargs,
         )
 
+    def market_packet_json(self) -> str:
+        packet = self._packet_cache or self.collect_market_packet()
+        return json.dumps(compact_btc_market_packet(packet, self.asset.code), ensure_ascii=False, default=str)
+
     def get_btc_market_packet(self) -> str:
         """Return compact BTC Spot trend, flow, volatility, order-book, and timeframe summaries."""
-        packet = self._btc_cache or self.collect_btc_market_packet()
-        return json.dumps(compact_btc_market_packet(packet), ensure_ascii=False, default=str)
+        return self.market_packet_json()
 
-    def collect_btc_market_packet(self) -> dict[str, Any]:
+    def get_eth_market_packet(self) -> str:
+        """Return compact ETH Spot trend, flow, volatility, order-book, and timeframe summaries."""
+        return self.market_packet_json()
+
+    def collect_market_packet(self) -> dict[str, Any]:
+        route = f"{self.binance_url}/api/market/{self.asset.market_route}"
+
         def load_history() -> dict[str, Any]:
             try:
                 with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
-                    response = client.get(f"{self.binance_url}/api/market/btcusd/history")
+                    response = client.get(f"{route}/history")
                     response.raise_for_status()
                     payload = response.json()
                     if not isinstance(payload, dict) or not isinstance(payload.get("observations"), list):
@@ -92,7 +108,7 @@ class MarketIntelligenceTools(Toolkit):
             label, interval, limit = spec
             with httpx.Client(timeout=httpx.Timeout(20, connect=5)) as client:
                 response = client.get(
-                    f"{self.binance_url}/api/market/btcusd",
+                    route,
                     params={"interval": interval, "limit": limit},
                 )
                 response.raise_for_status()
@@ -113,7 +129,9 @@ class MarketIntelligenceTools(Toolkit):
             "orderBook": primary.get("orderBook"),
             "recentTrades": primary.get("recentTrades"),
             "realtime": primary.get("realtime"),
-            "sessionHistory": session_history(history_payload, datetime.now(UTC), self.session_trigger),
+            "sessionHistory": session_history(
+                history_payload, datetime.now(UTC), self.session_trigger, base=self.asset.code
+            ),
             "timeframes": {
                 label: {
                     "interval": payload.get("interval"),
@@ -123,7 +141,7 @@ class MarketIntelligenceTools(Toolkit):
                 for label, payload in loaded.items()
             },
         }
-        self._btc_cache = packet
+        self._packet_cache = packet
         return packet
 
     def collect_delta_option_context(self) -> dict[str, Any]:
@@ -132,7 +150,7 @@ class MarketIntelligenceTools(Toolkit):
                 f"{self.delta_url}/v2/tickers",
                 params={
                     "contract_types": "call_options,put_options",
-                    "underlying_asset_symbols": "BTC",
+                    "underlying_asset_symbols": self.asset.code,
                     "page_size": 100,
                 },
                 headers={"Accept": "application/json", "User-Agent": "trade-cognition-automation/1.0"},
@@ -161,7 +179,12 @@ class MarketIntelligenceTools(Toolkit):
                 code = _expiry_code(str(option.get("symbol") or ""))
                 option["expiry"] = settlements.get(code or "") or option.get("expiry")
         options.sort(key=lambda item: (str(item.get("expiry")), _number(item.get("strike"))))
-        context = {"source": "Delta Exchange", "underlying": "BTC", "count": len(options), "options": options}
+        context = {
+            "source": "Delta Exchange",
+            "underlying": self.asset.code,
+            "count": len(options),
+            "options": options,
+        }
         return context
 
 
@@ -189,7 +212,9 @@ def summarize_candles(candles: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def compact_btc_market_packet(packet: dict[str, Any]) -> dict[str, Any]:
+def compact_btc_market_packet(packet: dict[str, Any], base: str = "BTC") -> dict[str, Any]:
+    """Compact any asset's packet; quantity keys carry the base asset, e.g. bidDepthTop20Eth."""
+    unit = base.capitalize()
     analysis = dict(packet.get("analysis") or {})
     # Keep numerical evidence; the EMA fallback label is not an independent signal.
     structure = analysis.pop("marketStructure", {})
@@ -236,8 +261,8 @@ def compact_btc_market_packet(packet: dict[str, Any]) -> dict[str, Any]:
         "spotOrderBook": {
             "bestBid": bids[0][0] if bids else None,
             "bestAsk": asks[0][0] if asks else None,
-            "bidDepthTop20Btc": bid_depth,
-            "askDepthTop20Btc": ask_depth,
+            f"bidDepthTop20{unit}": bid_depth,
+            f"askDepthTop20{unit}": ask_depth,
             "imbalance": (bid_depth - ask_depth) / total_depth if total_depth else 0,
         },
         "recentTradeFlow": {
