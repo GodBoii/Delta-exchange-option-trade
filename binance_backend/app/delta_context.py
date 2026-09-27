@@ -31,7 +31,7 @@ class DeltaMarketContextClient:
     async def ticker(self) -> dict[str, Any]:
         raw = await self._result(f"/v2/tickers/{self.settings.delta_symbol}")
         if not isinstance(raw, dict):
-            raise DeltaContextError("Delta returned no BTCUSD derivative context")
+            raise DeltaContextError(f"Delta returned no {self.settings.delta_symbol} derivative context")
         return normalize_delta_ticker(raw)
 
     async def snapshot(self, include_slow_data: bool = False) -> dict[str, Any]:
