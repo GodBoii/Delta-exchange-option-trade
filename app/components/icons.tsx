@@ -26,7 +26,7 @@ import {
   DeviceMobile, Export, Info, Key, Lightning, List, Lock, MagnifyingGlass, MagnifyingGlassMinus,
   MagnifyingGlassPlus, Monitor, MoonStars, Newspaper, Path, Play as PlayGlyph, Plus,
   PlusSquare, Prohibit, Robot, SignOut, Skull, SlidersHorizontal, Spinner, Square, Stack, Sun,
-  Trash, TrendUp, UploadSimple, User, Vault, Warning, WifiSlash, X
+  Trash, TrendUp, UploadSimple, User, UsersThree, Vault, Warning, WifiSlash, X
 } from "@phosphor-icons/react";
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -42,6 +42,7 @@ export const MoreHorizontal = CirclesThreePlus as Icon;
 export const Maximize2 = ArrowSquareOut as Icon;
 export const LogOut = SignOut as Icon;
 export const Profile = User as Icon;
+export const Users = UsersThree as Icon;
 export const Search = MagnifyingGlass as Icon;
 export const CommandKey = Command as Icon;
 
