@@ -9,6 +9,7 @@ from uuid import UUID
 
 from agno.tools import Toolkit
 
+from app.assets import DEFAULT_ASSET, Asset
 from app.automation_schedule import (
     IST,
     fixed_session_during_minute,
@@ -44,9 +45,11 @@ class AutomationStrategyTools(Toolkit):
         agent_run_id: str,
         market_snapshot_id: str,
         news_analysis_id: str | None = None,
+        asset: Asset = DEFAULT_ASSET,
         **kwargs: Any,
     ) -> None:
         self.settings = settings
+        self.asset = asset
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
@@ -84,7 +87,10 @@ class AutomationStrategyTools(Toolkit):
         visible = sorted(
             (
                 row for row in rows
-                if row["enabled_for_ai"] and (self.user_id != SHARED_USER_ID or row.get("user_id") is None)
+                if row["enabled_for_ai"]
+                and (self.user_id != SHARED_USER_ID or row.get("user_id") is None)
+                # Each agent lists only strategies written for its own underlying.
+                and ((row.get("definition_json") or {}).get("instrument") or {}).get("underlying") == self.asset
             ),
             key=lambda row: (str(row["name"]).casefold(), str(row["id"])),
         )
@@ -643,7 +649,7 @@ def resolve_option_expiry(
         }
     )
     if not expiries:
-        raise ValueError("Delta returned no live BTC option expiries")
+        raise ValueError("Delta returned no live option expiries for this underlying")
 
     local_date = activation.astimezone(IST).date()
     if policy == "same_day":
