@@ -33,8 +33,11 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     trading_writer_enabled: bool = True
     automation_scheduler_enabled: bool = True
-    automation_analysis_concurrency: int = Field(default=3, ge=1, le=32)
-    automation_recheck_concurrency: int = Field(default=4, ge=1, le=32)
+    # Comma-separated assets whose agents run on the fixed sessions, for example "BTC,ETH".
+    automation_assets: str = "BTC,ETH"
+    # Every asset's main runs and rechecks run in parallel; these only bound worker processes.
+    automation_analysis_concurrency: int = Field(default=6, ge=1, le=32)
+    automation_recheck_concurrency: int = Field(default=8, ge=1, le=32)
     execution_account_concurrency: int = Field(default=8, ge=1, le=128)
     shared_allocation_concurrency: int = Field(default=8, ge=1, le=128)
     risk_state_persist_seconds: float = Field(default=10, ge=2, le=60)
