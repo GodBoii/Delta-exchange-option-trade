@@ -33,6 +33,17 @@ class Settings(BaseSettings):
         return value.rstrip("/")
 
     @property
+    def market_route(self) -> str:
+        """URL segment for this instance's market, e.g. ``btcusd`` or ``ethusd``."""
+        return self.delta_symbol.lower()
+
+    @property
+    def base_asset(self) -> str:
+        quote = "USDT"
+        symbol = self.binance_symbol.upper()
+        return symbol[: -len(quote)] if symbol.endswith(quote) else symbol
+
+    @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip().rstrip("/") for origin in self.frontend_origins.split(",") if origin.strip()]
 
