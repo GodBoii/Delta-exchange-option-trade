@@ -83,17 +83,32 @@ def test_strategy_activation_rejects_a_fixed_session_minute() -> None:
 def test_strategy_catalog_uses_short_references() -> None:
     tool = object.__new__(AutomationStrategyTools)
     tool.user_id = "global"
+    tool.asset = "BTC"
     tool.agent_run_id = "22222222-2222-4222-8222-222222222222"
+    btc = {"index": "BTCUSD", "underlying": "BTC", "underlyingFrom": "cash"}
+    eth = {"index": "ETHUSD", "underlying": "ETH", "underlyingFrom": "cash"}
     tool.application_data = SimpleNamespace(
         selection_context=lambda _user_id: (
-            [{
-                "id": "11111111-1111-4111-8111-111111111111",
-                "version": 7,
-                "name": "Short strangle",
-                "definition_json": {"description": "Range-bound BTC until expiry.", "takeProfitPercent": 50},
-                "enabled_for_ai": True,
-                "user_id": None,
-            }],
+            [
+                {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "version": 7,
+                    "name": "Short strangle",
+                    "definition_json": {
+                        "description": "Range-bound BTC until expiry.", "takeProfitPercent": 50, "instrument": btc,
+                    },
+                    "enabled_for_ai": True,
+                    "user_id": None,
+                },
+                {
+                    "id": "44444444-4444-4444-8444-444444444444",
+                    "version": 1,
+                    "name": "ETH Long call",
+                    "definition_json": {"description": "ETH rise.", "instrument": eth},
+                    "enabled_for_ai": True,
+                    "user_id": None,
+                },
+            ],
             {"allocation_mode": "half_balance"},
         )
     )
@@ -106,6 +121,12 @@ def test_strategy_catalog_uses_short_references() -> None:
     assert result["strategies"][0]["definition"]["description"] == result["strategies"][0]["description"]
     assert "id" not in result["strategies"][0]
     assert tool.strategy_references["S01"] == ("11111111-1111-4111-8111-111111111111", 7)
+    assert [item["name"] for item in result["strategies"]] == ["Short strangle"]
+
+    tool.asset = "ETH"
+    eth_result = json.loads(tool.show_available_strategy())
+    assert [item["name"] for item in eth_result["strategies"]] == ["ETH Long call"]
+    assert tool.strategy_references == {"S01": ("44444444-4444-4444-8444-444444444444", 1)}
 
 
 def test_agent_schedule_schema_uses_short_reference_and_no_proposal_expiry() -> None:
