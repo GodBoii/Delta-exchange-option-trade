@@ -60,7 +60,7 @@ def ensure_roles(writer_url: str, *, ai_url: str | None = None, reader_url: str 
             name, password = _role(writer_url, reader_url, "reader")
             role = _login_role(connection, name, password)
             connection.execute(sql.SQL("alter role {} set default_transaction_read_only = on").format(role))
-            for schema in ("trade", "ai"):
+            for schema in ("trade", "ai", "owner_reporting"):
                 target = sql.Identifier(schema)
                 connection.execute(sql.SQL("grant usage on schema {} to {}").format(target, role))
                 connection.execute(sql.SQL("grant select on all tables in schema {} to {}").format(target, role))
