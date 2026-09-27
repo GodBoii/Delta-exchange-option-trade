@@ -62,7 +62,9 @@ def update_definition(cursor: psycopg.Cursor, row: dict[str, Any], definition: d
 
 
 def seed(cursor: psycopg.Cursor, apply: bool) -> int:
-    existing = {row["name"] for row in shared_templates(cursor)}
+    # Deleted templates count as existing: retiring a template must not be undone by a reseed.
+    cursor.execute("select name from trade.saved_strategies where user_id is null")
+    existing = {row["name"] for row in cursor.fetchall()}
     now = datetime.now(UTC)
     created = 0
     for item in builtin_strategy_definitions(now):
