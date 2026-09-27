@@ -3,6 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Path, Request
 
+from .assets import run_asset
 from .auth import require_user
 from .errors import AppError
 from .shared_analysis import history_filter
@@ -33,7 +34,7 @@ async def list_news_sessions(request: Request, user: RequiredUser) -> dict[str, 
     rows = await request.app.state.db.select(
         "automation_agent_runs",
         {
-            "select": "id,agno_run_id,model_id,member_responses,created_at,updated_at",
+            "select": "id,agno_run_id,model_id,member_responses,created_at,updated_at,asset",
             "user_id": history_filter(getattr(request.app.state.db, "settings", None), str(user["id"])),
             "status": "eq.completed",
             "order": "created_at.desc",
@@ -49,6 +50,7 @@ async def list_news_sessions(request: Request, user: RequiredUser) -> dict[str, 
         sessions.append(
             {
                 "sessionId": row["id"],
+                "asset": run_asset(row),
                 "runId": member.get("runId") or row.get("agno_run_id"),
                 "model": member.get("model") or row["model_id"],
                 "createdAt": member.get("createdAt") or row["created_at"],
@@ -65,7 +67,7 @@ async def get_news_session(session_id: SessionPath, request: Request, user: Requ
     rows = await request.app.state.db.select(
         "automation_agent_runs",
         {
-            "select": "id,agno_run_id,model_id,member_responses,created_at",
+            "select": "id,agno_run_id,model_id,member_responses,created_at,asset",
             "id": f"eq.{session_id}",
             "user_id": history_filter(getattr(request.app.state.db, "settings", None), str(user["id"])),
             "status": "eq.completed",
@@ -81,6 +83,7 @@ async def get_news_session(session_id: SessionPath, request: Request, user: Requ
     return {
         "success": True,
         "sessionId": row["id"],
+        "asset": run_asset(row),
         "runId": member.get("runId") or row.get("agno_run_id"),
         "model": member.get("model") or row["model_id"],
         "researchTools": member.get("researchTools") or [],
