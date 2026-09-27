@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -23,6 +23,14 @@ from .fill_accounting import PositionResult, exclusive_fill_positions
 from .local_journal import LocalOrderJournal
 from .models import StrategyDefinition
 from .order_journal import OrderJournal
+from .run_accounting import run_detail_payload
+from .settlement import (
+    decimal_value,
+    optional_decimal,
+    run_settlement,
+    settlement_summary,
+    slippage_fields,
+)
 from .strategy import (
     deferred_control_warnings,
     delta_expiry,
@@ -103,137 +111,6 @@ def utc_now() -> datetime:
 
 def iso_now() -> str:
     return utc_now().isoformat().replace("+00:00", "Z")
-
-
-def decimal_value(value: Any, default: str = "0") -> Decimal:
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
-        return Decimal(default)
-
-
-def optional_decimal(value: Any) -> Decimal | None:
-    if value is None or value == "":
-        return None
-    try:
-        parsed = Decimal(str(value))
-        return parsed if parsed.is_finite() else None
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-
-
-def slippage_fields(side: str, reference: Any, average: Any) -> dict[str, str]:
-    """
-    Execution slippage against the mark price observed before submission.
-
-    The sign is normalised so positive always means adverse: a buy that filled
-    above the reference, or a sell that filled below it. Without a usable
-    reference or fill price there is nothing honest to record, so nothing is.
-    """
-    reference_price = optional_decimal(reference)
-    average_price = optional_decimal(average)
-    if not reference_price or not average_price or reference_price <= 0 or average_price <= 0:
-        return {}
-    direction = Decimal("1") if side == "buy" else Decimal("-1")
-    slippage = (average_price - reference_price) * direction
-    return {
-        "slippage": str(slippage),
-        "slippage_percent": str(slippage / reference_price * Decimal("100")),
-    }
-
-
-def order_cash_flow(order: dict[str, Any]) -> Decimal:
-    """
-    Signed premium moved by one recorded order, in quote currency.
-
-    Selling collects premium (positive), buying pays it (negative). Contract
-    value converts lots into underlying units; it defaults to 1 so pre-migration
-    rows still produce a directionally correct figure.
-    """
-    filled = decimal_value(order.get("filled_size"))
-    if filled <= 0 and str(order.get("state")) == "closed":
-        filled = decimal_value(order.get("size"))
-    price = optional_decimal(order.get("average_fill_price")) or Decimal("0")
-    contract_value = optional_decimal(order.get("contract_value")) or Decimal("1")
-    direction = Decimal("1") if order.get("side") == "sell" else Decimal("-1")
-    return direction * price * filled * contract_value
-
-
-def settlement_summary(orders: list[dict[str, Any]]) -> dict[str, Any]:
-    """
-    Money view of a run, rebuilt from the recorded orders rather than stored
-    running totals, so it is identical whether it is computed at exit time or
-    when the Information panel is opened months later.
-    """
-    entry_premium = Decimal("0")
-    exit_premium = Decimal("0")
-    commission = Decimal("0")
-    slippage_cost = Decimal("0")
-    requested_lots = Decimal("0")
-    filled_lots = Decimal("0")
-    closed_lots = Decimal("0")
-    symbols: dict[str, dict[str, Decimal]] = {}
-
-    for order in orders:
-        is_exit = str(order.get("kind")) == "exit"
-        cash = order_cash_flow(order)
-        filled = decimal_value(order.get("filled_size"))
-        if filled <= 0 and str(order.get("state")) == "closed":
-            filled = decimal_value(order.get("size"))
-        commission += decimal_value(order.get("commission"))
-        slippage = optional_decimal(order.get("slippage"))
-        contract_value = optional_decimal(order.get("contract_value")) or Decimal("1")
-        if slippage is not None:
-            slippage_cost += slippage * filled * contract_value
-        if is_exit:
-            exit_premium += cash
-            closed_lots += filled
-        else:
-            entry_premium += cash
-            requested_lots += decimal_value(order.get("size"))
-            filled_lots += filled
-        symbol = str(order.get("product_symbol") or "unknown")
-        bucket = symbols.setdefault(
-            symbol,
-            {
-                "entryPremium": Decimal("0"),
-                "exitPremium": Decimal("0"),
-                "commission": Decimal("0"),
-                "entryLots": Decimal("0"),
-                "exitLots": Decimal("0"),
-            },
-        )
-        bucket["exitPremium" if is_exit else "entryPremium"] += cash
-        bucket["exitLots" if is_exit else "entryLots"] += filled
-        bucket["commission"] += decimal_value(order.get("commission"))
-
-    gross = entry_premium + exit_premium
-    return {
-        "entryPremium": str(entry_premium),
-        "exitPremium": str(exit_premium),
-        "grossPnl": str(gross),
-        "commission": str(commission),
-        "realizedPnl": str(gross - commission),
-        "slippageCost": str(slippage_cost),
-        "requestedLots": str(requested_lots),
-        "filledLots": str(filled_lots),
-        "closedLots": str(closed_lots),
-        "fullyClosed": bool(
-            filled_lots > 0 and all(bucket["entryLots"] == bucket["exitLots"] for bucket in symbols.values())
-        ),
-        "bySymbol": [
-            {
-                "symbol": symbol,
-                "entryPremium": str(bucket["entryPremium"]),
-                "exitPremium": str(bucket["exitPremium"]),
-                "commission": str(bucket["commission"]),
-                "entryLots": str(bucket["entryLots"]),
-                "exitLots": str(bucket["exitLots"]),
-                "realizedPnl": str(bucket["entryPremium"] + bucket["exitPremium"] - bucket["commission"]),
-            }
-            for symbol, bucket in sorted(symbols.items())
-        ],
-    }
 
 
 def base36(value: int) -> str:
@@ -1752,10 +1629,11 @@ class TradingEngine:
                 if owned_client is not None and owned_client is not client:
                     await owned_client.close()
 
-    async def run_detail(self, strategy_id: str, user_id: str) -> dict[str, Any]:
+    async def run_detail(self, strategy_id: str, user_id: str, *, include_raw: bool = True) -> dict[str, Any]:
         """
         Everything recorded about a single run: schedule, criteria, per-leg
         fills with slippage, settlement, risk monitor state, and raw responses.
+        ``include_raw=False`` drops raw exchange responses and internal risk fields.
         """
         rows = await self.db.select(
             "strategies",
@@ -1773,68 +1651,8 @@ class TradingEngine:
             finally:
                 await client.close()
 
-        stored = row.get("result_json") or {}
-        settlement = dict(stored)
-        if orders and stored.get("accountingBasis") != "allocated_exchange_fills":
-            settlement.update(settlement_summary(orders))
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "status": row["status"],
-            "createdAt": row.get("created_at"),
-            "updatedAt": row.get("updated_at"),
-            "entryAt": row.get("entry_at"),
-            "exitAt": row.get("exit_at"),
-            "entryExecutedAt": row.get("entry_execution_at"),
-            "exitExecutedAt": row.get("exit_execution_at"),
-            "lastError": row.get("last_error"),
-            "definition": row.get("definition_json") or {},
-            "savedStrategyId": row.get("saved_strategy_id"),
-            "capitalSlot": row.get("capital_slot"),
-            "capitalBudget": str(row.get("capital_budget")) if row.get("capital_budget") is not None else None,
-            "capitalPolicy": row.get("capital_policy_json") or {},
-            "riskState": row.get("risk_state") or {},
-            "riskMonitoredAt": row.get("risk_monitor_at"),
-            "combinedStopTriggeredAt": row.get("combined_stop_triggered_at"),
-            "settlement": settlement,
-            "executions": [
-                {
-                    "id": item["id"],
-                    "kind": item["kind"],
-                    "status": item["status"],
-                    "error": item.get("error"),
-                    "startedAt": item.get("started_at"),
-                    "completedAt": item.get("completed_at"),
-                }
-                for item in executions
-            ],
-            "orders": [
-                {
-                    "id": order["id"],
-                    "kind": order.get("kind"),
-                    "legId": order.get("leg_id"),
-                    "deltaOrderId": order.get("delta_order_id"),
-                    "clientOrderId": order.get("client_order_id"),
-                    "productId": order.get("product_id"),
-                    "productSymbol": order.get("product_symbol"),
-                    "side": order.get("side"),
-                    "size": str(order.get("size")),
-                    "filledSize": str(order.get("filled_size") or "0"),
-                    "averageFillPrice": order.get("average_fill_price"),
-                    "referencePrice": order.get("reference_price"),
-                    "slippage": order.get("slippage"),
-                    "slippagePercent": order.get("slippage_percent"),
-                    "contractValue": order.get("contract_value"),
-                    "orderType": order.get("order_type"),
-                    "limitPrice": order.get("limit_price"),
-                    "commission": str(order.get("commission") or "0"),
-                    "state": order.get("state"),
-                    "createdAt": order.get("created_at"),
-                    "response": order.get("response_json") or {},
-                }
-                for order in orders
-            ],
-        }
+        settlement = run_settlement(row.get("result_json") or {}, orders)
+        return run_detail_payload(row, executions, orders, settlement, include_raw=include_raw)
 
     async def delete_strategy(self, strategy_id: str, user_id: str) -> None:
         """
