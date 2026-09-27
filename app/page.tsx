@@ -37,11 +37,28 @@ const Automation = dynamic(() => import("@/app/components/Automation"), {
   loading: () => <TableSkeleton label="automation" rows={6} />
 });
 
+const PnlView = dynamic(() => import("@/app/components/PnlView"), {
+  loading: () => <TableSkeleton label="P&L" rows={6} />
+});
+
+const OwnerUsers = dynamic(() => import("@/app/components/OwnerUsers"), {
+  loading: () => <TableSkeleton label="users" rows={6} />
+});
+
 type BackendStatus = "checking" | "online" | "offline";
 
-const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation"];
-const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news", "automation"];
+const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation", "pnl"];
+const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news", "automation", "pnl"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
+
+/**
+ * The Users page is listed only when the backend session says this account is the
+ * owner. The backend checks the role again on every owner request, so this is
+ * navigation, not authorization.
+ */
+function tabsFor(base: Tab[], isOwner: boolean): Tab[] {
+  return isOwner && base.includes("pnl") ? [...base, "users"] : base;
+}
 
 /**
  * Where a session lands when nothing has been picked yet, or when the picked
@@ -115,11 +132,11 @@ export default function Home() {
   useEffect(() => { void loadSession(); }, [loadSession]);
 
   const connected = Boolean(account);
-  const availableTabs = connected
-    ? CONNECTED_TABS
-    : backendStatus === "online"
-      ? UNCONNECTED_TABS
-      : OFFLINE_TABS;
+  const isOwner = backendStatus === "online" && user?.userType === "owner";
+  const availableTabs = tabsFor(
+    connected ? CONNECTED_TABS : backendStatus === "online" ? UNCONNECTED_TABS : OFFLINE_TABS,
+    isOwner
+  );
 
   const tab = selectedTab && availableTabs.includes(selectedTab)
     ? selectedTab
@@ -201,7 +218,8 @@ export default function Home() {
         connection={connection}
         account={{
           name: account?.accountName || user.displayName || "Account",
-          detail: account?.email || user.email || "Signed in"
+          detail: account?.email || user.email || "Signed in",
+          role: isOwner ? "owner" : "user"
         }}
         badges={{ runs: attention }}
         onNavigate={setTab}
@@ -282,6 +300,8 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "market" && <BtcMarketChart />}
       {tab === "news" && backendOnline && <NewsAnalysis request={requestJson} />}
       {tab === "automation" && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
+      {tab === "pnl" && backendOnline && <PnlView />}
+      {tab === "users" && backendOnline && user.userType === "owner" && <OwnerUsers onNotice={onNotice} />}
     </PageEnter>
   );
 }

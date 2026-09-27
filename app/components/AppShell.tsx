@@ -5,7 +5,7 @@ import {
 } from "react";
 import {
   Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart, Search,
-  ThemeDark, ThemeLight, ThemeSystem
+  ThemeDark, ThemeLight, ThemeSystem, TrendingUp, Users, X
 } from "@/app/components/icons";
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
@@ -13,10 +13,11 @@ import {
   Badge, Brand, StatusDot, SwapText, Tooltip, useDisclosure, useSlidingPill
 } from "@/app/components/ui";
 
-export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs";
+export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs" | "pnl" | "users";
 
 /** `short` is the label under the icon in the phone dock, where ~56px is all a destination gets. */
 type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
+type NavFamily = "execute" | "research" | "account";
 
 /**
  * Navigation.
@@ -32,18 +33,24 @@ type NavItem = { id: Tab; label: string; short: string; hint: string; icon: Reac
  * a property of the portfolio, not a destination, so it lives inside Portfolio
  * next to the balance it is calculated from.
  */
-const NAV_ITEMS: (NavItem & { family: "execute" | "research" })[] = [
+const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
   { id: "connect", label: "Connection", short: "Connect", hint: "Enable live execution", icon: <KeyRound />, family: "execute" },
   { id: "builder", label: "Builder", short: "Build", hint: "Configure and schedule", icon: <Layers3 />, family: "execute" },
   { id: "runs", label: "History", short: "History", hint: "Scheduled and active strategies", icon: <Activity />, family: "execute" },
   { id: "dashboard", label: "Portfolio", short: "Portfolio", hint: "Balances, positions and capital", icon: <PieChart />, family: "execute" },
   { id: "market", label: "Market", short: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
   { id: "news", label: "News", short: "News", hint: "Headlines and market impact", icon: <Newspaper />, family: "research" },
-  { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" }
+  { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" },
+  /* Account pages open from the profile window and the jump menu. On desktop they
+     also sit at the end of the strip; the phone dock leaves them to the profile. */
+  { id: "pnl", label: "My P&L", short: "P&L", hint: "Your software trade results", icon: <TrendingUp />, family: "account" },
+  { id: "users", label: "Users", short: "Users", hint: "Every account, capital and automation", icon: <Users />, family: "account" }
 ];
 
 /** Reading order of the sections, so a transition knows which way it travelled. */
 export const TAB_ORDER: readonly Tab[] = NAV_ITEMS.map(item => item.id);
+
+export type AccountIdentity = { name: string; detail: string; role: "owner" | "user" };
 
 export type ConnectionState = {
   label: string;
@@ -56,7 +63,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   /** Tabs appear only when their backend and account prerequisites are met. */
   availableTabs: Tab[];
   connection: ConnectionState;
-  account: { name: string; detail: string };
+  account: AccountIdentity;
   /** Counts worth surfacing on the navigation itself, keyed by tab. */
   badges?: Partial<Record<Tab, number>>;
   onNavigate: (tab: Tab) => void;
@@ -93,8 +100,11 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
     activeRef.current?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
   }, [tab]);
 
-  /** A visible boundary between the execution and research halves of the strip. */
+  /** Visible boundaries between the execution, research and account groups of the strip. */
   const firstResearch = items.find(item => item.family === "research")?.id;
+  const firstAccount = items.find(item => item.family === "account")?.id;
+  const accountItems = items.filter(item => item.family === "account");
+  const dockItems = items.filter(item => item.family !== "account");
 
   return (
     <div className="shell">
@@ -126,9 +136,12 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
               <kbd aria-hidden="true">Ctrl K</kbd>
             </button>
             <Clock />
-            <AccountMenu
+            <AccountWindow
               account={account}
               connection={connection}
+              pages={accountItems}
+              current={tab}
+              onNavigate={onNavigate}
               onDisconnect={onDisconnect}
               onSignOut={onSignOut}
             />
@@ -148,7 +161,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
                   ref={current ? activeRef : undefined}
                   className="topnav-item"
                   aria-label={item.label}
-                  data-divider={item.id === firstResearch ? "before" : undefined}
+                  data-divider={item.id === firstResearch || item.id === firstAccount ? "before" : undefined}
                   aria-current={current ? "page" : undefined}
                   onClick={() => onNavigate(item.id)}
                 >
@@ -182,7 +195,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
       <nav className="dock" aria-label="Dashboard sections">
         <div className="dock-track" ref={dockPill.barRef}>
           {dockPill.pill}
-          {items.map(item => {
+          {dockItems.map(item => {
             const count = badges?.[item.id] ?? 0;
             return (
               <button
@@ -362,46 +375,62 @@ const CURRENCY_OPTIONS: { value: DisplayCurrency; label: string; symbol: string 
 ];
 
 /**
- * Profile.
+ * Account window.
  *
- * Identity, the live connection state, appearance, and the two ways out, in one
- * place. Appearance is a three-option segmented control rather than a sun-moon
- * switch, because following the operating system is a real third state and a
- * two-position switch cannot express it.
+ * A floating, non-modal window anchored to the profile trigger. It holds the
+ * account's own pages (My P&L, and Users for the owner), then identity,
+ * connection, appearance and currency, then the two ways out. The pages open
+ * in the workspace; the window only routes to them.
+ *
+ * Focus moves into the window on open and returns to the trigger on Escape or
+ * when a page is chosen. A pointer press outside closes it.
  */
-function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
-  account: { name: string; detail: string };
+function AccountWindow({ account, connection, pages, current, onNavigate, onDisconnect, onSignOut }: {
+  account: AccountIdentity;
   connection: ConnectionState;
+  pages: NavItem[];
+  current: Tab;
+  onNavigate: (tab: Tab) => void;
   onDisconnect?: () => void;
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
-  const menuId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const windowId = useId();
+  const titleId = useId();
   const appearanceId = useId();
   const currencyId = useId();
   const { choice, setChoice } = useTheme();
   const { currency, setCurrency, rateState } = useCurrency();
-  // The panel is kept in the tree for the length of its close transition, so
-  // dismissal plays instead of the menu simply blinking out.
+  // Kept in the tree for the close transition, so dismissal plays instead of blinking out.
   const disclosure = useDisclosure(open, "--dropdown-close-dur");
-  /**
-   * The appearance bar only exists while the panel is mounted, so the mounted
-   * flag is part of the key: without it the pill would be measured once, before
-   * the bar had been rendered, and stay at zero width on every open.
-   */
+  /* The bars only exist while the window is mounted, so the mounted flag is part
+     of the key: otherwise the pill is measured before the bar renders. */
   const appearancePill = useSlidingPill(`${choice}:${disclosure.mounted}`, '[aria-checked="true"]');
   const currencyPill = useSlidingPill(`${currency}:${disclosure.mounted}`, '[aria-checked="true"]');
 
+  function close(returnFocus: boolean) {
+    setOpen(false);
+    if (returnFocus) trigger.current?.focus();
+  }
+
   useEffect(() => {
     if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      panel.current?.querySelector<HTMLElement>("[data-autofocus], button:not(:disabled)")?.focus();
+    });
     const onPointerDown = (event: PointerEvent) => {
-      if (!container.current?.contains(event.target as Node)) setOpen(false);
+      if (event.target instanceof Node && !container.current?.contains(event.target)) setOpen(false);
     };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setOpen(false); trigger.current?.focus(); }
+    };
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKey);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKey);
     };
@@ -412,12 +441,13 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
   return (
     <div className="account-menu" ref={container}>
       <button
+        ref={trigger}
         type="button"
         className="account-trigger"
-        aria-label="Account menu"
+        aria-label={`Account: ${account.name}`}
         aria-expanded={open}
-        aria-haspopup="menu"
-        aria-controls={open ? menuId : undefined}
+        aria-haspopup="dialog"
+        aria-controls={open ? windowId : undefined}
         onClick={() => setOpen(value => !value)}
       >
         <span className="avatar" aria-hidden="true">{initials}</span>
@@ -430,25 +460,50 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
 
       {disclosure.mounted && (
         <div
-          className={`account-dropdown t-dropdown ${disclosure.className}`}
-          /* Anchored under the trigger's right edge, so it grows out of that
-             corner rather than from the top left. */
+          ref={panel}
+          className={`account-dropdown account-window t-dropdown ${disclosure.className}`}
           data-origin="top-right"
-          id={menuId}
-          role="menu"
+          id={windowId}
+          role="dialog"
+          aria-labelledby={titleId}
         >
           <div className="account-profile">
             <span className="avatar avatar-lg" aria-hidden="true">{initials}</span>
             <span className="account-profile-text">
-              <strong>{account.name}</strong>
+              <strong id={titleId}>{account.name}</strong>
               <small>{account.detail}</small>
             </span>
+            {account.role === "owner" && <span className="account-role">Owner</span>}
+            <button type="button" className="icon-button account-close" aria-label="Close account window" onClick={() => close(true)}>
+              <X aria-hidden="true" />
+            </button>
           </div>
 
           <span className={`connection-chip tone-${connection.tone}`}>
             <StatusDot tone={connection.tone} />
             {connection.label}
           </span>
+
+          {pages.length > 0 && (
+            <nav className="account-pages" aria-label="Account pages">
+              {pages.map((page, index) => (
+                <button
+                  type="button"
+                  key={page.id}
+                  className="account-page"
+                  data-autofocus={index === 0 ? "" : undefined}
+                  aria-current={page.id === current ? "page" : undefined}
+                  onClick={() => { close(true); onNavigate(page.id); }}
+                >
+                  <span className="account-page-icon" aria-hidden="true">{page.icon}</span>
+                  <span className="account-page-text">
+                    <strong>{page.label}</strong>
+                    <small>{page.hint}</small>
+                  </span>
+                </button>
+              ))}
+            </nav>
+          )}
 
           <div className="account-section">
             <span className="account-section-label" id={appearanceId}>Appearance</span>
@@ -502,11 +557,11 @@ function AccountMenu({ account, connection, onDisconnect, onSignOut }: {
 
           <div className="account-section">
             {onDisconnect && (
-              <button type="button" role="menuitem" onClick={() => { setOpen(false); onDisconnect(); }}>
+              <button type="button" className="account-action" onClick={() => { close(true); onDisconnect(); }}>
                 <KeyRound aria-hidden="true" />Disconnect Delta Exchange
               </button>
             )}
-            <button type="button" role="menuitem" onClick={() => { setOpen(false); onSignOut(); }}>
+            <button type="button" className="account-action" onClick={() => { close(false); onSignOut(); }}>
               <LogOut aria-hidden="true" />Sign out
             </button>
           </div>
