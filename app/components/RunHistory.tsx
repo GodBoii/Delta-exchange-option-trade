@@ -310,7 +310,7 @@ function RunRow({ run, onInspect, onAction }: {
     {
       id: "delete",
       label: "Delete run",
-      hint: canDeleteRun(run) ? "Erase this run and its records" : "Only once the run has settled",
+      hint: canDeleteRun(run) ? "Remove it from your history and P&L" : "Only once the run has settled",
       icon: <Trash2 />,
       tone: "danger",
       disabled: !canDeleteRun(run),
