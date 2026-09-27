@@ -6,7 +6,7 @@ import { Activity, Bot, CalendarClock, Play, RefreshCw, ShieldCheck, Workflow } 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cleanAgentMarkdown } from "@/lib/agent-markdown";
-import type { AutomationOverview as AutomationOverviewData } from "@/lib/app-types";
+import { AGENT_ASSETS, type AgentAsset, type AutomationOverview as AutomationOverviewData } from "@/lib/app-types";
 import { backendUrl, requestJson } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage, formatDateTime, percent, titleCase } from "@/lib/format";
@@ -19,7 +19,9 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
   const { automation: revision } = useRealtimeSignals();
   const [overview, setOverview] = useState<AutomationOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
+  // Each asset agent runs independently, so one agent's request never disables the other's button.
+  const [runningAssets, setRunningAssets] = useState<readonly AgentAsset[]>([]);
+  const running = runningAssets.length > 0;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -61,22 +63,22 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
     }
   }
 
-  async function runNow() {
-    setRunning(true);
+  async function runNow(asset: AgentAsset) {
+    setRunningAssets(current => [...current, asset]);
     setError("");
     try {
       await requestJson("/api/automation/run", {
         method: "POST",
-        body: JSON.stringify({ reason: "Manual review from the Automation workspace" }),
+        body: JSON.stringify({ reason: `Manual ${asset} review from the Automation workspace`, asset }),
         signal: null
       });
       await load(true);
-      onNotice({ tone: "ok", text: "Global analysis queued. Its result will appear for everyone." });
+      onNotice({ tone: "ok", text: `${asset} analysis queued. Its result will appear for everyone.` });
     } catch (runError) {
-      setError(errorMessage(runError, "The automation analysis failed. No strategy was activated."));
+      setError(errorMessage(runError, `The ${asset} analysis failed. No strategy was activated.`));
       await load(true);
     } finally {
-      setRunning(false);
+      setRunningAssets(current => current.filter(item => item !== asset));
     }
   }
 
@@ -92,9 +94,12 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
             <button type="button" className="button secondary small" onClick={() => void load()} disabled={loading || running}>
               <RefreshCw className={loading ? "spin" : ""} aria-hidden="true" />Refresh
             </button>
-            {isOwner && <button type="button" className="button primary" onClick={() => void runNow()} disabled={loading || running || !overview?.enabledStrategies}>
-              <Play aria-hidden="true" />{running ? <Shimmer>Analyzing market</Shimmer> : "Run analysis"}
-            </button>}
+            {isOwner && AGENT_ASSETS.map(asset => {
+              const busy = runningAssets.includes(asset);
+              return <button key={asset} type="button" className="button primary" onClick={() => void runNow(asset)} disabled={loading || busy || !overview?.enabledStrategies}>
+                <Play aria-hidden="true" />{busy ? <Shimmer>{`Analyzing ${asset}`}</Shimmer> : `Run ${asset} analysis`}
+              </button>;
+            })}
           </>
         }
       />
@@ -124,7 +129,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
               {upcomingRuns.map((run, index) => (
                 <li key={run.id}>
                   <span>{index ? "Then" : "Next"}</span>
-                  <strong>{titleCase(run.trigger)}</strong>
+                  <strong>{run.asset ?? "BTC"} · {titleCase(run.trigger)}</strong>
                   <small>{formatDateTime(run.scheduledFor)}</small>
                 </li>
               ))}
@@ -140,7 +145,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
           icon={<Workflow />}
           title="Latest decision"
           meta={latestDecision
-            ? `${titleCase(latestDecision.outcome ?? latestDecision.status)} · ${formatDateTime(latestDecision.completedAt ?? latestDecision.startedAt)}`
+            ? `${latestDecision.asset ?? "BTC"} · ${titleCase(latestDecision.outcome ?? latestDecision.status)} · ${formatDateTime(latestDecision.completedAt ?? latestDecision.startedAt)}`
             : "No completed decision"}
         />
         {latestDecision?.report ? (
@@ -172,7 +177,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
               <details key={run.id} className="automation-run-item">
                 <summary>
                   <span>
-                    <strong>{titleCase(run.trigger)}</strong>
+                    <strong>{run.asset ?? "BTC"} · {titleCase(run.trigger)}</strong>
                     <small>{formatDateTime(run.scheduledFor)} · {run.scope === "shared" ? "Shared" : "Earlier account run"}</small>
                   </span>
                   <StatusChip tone={run.status === "failed" ? "negative" : run.status === "completed" ? "positive" : "active"}>
@@ -213,7 +218,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
               <tbody>
                 {overview.proposals.map(proposal => (
                   <tr key={proposal.id}>
-                    <th scope="row">{proposal.strategyName}</th>
+                    <th scope="row">{proposal.asset ?? "BTC"} · {proposal.strategyName}</th>
                     <td data-label="Status"><StatusChip tone={proposal.status === "rejected" ? "negative" : "active"}>{titleCase(proposal.status)}</StatusChip></td>
                     <td data-label="Activation">{formatDateTime(proposal.activationTime)}</td>
                     <td data-label="Confidence">{percent(proposal.confidence * 100, 0)}</td>
