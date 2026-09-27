@@ -184,8 +184,14 @@ export type SavedStrategy = {
   updatedAt: string;
 };
 
+/** Underlying asset whose agent produced a run or proposal. Older payloads omit it and mean BTC. */
+export type AgentAsset = "BTC" | "ETH";
+
+export const AGENT_ASSETS: readonly AgentAsset[] = ["BTC", "ETH"];
+
 export type AutomationRun = {
   scope?: "shared" | "historical_account";
+  asset?: AgentAsset;
   id: string;
   sessionId?: string | null;
   runId?: string | null;
@@ -203,6 +209,7 @@ export type AutomationRun = {
 
 export type StrategyProposal = {
   id: string;
+  asset?: AgentAsset;
   strategyName: string;
   strategyVersion: number;
   status: string;
@@ -222,6 +229,6 @@ export type AutomationOverview = {
   enabledStrategies: number;
   totalStrategies: number;
   runs: AutomationRun[];
-  upcomingRuns: Pick<AutomationRun, "id" | "trigger" | "scheduledFor">[];
+  upcomingRuns: Pick<AutomationRun, "id" | "asset" | "trigger" | "scheduledFor">[];
   proposals: StrategyProposal[];
 };
