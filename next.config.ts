@@ -6,7 +6,7 @@ const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const apiWsOrigin = apiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const binanceApiOrigin = process.env.NEXT_PUBLIC_BINANCE_API_URL ?? "http://localhost:8001";
 const binanceWsOrigin = binanceApiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-const binanceEthApiOrigin = process.env.NEXT_PUBLIC_BINANCE_ETH_API_URL ?? "http://localhost:8003";
+const binanceEthApiOrigin = process.env.NEXT_PUBLIC_BINANCE_ETH_API_URL ?? "http://127.0.0.1:8003";
 const binanceEthWsOrigin = binanceEthApiOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const apiUrl = new URL(apiOrigin);
 

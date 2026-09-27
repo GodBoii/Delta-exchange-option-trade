@@ -541,7 +541,9 @@ function marketDataOrigin(asset: "BTC" | "ETH") {
   const configured = (asset === "ETH" ? process.env.NEXT_PUBLIC_BINANCE_ETH_API_URL : process.env.NEXT_PUBLIC_BINANCE_API_URL || "")?.trim().replace(/\/$/, "");
   if (configured) return configured;
   if (window.location.protocol === "https:") throw new Error("The Binance market-data service is not configured for this website");
-  const host = ["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.hostname : "localhost";
+  const host = asset === "ETH" && window.location.hostname === "localhost"
+    ? "127.0.0.1"
+    : ["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.hostname : "localhost";
   return `http://${host}:${asset === "ETH" ? 8003 : 8001}`;
 }
 
