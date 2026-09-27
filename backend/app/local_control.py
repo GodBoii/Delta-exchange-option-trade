@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from psycopg.rows import dict_row
 
+from .assets import asset_run_key, parse_asset
 from .errors import AppError
 from .local_research_operations import LocalResearchOperations
 
@@ -86,33 +87,24 @@ class LocalControl:
 
     async def manual(self, args: dict[str, Any]) -> dict[str, Any]:
         requester = args["requestedBy"]
+        asset = parse_asset(args.get("asset"))
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("select pg_advisory_xact_lock(hashtextextended('shared-manual', 45))")
             await cursor.execute("select owner_user_id,analysis from trade.system_settings where key='main'")
             config = await cursor.fetchone()
             if not config or config["owner_user_id"] != requester:
                 raise AppError(403, "Owner access required", "owner_required")
             if not config["analysis"].get("enabled"):
                 raise AppError(409, "Global analysis is paused", "analysis_paused")
-            await cursor.execute(
-                """select data from trade.analysis_jobs
-                   where owner_id='global' and status in ('scheduled','running')
-                   order by scheduled_for limit 100"""
-            )
-            for record in await cursor.fetchall():
-                row = record["data"]
-                if row.get("trigger") != "activation_recheck" and (
-                    row["status"] == "running" or _time(row["scheduled_for"]) <= datetime.now(UTC)
-                ):
-                    return row
+            # A manual request always starts its own run, even while other runs are active.
             now = _now()
             row = {
                 "id": str(uuid4()),
                 "user_id": "global",
+                "asset": asset,
                 "trigger": "manual",
-                "run_key": f"shared-manual:{uuid4()}",
+                "run_key": asset_run_key(asset, f"shared-manual:{uuid4()}"),
                 "scheduled_for": now,
-                "reason": "User requested a shared market analysis",
+                "reason": f"User requested a shared {asset} market analysis",
                 "status": "scheduled",
                 "outcome": None,
                 "model_id": "xiaomi/mimo-v2.6-pro",
@@ -238,12 +230,14 @@ class LocalControl:
                 "entry_at": decision["activation_time"],
                 "exit_at": decision["exit_at"],
                 "shared_decision_id": decision_id,
+                "asset": parse_asset(decision.get("asset")),
                 "created_at": now,
                 "updated_at": now,
             }
             proposal = {
                 "id": proposal_id,
                 "user_id": user_id,
+                "asset": parse_asset(decision.get("asset")),
                 "agent_run_id": decision["agent_run_id"],
                 "strategy_id": strategy_id,
                 "shared_decision_id": decision_id,
