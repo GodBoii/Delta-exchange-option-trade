@@ -52,14 +52,19 @@ def _tool_names(run: RunOutput) -> list[str]:
     return names
 
 
-async def collect_live_news_context(prompt: str, settings: NewsAgentSettings) -> tuple[str, tuple[str, ...]]:
+BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
+
+
+async def collect_live_news_context(
+    prompt: str, settings: NewsAgentSettings, focus_query: str = BTC_FOCUS_QUERY
+) -> tuple[str, tuple[str, ...]]:
     """Collect bounded, diverse evidence once, before one model synthesis."""
     budget = ResearchBudget()
     search = WebSearchTools(budget)
     articles = NewsResearchTools(settings, budget)
     queries = [
         f"{prompt[:180]} latest news",
-        "Bitcoin BTC ETF regulation latest news",
+        focus_query,
         "Federal Reserve inflation rates dollar latest news",
     ]
     results = await asyncio.gather(*(search.search_news(query) for query in queries))
@@ -110,8 +115,10 @@ async def collect_live_news_context(prompt: str, settings: NewsAgentSettings) ->
     return context, tuple(tools)
 
 
-def _collect_live_news_context(prompt: str, settings: NewsAgentSettings) -> tuple[str, tuple[str, ...]]:
-    return asyncio.run(collect_live_news_context(prompt, settings))
+def _collect_live_news_context(
+    prompt: str, settings: NewsAgentSettings, focus_query: str = BTC_FOCUS_QUERY
+) -> tuple[str, tuple[str, ...]]:
+    return asyncio.run(collect_live_news_context(prompt, settings, focus_query))
 
 
 def run_news_pipeline(
@@ -122,6 +129,8 @@ def run_news_pipeline(
     user_id: str | None = None,
     db: BaseDb | None = None,
     debug_mode: bool = True,
+    asset: str = "BTC",
+    focus_query: str = BTC_FOCUS_QUERY,
 ) -> NewsPipelineResult:
     """Collect current evidence, then let the model synthesize a natural Markdown analysis."""
     settings = settings or NewsAgentSettings.load()
@@ -141,7 +150,7 @@ def run_news_pipeline(
     )
     logger.debug("News pipeline prompt=%r", prompt)
     try:
-        live_news_context, bootstrap_tools = _collect_live_news_context(prompt, settings)
+        live_news_context, bootstrap_tools = _collect_live_news_context(prompt, settings, focus_query)
         research_prompt = (
             f"{prompt}\n\n"
             "Live news-search evidence has already been collected below. Analyze it now; do not return an "
@@ -156,6 +165,7 @@ def run_news_pipeline(
             db=session_db,
             debug_mode=debug_mode,
             include_research_tools=False,
+            asset=asset,
         )
         report_response = analyst.run(research_prompt, session_id=effective_session_id, user_id=effective_user_id)
 
