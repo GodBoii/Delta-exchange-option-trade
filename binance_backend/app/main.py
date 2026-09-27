@@ -16,6 +16,8 @@ from .delta_context import DeltaMarketContextClient
 from .feed import BinanceSpotFeed, replace_latest_candle
 
 settings = get_settings()
+# One instance serves one market; BTCUSD keeps its original /api/market/btcusd paths.
+ROUTE = settings.market_route
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
@@ -36,8 +38,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="BTC Spot Intelligence API",
-    description="Read-only Binance Spot BTCUSDT streaming market data and analysis for Delta Strategy Desk.",
+    title=f"{settings.base_asset} Spot Intelligence API",
+    description=(
+        f"Read-only Binance Spot {settings.binance_symbol} streaming market data and analysis for Delta Strategy Desk."
+    ),
     version="2.0.0",
     redoc_url=None,
     lifespan=lifespan,
@@ -72,7 +76,7 @@ async def health(request: Request) -> dict[str, Any]:
     }
 
 
-@app.get("/api/market/btcusd")
+@app.get(f"/api/market/{ROUTE}")
 async def btcusd_market(
     request: Request,
     interval: Annotated[str, Query()] = "1h",
@@ -107,7 +111,7 @@ async def btcusd_market(
     )
 
 
-@app.get("/api/market/btcusd/ticker")
+@app.get(f"/api/market/{ROUTE}/ticker")
 async def btcusd_ticker(request: Request) -> dict[str, Any]:
     feed: BinanceSpotFeed = request.app.state.feed
     live = feed.snapshot()
@@ -115,7 +119,7 @@ async def btcusd_ticker(request: Request) -> dict[str, Any]:
     return response_envelope(None, {"ticker": ticker, "realtime": live["realtime"]})
 
 
-@app.get("/api/market/btcusd/candles")
+@app.get(f"/api/market/{ROUTE}/candles")
 async def btcusd_candles(
     request: Request,
     interval: Annotated[str, Query()] = "1h",
@@ -133,7 +137,7 @@ async def btcusd_candles(
     return response_envelope(interval, {"candles": candles, "realtime": live["realtime"]})
 
 
-@app.get("/api/market/btcusd/order-book")
+@app.get(f"/api/market/{ROUTE}/order-book")
 async def btcusd_order_book(
     request: Request,
     limit: Annotated[int, Query()] = 20,
@@ -148,7 +152,7 @@ async def btcusd_order_book(
     return response_envelope(None, {"orderBook": order_book, "realtime": feed.status()})
 
 
-@app.get("/api/market/btcusd/trades")
+@app.get(f"/api/market/{ROUTE}/trades")
 async def btcusd_trades(
     request: Request,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
@@ -157,13 +161,13 @@ async def btcusd_trades(
     return response_envelope(None, {"trades": trades})
 
 
-@app.get("/api/market/btcusd/analysis")
+@app.get(f"/api/market/{ROUTE}/analysis")
 async def btcusd_analysis(request: Request) -> dict[str, Any]:
     live = request.app.state.feed.snapshot()
     return response_envelope(None, {"analysis": live["analysis"], "realtime": live["realtime"]})
 
 
-@app.get("/api/market/btcusd/history")
+@app.get(f"/api/market/{ROUTE}/history")
 async def btcusd_history(request: Request) -> dict[str, Any]:
     feed: BinanceSpotFeed = request.app.state.feed
     now = int(time.time() * 1000)
@@ -175,7 +179,7 @@ async def btcusd_history(request: Request) -> dict[str, Any]:
             "intervalMinutes": 10, "error": feed.history_error}
 
 
-@app.get("/api/market/btcusd/delta")
+@app.get(f"/api/market/{ROUTE}/delta")
 async def btcusd_delta_context(request: Request) -> dict[str, Any]:
     """Return the cached public Delta BTCUSD execution-market snapshot."""
     live = request.app.state.feed.snapshot()
@@ -187,7 +191,7 @@ async def btcusd_delta_context(request: Request) -> dict[str, Any]:
     }
 
 
-@app.websocket("/ws/market/btcusd")
+@app.websocket(f"/ws/market/{ROUTE}")
 async def btcusd_stream(websocket: WebSocket) -> None:
     origin = websocket.headers.get("origin")
     if origin and not origin_allowed(origin):
@@ -214,8 +218,8 @@ def validate_interval(interval: str) -> None:
 def response_envelope(interval: str | None, body: dict[str, Any]) -> dict[str, Any]:
     return {
         "success": True,
-        "symbol": "BTCUSDT",
-        "displaySymbol": "BTC Spot",
+        "symbol": settings.binance_symbol,
+        "displaySymbol": f"{settings.base_asset} Spot",
         "exchangeSymbol": settings.binance_symbol,
         "source": "Binance Spot",
         **({"interval": interval} if interval else {}),
