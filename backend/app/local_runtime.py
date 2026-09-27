@@ -501,13 +501,9 @@ class LocalRuntimeStore:
 
     async def _claim_agent(self, args: dict[str, Any]) -> list[dict[str, Any]]:
         user_id = str(args["p_user_id"])
+        # Runs of any asset, and rechecks, execute in parallel. The row lock alone keeps one
+        # scheduled run from being claimed twice; another running run never blocks a claim.
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("select pg_advisory_xact_lock(hashtextextended(%s, 42))", (user_id,))
-            await cursor.execute(
-                "select 1 from trade.analysis_jobs where owner_id=%s and status='running' limit 1", (user_id,)
-            )
-            if await cursor.fetchone():
-                return []
             await cursor.execute(
                 "select data from trade.analysis_jobs where id=%s and owner_id=%s and status='scheduled' for update",
                 (args["p_run_id"], user_id),
@@ -565,6 +561,7 @@ class LocalRuntimeStore:
                      and exists (
                        select 1 from trade.analysis_jobs x
                        where x.status='scheduled' and x.owner_id=f.owner_id
+                         and coalesce(x.data->>'asset','BTC') = coalesce(f.data->>'asset','BTC')
                          and x.data->>'trigger' = any(%s) and x.scheduled_for <= f.scheduled_for)
                    for update of f""",
                 (fixed,),
