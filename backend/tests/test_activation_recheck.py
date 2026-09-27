@@ -119,12 +119,12 @@ def test_market_tool_and_charts_exclude_delta():
 def test_recheck_has_fresh_charts_and_no_news_or_strategy_selection_tools(monkeypatch, decision):
     captured = {}
     packet = {"source": "Binance Spot", "timeframes": {}}
-    monkeypatch.setattr(team, "MarketIntelligenceTools", lambda: SimpleNamespace(
-        collect_btc_market_packet=lambda: packet,
-        get_btc_market_packet=lambda: json.dumps(packet),
+    monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
+        collect_market_packet=lambda: packet,
+        market_packet_json=lambda: json.dumps(packet),
     ))
     charts = [StoredChart("btc-1-minute", "Fresh price", "Fresh Binance chart", RUN_ID, b"png-bytes")]
-    monkeypatch.setattr(team, "_recheck_chart_artifacts", lambda _: [
+    monkeypatch.setattr(team, "_recheck_chart_artifacts", lambda *_: [
         SimpleNamespace(id="btc-1-minute", context={"readingNotes": ["Recheck chart instructions"]})
     ])
     monkeypatch.setattr(team, "ChartStorage", lambda _: SimpleNamespace(save_run_charts=lambda **_: charts))
