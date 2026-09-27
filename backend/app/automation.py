@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from .assets import DEFAULT_ASSET, Asset, asset_run_key, enabled_assets, run_asset, strategy_asset
 from .auth import current_account, require_owner, require_user
 from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
 from .capital import percentage_concurrency_limit
@@ -34,8 +35,8 @@ MAX_AUTOMATION_RUN_LATENESS = timedelta(minutes=10)
 AUTOMATION_ANALYSIS_TIMEOUT_SECONDS = 45 * 60
 # Allow account-context collection and result persistence around the HTTP request.
 MAX_AUTOMATION_RUN_RUNTIME = timedelta(seconds=AUTOMATION_ANALYSIS_TIMEOUT_SECONDS, minutes=5)
-MAX_PARALLEL_AUTOMATION_RUNS = 3
-MAX_PARALLEL_RECHECK_RUNS = 4
+MAX_PARALLEL_AUTOMATION_RUNS = 6
+MAX_PARALLEL_RECHECK_RUNS = 8
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
@@ -50,6 +51,7 @@ class AutomationRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = None
+    asset: Asset = DEFAULT_ASSET
 
 
 def verified_decision_report(outcome: str, report: str, *, shared: bool) -> str:
@@ -73,11 +75,12 @@ async def ensure_settings(db: Database, user_id: str) -> dict[str, Any]:
     return inserted[0]
 
 
-async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str, Any]:
+async def build_account_context(engine: TradingEngine, user_id: str, asset: Asset = DEFAULT_ASSET) -> dict[str, Any]:
     if user_id == SHARED_USER_ID:
         fixed = next_fixed_run(datetime.now(UTC))
         return {
             "scope": "shared_market_analysis",
+            "asset": asset,
             "nextFixedAgentRun": {
                 "trigger": fixed.trigger,
                 "scheduledForUtc": utc_text(fixed.scheduled_for),
@@ -94,26 +97,31 @@ async def build_account_context(engine: TradingEngine, user_id: str) -> dict[str
         engine.db.select(
             "strategies",
             {
-                "select": "id,name,status,saved_strategy_id,entry_at,exit_at",
+                "select": "id,name,status,saved_strategy_id,entry_at,exit_at,definition_json",
                 "user_id": f"eq.{user_id}",
                 "status": "in.(scheduled,executing_entry,active,executing_exit,attention)",
-                "limit": "25",
+                "limit": "50",
             },
         ),
         engine.db.select(
             "automation_agent_runs",
             {
-                "select": "id,trigger,scheduled_for,reason,signals_to_inspect",
+                "select": "id,trigger,scheduled_for,reason,signals_to_inspect,asset",
                 "user_id": f"eq.{user_id}",
                 "status": "eq.scheduled",
                 "trigger": "neq.activation_recheck",
                 "scheduled_for": f"gt.{iso_now()}",
                 "order": "scheduled_for.asc",
-                "limit": "5",
+                "limit": "20",
             },
         ),
     )
+    # Each agent sees only its own asset's schedule; the other agent's runs are not its concern.
+    active = [_pick(row, "id", "name", "status", "saved_strategy_id", "entry_at", "exit_at")
+              for row in active if strategy_asset(row) == asset][:25]
+    upcoming_runs = [row for row in upcoming_runs if run_asset(row) == asset][:5]
     return {
+        "asset": asset,
         "activeStrategies": active,
         "nextFixedAgentRun": {
             "trigger": fixed.trigger,
@@ -272,6 +280,7 @@ async def execute_automation_run(
     reason: str | None,
     signals_to_inspect: list[str] | None = None,
     strategy_proposal_id: str | None = None,
+    asset: Asset = DEFAULT_ASSET,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     # The service stops recheck execution at 300s; allow its cleanup/error response to arrive.
@@ -282,7 +291,7 @@ async def execute_automation_run(
                 raise AppError(500, "Activation recheck is missing its strategy proposal", "recheck_proposal_missing")
             account_context = await build_activation_recheck_context(db, user_id, strategy_proposal_id)
         else:
-            account_context = await build_account_context(engine, user_id)
+            account_context = await build_account_context(engine, user_id, asset)
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=5)) as client:
             try:
                 response = await client.post(
@@ -300,6 +309,7 @@ async def execute_automation_run(
                         "trigger": trigger,
                         "triggerReason": reason,
                         "signalsToInspect": signals_to_inspect or [],
+                        "asset": asset,
                     },
                 )
             except httpx.ReadTimeout as error:
@@ -351,9 +361,10 @@ async def execute_automation_run(
             {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": "eq.running"},
         )
         logger.info(
-            "Automation run completed run_id=%s user_id=%s outcome=%s elapsed_ms=%d",
+            "Automation run completed run_id=%s user_id=%s asset=%s outcome=%s elapsed_ms=%d",
             run_id,
             user_id,
+            asset,
             payload.get("outcome"),
             round((time.perf_counter() - started) * 1_000),
         )
@@ -418,7 +429,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             {
                 "select": (
                     "id,user_id,trigger,status,outcome,scheduled_for,started_at,completed_at,model_id,"
-                    "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error"
+                    "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error,asset"
                 ),
                 "user_id": history_filter(getattr(db, "settings", None), user_id),
                 "status": "in.(running,completed,failed)",
@@ -429,12 +440,12 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         db.select(
             "automation_agent_runs",
             {
-                "select": "id,trigger,scheduled_for",
+                "select": "id,trigger,scheduled_for,asset",
                 "user_id": history_filter(getattr(db, "settings", None), user_id),
                 "status": "eq.scheduled",
                 "scheduled_for": f"gt.{iso_now()}",
                 "order": "scheduled_for.asc",
-                "limit": "6",
+                "limit": "12",
             },
         ),
         db.select(
@@ -442,7 +453,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             {
                 "select": (
                     "id,saved_strategy_id,saved_strategy_version,status,activation_time,"
-                    "proposal_expiry,ai_confidence,reasoning_summary"
+                    "proposal_expiry,ai_confidence,reasoning_summary,asset"
                 )
                 + (",shared_decision_id" if shared_enabled(getattr(db, "settings", None)) else ""),
                 "user_id": history_filter(getattr(db, "settings", None), user_id),
@@ -496,6 +507,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "runs": [
             {
                 "id": row["id"],
+                "asset": run_asset(row),
                 "scope": "shared" if row["user_id"] == SHARED_USER_ID else "historical_account",
                 "sessionId": row.get("agno_session_id"),
                 "runId": row.get("agno_run_id"),
@@ -515,6 +527,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "upcomingRuns": [
             {
                 "id": row["id"],
+                "asset": run_asset(row),
                 "trigger": row["trigger"],
                 "scheduledFor": row["scheduled_for"],
             }
@@ -523,6 +536,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "proposals": [
             {
                 "id": row["id"],
+                "asset": run_asset(row),
                 "strategyName": names.get(row["saved_strategy_id"], "Saved strategy"),
                 "strategyVersion": row["saved_strategy_version"],
                 "status": row["status"],
@@ -595,8 +609,10 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     await require_owner(db, user)
     if shared_enabled(db.settings):
         await require_analyzer_ready()
-        row = await db.runtime.data.request("sharedAnalysis:manual", {"requestedBy": user_id}, mutation=True)
-        return {"success": True, "runId": row["id"], "status": row["status"], "shared": True}
+        row = await db.runtime.data.request(
+            "sharedAnalysis:manual", {"requestedBy": user_id, "asset": body.asset}, mutation=True
+        )
+        return {"success": True, "runId": row["id"], "status": row["status"], "shared": True, "asset": body.asset}
     await current_account(db, user, required=True)
     settings = await ensure_settings(db, user_id)
     if not settings["enabled"]:
@@ -606,6 +622,7 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
         "automation_agent_runs",
         {
             "user_id": user_id,
+            "asset": body.asset,
             "trigger": "manual",
             "status": "scheduled",
             "scheduled_for": iso_now(),
@@ -632,6 +649,7 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
         session_id=f"run-{run_id}",
         trigger="manual",
         reason=body.reason or "Manual automation review",
+        asset=body.asset,
     )
     return {"success": True, **payload}
 
@@ -724,21 +742,24 @@ class AutomationScheduler:
                 },
             )
         fixed_runs = fixed_runs_between(now - FIXED_RUN_CATCH_UP, now + FIXED_RUN_LOOKAHEAD)
+        # Every enabled asset agent gets its own run for each fixed session.
         payload = [
             {
                 "user_id": row["user_id"],
-                "run_key": run.run_key,
+                "asset": asset,
+                "run_key": asset_run_key(asset, run.run_key),
                 "trigger": run.trigger,
                 "status": "scheduled",
                 "scheduled_for": utc_text(run.scheduled_for),
                 "model_id": MODEL_ID,
                 "reason": (
-                    "Daily options review two hours before 17:30 IST expiry"
+                    f"Daily {asset} options review two hours before 17:30 IST expiry"
                     if run.trigger == "pre_expiry"
-                    else f"Fixed {run.trigger.replace('_', ' ')} review"
+                    else f"Fixed {run.trigger.replace('_', ' ')} {asset} review"
                 ),
             }
             for row in settings
+            for asset in enabled_assets(getattr(self.db, "settings", None))
             for run in fixed_runs
         ]
         if payload:
@@ -876,6 +897,7 @@ class AutomationScheduler:
                 reason=row.get("reason"),
                 signals_to_inspect=row.get("signals_to_inspect") or [],
                 strategy_proposal_id=row.get("strategy_proposal_id"),
+                asset=run_asset(row),
             )
             if str(row["user_id"]) == SHARED_USER_ID and row["trigger"] == "activation_recheck":
                 await self._allocate_shared_decisions()
