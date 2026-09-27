@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from psycopg.rows import dict_row
 
+from .assets import Asset, asset_run_key, run_asset
 from .errors import AppError
 from .materialized_definition import validate_materialized_definition
 
@@ -144,6 +145,13 @@ class LocalResearchOperations:
             raise AppError(409, "Saved strategy version unavailable", "saved_strategy_changed")
         return saved
 
+    @staticmethod
+    def _require_asset(saved: dict[str, Any], asset: Asset) -> None:
+        """Each agent may only schedule strategies written for its own underlying."""
+        instrument = (saved.get("definition_json") or {}).get("instrument") or {}
+        if instrument.get("underlying") != asset:
+            raise AppError(409, f"Strategy is not available to the {asset} agent", "strategy_asset_mismatch")
+
     async def publish_shared(self, args: dict[str, Any]) -> dict[str, Any]:
         candidates = args["candidates"]
         if not isinstance(candidates, list) or len(candidates) != 1:
@@ -168,12 +176,15 @@ class LocalResearchOperations:
             saved = await self._saved(cursor, candidate["id"], candidate["version"], "global")
             if saved["user_id"] is not None:
                 raise AppError(409, "Shared candidate must be built-in", "shared_candidate_invalid")
+            asset = run_asset(run["data"])
+            self._require_asset(saved, asset)
             definition = self._materialized(args, saved["definition_json"])
             now = timestamp()
             decision_id, recheck_id = str(uuid4()), str(uuid4())
             proposal = {
                 "id": decision_id,
                 "user_id": "global",
+                "asset": asset,
                 "agent_run_id": args["runId"],
                 "strategy_id": None,
                 "saved_strategy_id": candidate["id"],
@@ -204,6 +215,7 @@ class LocalResearchOperations:
                 {
                     "id": recheck_id,
                     "user_id": "global",
+                    "asset": asset,
                     "trigger": "activation_recheck",
                     "run_key": f"shared-recheck:{decision_id}",
                     "scheduled_for": (activation - timedelta(minutes=7)).isoformat(),
@@ -260,6 +272,8 @@ class LocalResearchOperations:
             if not user["connection"] or user["connection"].get("status") != "connected":
                 raise AppError(409, "Delta connection required", "delta_not_connected")
             saved = await self._saved(cursor, args["savedId"], args["savedVersion"], user_id)
+            asset = run_asset(run["data"])
+            self._require_asset(saved, asset)
             definition = self._materialized(args, saved["definition_json"])
             maximum = {
                 "full_balance": 1,
@@ -286,12 +300,14 @@ class LocalResearchOperations:
                 "definition_json": definition,
                 "entry_at": args["activation"],
                 "exit_at": args["exit"],
+                "asset": asset,
                 "created_at": now,
                 "updated_at": now,
             }
             proposal = {
                 "id": proposal_id,
                 "user_id": user_id,
+                "asset": asset,
                 "agent_run_id": args["runId"],
                 "strategy_id": strategy_id,
                 "saved_strategy_id": args["savedId"],
@@ -311,6 +327,7 @@ class LocalResearchOperations:
                 {
                     "id": recheck_id,
                     "user_id": user_id,
+                    "asset": asset,
                     "run_key": f"activation-recheck:{proposal_id}",
                     "trigger": "activation_recheck",
                     "scheduled_for": args["recheck"],
@@ -452,6 +469,9 @@ class LocalResearchOperations:
             records = await cursor.fetchall()
             if len(records) > 1000:
                 raise AppError(503, "Review window too large", "followup_window_full")
+            # Each asset agent has its own review windows and follow-up budget.
+            asset = run_asset(run["data"])
+            records = [record for record in records if run_asset(record["data"]) == asset]
             pending = sorted(
                 (
                     record["data"]
@@ -481,8 +501,9 @@ class LocalResearchOperations:
                 followup = new_run(
                     {
                         "user_id": user_id,
+                        "asset": asset,
                         "trigger": "agent_follow_up",
-                        "run_key": f"follow-up:{next_at.strftime('%Y-%m-%dT%H:%M')}Z",
+                        "run_key": asset_run_key(asset, f"follow-up:{next_at.strftime('%Y-%m-%dT%H:%M')}Z"),
                         "scheduled_for": args["next"],
                         "reason": args["reason"],
                         "signals_to_inspect": args["signals"],
