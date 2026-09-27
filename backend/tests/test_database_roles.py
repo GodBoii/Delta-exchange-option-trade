@@ -33,10 +33,18 @@ def test_roles_are_least_privilege_and_password_rotation_applies():
         connection.commit()
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             connection.execute("select count(*) from trade.strategies")
+        connection.rollback()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("select count(*) from owner_reporting.trade_ledger")
 
     with psycopg.connect(reader) as connection:
         assert connection.execute("select count(*) from ai.analysis_reports where id=%s", (run_id,)).fetchone()[0]
         connection.execute("select count(*) from trade.strategies")
+        # Read replicas serve owner reporting reads too.
+        connection.execute("select count(*) from owner_reporting.trade_ledger")
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            connection.execute("delete from owner_reporting.trade_ledger")
+        connection.rollback()
         with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
             connection.execute("delete from ai.analysis_reports where id=%s", (run_id,))
 
