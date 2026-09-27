@@ -102,7 +102,7 @@ def test_collected_packet_includes_history_and_survives_history_failure(monkeypa
         lambda **kwargs: client(transport=httpx.MockTransport(handler), **kwargs),
     )
     tools = MarketIntelligenceTools(binance_url="http://market.test")
-    packet = tools.collect_btc_market_packet()
+    packet = tools.collect_market_packet()
     assert packet["sessionHistory"]["available"] is (failure is None)
     assert packet["analysis"]["sidewaysProbability"] == 89
     assert "sessionHistory" in tools.get_btc_market_packet()
