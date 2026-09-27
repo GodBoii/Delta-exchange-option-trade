@@ -75,6 +75,7 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
         "invalid_profit_target",
         "emergency_policy_incomplete",
         "saved_strategy_version_changed",
+        "automation_disabled",
         "unsupported_payoff",
         "unbounded_payoff",
     }
@@ -836,6 +837,14 @@ class TradingEngine:
                     "limit": "1",
                 },
             )
+            if proposals and not row.get("shared_decision_id"):
+                # An agent proposal enters only while this account's automation is still on.
+                enabled_accounts = await self.db.select(
+                    "automation_settings",
+                    {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true", "select": "user_id"},
+                )
+                if not enabled_accounts:
+                    raise AppError(409, "Automation was turned off before entry", "automation_disabled")
             if proposals:
                 current = await self.saved_strategies(str(row["user_id"]), str(row["saved_strategy_id"]))
                 if (

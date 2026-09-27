@@ -265,7 +265,9 @@ class LocalResearchOperations:
                 raise AppError(409, "Run cannot select another action", "run_action_closed")
             if run["data"].get("market_snapshot_id") != args["snapshotId"]:
                 raise AppError(409, "Snapshot ownership mismatch", "snapshot_mismatch")
-            await cursor.execute("select automation,capital,connection from trade.users where user_id=%s", (user_id,))
+            await cursor.execute(
+                "select automation,capital,connection from trade.users where user_id=%s for share", (user_id,)
+            )
             user = await cursor.fetchone()
             if not user or not user["automation"].get("enabled"):
                 raise AppError(409, "Account automation disabled", "automation_disabled")
@@ -451,7 +453,7 @@ class LocalResearchOperations:
                 result = await cursor.fetchone()
                 settings = result["analysis"] if result else None
             else:
-                await cursor.execute("select automation from trade.users where user_id=%s", (user_id,))
+                await cursor.execute("select automation from trade.users where user_id=%s for share", (user_id,))
                 result = await cursor.fetchone()
                 settings = result["automation"] if result else None
             if not settings or not settings.get("enabled") or run["data"].get("trigger") == "agent_follow_up":

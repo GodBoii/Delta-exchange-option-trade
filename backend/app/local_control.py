@@ -191,7 +191,10 @@ class LocalControl:
                 or recheck["data"].get("outcome") != "strategy_reconfirmed"
             ):
                 raise AppError(409, "Shared recheck has not confirmed entry", "shared_recheck_pending")
-            await cursor.execute("select automation,connection from trade.users where user_id=%s", (user_id,))
+            # Share lock: a concurrent switch-off waits for this allocation, then cancels it.
+            await cursor.execute(
+                "select automation,connection from trade.users where user_id=%s for share", (user_id,)
+            )
             account = await cursor.fetchone()
             if not account or not account["automation"].get("enabled") or not account["connection"]:
                 raise AppError(409, "Account automation unavailable", "account_automation_unavailable")

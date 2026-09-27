@@ -555,50 +555,66 @@ async def update_automation_settings(
     request: Request, body: AutomationSettingsUpdate, user: RequiredUser
 ) -> dict[str, Any]:
     db: Database = request.app.state.db
-    user_id = str(user["id"])
-    rows = await db.upsert(
-        "automation_settings",
-        {
-            "user_id": user_id,
-            "enabled": body.enabled,
-            "model_id": MODEL_ID,
-        },
-        on_conflict="user_id",
+    settings = await set_account_automation(db, str(user["id"]), body.enabled)
+    return {"success": True, "settings": settings}
+
+
+async def set_account_automation(
+    db: Database, user_id: str, enabled: bool, *, actor_id: str | None = None
+) -> dict[str, Any]:
+    """
+    Turn one account's participation on or off and return the saved settings.
+
+    Used by the account holder and by the owner. Switching off cancels scheduled
+    analysis runs, proposals and not-yet-entered strategies. Live positions are
+    untouched and stay with the existing exit and risk logic.
+    """
+    previous, saved = await db.local_data.set_automation_enabled(
+        user_id, enabled, model_id=MODEL_ID, actor_id=actor_id
     )
-    if not body.enabled:
-        pending_proposals = await db.select(
-            "strategy_proposals",
-            {
-                "select": "id,strategy_id",
-                "user_id": f"eq.{user_id}",
-                "status": "eq.scheduled",
-            },
+    if actor_id is not None:
+        logger.info(
+            "Owner automation change actor=%s target=%s old=%s new=%s at=%s",
+            actor_id, user_id, previous, enabled, iso_now(),
         )
-        await asyncio.gather(
+    if not enabled:
+        await cancel_scheduled_automation(db, user_id)
+    return saved
+
+
+async def cancel_scheduled_automation(db: Database, user_id: str) -> None:
+    pending_proposals = await db.select(
+        "strategy_proposals",
+        {
+            "select": "id,strategy_id",
+            "user_id": f"eq.{user_id}",
+            "status": "eq.scheduled",
+        },
+    )
+    await asyncio.gather(
+        db.update(
+            "automation_agent_runs",
+            {"status": "cancelled", "completed_at": iso_now(), "error": "Automation was turned off"},
+            {"user_id": f"eq.{user_id}", "status": "eq.scheduled"},
+        ),
+        *(
             db.update(
-                "automation_agent_runs",
-                {"status": "cancelled", "completed_at": iso_now(), "error": "Automation was turned off"},
-                {"user_id": f"eq.{user_id}", "status": "eq.scheduled"},
-            ),
-            *(
-                db.update(
-                    "strategies",
-                    {"status": "cancelled", "last_error": "Automation was turned off before entry"},
-                    {"id": f"eq.{proposal['strategy_id']}", "status": "eq.scheduled"},
-                )
-                for proposal in pending_proposals
-                if proposal.get("strategy_id")
-            ),
-            *(
-                db.update(
-                    "strategy_proposals",
-                    {"status": "cancelled", "rejection_reason": "Automation was turned off before entry"},
-                    {"id": f"eq.{proposal['id']}", "status": "eq.scheduled"},
-                )
-                for proposal in pending_proposals
-            ),
-        )
-    return {"success": True, "settings": rows[0] if rows else None}
+                "strategies",
+                {"status": "cancelled", "last_error": "Automation was turned off before entry"},
+                {"id": f"eq.{proposal['strategy_id']}", "status": "eq.scheduled"},
+            )
+            for proposal in pending_proposals
+            if proposal.get("strategy_id")
+        ),
+        *(
+            db.update(
+                "strategy_proposals",
+                {"status": "cancelled", "rejection_reason": "Automation was turned off before entry"},
+                {"id": f"eq.{proposal['id']}", "status": "eq.scheduled"},
+            )
+            for proposal in pending_proposals
+        ),
+    )
 
 
 @router.post("/run")
