@@ -120,6 +120,51 @@ async def test_capital_reservation_and_agent_claim_are_atomic(runtime: LocalRunt
 
 
 @pytest.mark.asyncio
+async def test_btc_eth_and_recheck_runs_claim_while_another_run_is_running(runtime: LocalRuntimeStore):
+    user_id = str(uuid4())
+    runs = [
+        {"id": str(uuid4()), "user_id": user_id, "asset": asset, "trigger": trigger,
+         "run_key": f"{asset}:{trigger}:{uuid4()}", "scheduled_for": "2026-09-24T12:00:00+00:00"}
+        for asset, trigger in (("BTC", "london_session"), ("ETH", "london_session"),
+                               ("BTC", "activation_recheck"), ("ETH", "manual"))
+    ]
+    for run in runs:
+        await runtime.write("automation_agent_runs", run)
+    claimed = await asyncio.gather(*(
+        runtime.rpc("claim_automation_agent_run", {"p_user_id": user_id, "p_run_id": run["id"]}) for run in runs
+    ))
+    assert [len(rows) for rows in claimed] == [1, 1, 1, 1]
+    assert all(rows[0]["status"] == "running" for rows in claimed)
+
+
+@pytest.mark.asyncio
+async def test_fixed_btc_and_eth_reviews_coexist_and_only_cancel_their_own_follow_ups(runtime: LocalRuntimeStore):
+    user_id = str(uuid4())
+    fixed_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+    runs = [
+        {"user_id": user_id, "asset": asset, "run_key": key, "trigger": "london_session",
+         "scheduled_for": fixed_at, "status": "scheduled"}
+        for asset, key in (("BTC", "london_session:2099-01-01"), ("ETH", "ETH:london_session:2099-01-01"))
+    ]
+    assert await runtime.rpc("ensure_automation_fixed_runs", {"p_runs": runs}) == 2
+    assert await runtime.rpc("ensure_automation_fixed_runs", {"p_runs": runs}) == 0
+    follow_up = str(uuid4())
+    await runtime.write("automation_agent_runs", {
+        "id": follow_up, "user_id": user_id, "asset": "ETH", "trigger": "agent_follow_up",
+        "run_key": f"ETH:follow-up:{uuid4()}", "status": "scheduled",
+        "scheduled_for": (datetime.now(UTC) + timedelta(hours=3)).isoformat(),
+    })
+    await runtime.update(
+        "automation_agent_runs", {"status": "cancelled"}, {"user_id": f"eq.{user_id}", "asset": "eq.ETH",
+                                                            "trigger": "eq.london_session"},
+    )
+    await runtime.rpc("cancel_redundant_automation_followups", {})
+    rows = await runtime.select("automation_agent_runs", {"id": f"eq.{follow_up}"})
+    # Only the scheduled BTC fixed review precedes it, and BTC reviews never cancel ETH follow-ups.
+    assert rows[0]["status"] == "scheduled"
+
+
+@pytest.mark.asyncio
 async def test_completed_strategy_releases_its_capital_slot(runtime: LocalRuntimeStore):
     user_id, strategy_id = str(uuid4()), str(uuid4())
     async with runtime.pool.connection() as connection:
