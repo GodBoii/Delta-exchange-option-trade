@@ -232,3 +232,162 @@ export type AutomationOverview = {
   upcomingRuns: Pick<AutomationRun, "id" | "asset" | "trigger" | "scheduledFor">[];
   proposals: StrategyProposal[];
 };
+
+/* ------------------------------------------------------------------
+ * Software P&L and owner reporting. Money fields are USD decimal strings.
+ * ------------------------------------------------------------------ */
+
+export type ReportRange = "7d" | "30d" | "90d" | "1y" | "all";
+
+/** Only `settled` runs count toward net P&L, wins and losses. */
+export type AccountingState = "settled" | "open" | "scheduled" | "cancelled" | "incomplete" | "attention";
+
+export type PnlSummary = {
+  netRealizedPnl: string;
+  grossGains: string;
+  grossLosses: string;
+  exchangeFees: string;
+  wins: number;
+  losses: number;
+  breakEven: number;
+  /** Share of settled runs that won, 0 to 1. Null when nothing has settled. */
+  winRate: number | null;
+  settledRuns: number;
+  totalRuns: number;
+  excludedRuns: number;
+  states: Record<AccountingState, number>;
+  deletedByUserRuns: number;
+  lastCapturedAt: string | null;
+};
+
+export type PnlResponse = {
+  success: boolean;
+  scope: "personal";
+  range: ReportRange;
+  asOf: string;
+  historyComplete: boolean;
+  historyVerifiedAt: string | null;
+  summary: PnlSummary;
+};
+
+export type TradeItem = {
+  runId: string;
+  name: string;
+  asset: AgentAsset | null;
+  status: string;
+  accountingState: AccountingState;
+  exclusionReason: string | null;
+  createdAt: string;
+  entryAt: string | null;
+  exitAt: string | null;
+  entryExecutedAt: string | null;
+  exitExecutedAt: string | null;
+  activityAt: string;
+  realizedPnl: string | null;
+  grossPnl: string | null;
+  exchangeFees: string | null;
+  capitalBudget: string | null;
+  walletTotalAtEntry: string | null;
+  walletAvailableAtEntry: string | null;
+  /** Set on owner views when the user removed the run from their own history. */
+  deletedByUserAt: string | null;
+  capturedAt: string;
+};
+
+export type TradePage = { success: boolean; items: TradeItem[]; nextCursor: string | null };
+
+export type OwnerAccount = {
+  initialized: boolean;
+  connectionStatus: string;
+  accountName: string | null;
+  email: string | null;
+  deltaAccountId: string | null;
+};
+
+export type RecordedWallet = {
+  totalBalance: string;
+  availableBalance: string | null;
+  observedAt: string;
+  source: "strategy_entry" | "live_wallet";
+};
+
+export type OwnerProfile = {
+  id: string;
+  displayName: string | null;
+  email: string | null;
+  phoneNumber: string | null;
+  avatarUrl: string | null;
+  userType: "owner" | "user";
+  registeredAt: string | null;
+  isCurrentUser: boolean;
+};
+
+export type OwnerUserRow = OwnerProfile & {
+  account: OwnerAccount;
+  automationEnabled: boolean;
+  performance: {
+    netRealizedPnl: string;
+    settledRuns: number;
+    totalRuns: number;
+    openRuns: number;
+    attentionRuns: number;
+    lastActivityAt: string | null;
+  };
+  lastRecordedWallet: RecordedWallet | null;
+};
+
+export type OwnerUsersResponse = {
+  success: boolean;
+  asOf: string;
+  summary: {
+    registeredUsers: number;
+    connectedAccounts: number;
+    automationEnabledAccounts: number;
+    accountsWithAttentionRuns: number;
+    automationWithoutConnection: number;
+  };
+  matching: number;
+  offset: number;
+  limit: number;
+  items: OwnerUserRow[];
+};
+
+export type LiveWallet =
+  | { state: "live"; totalBalance: string; availableBalance: string; observedAt: string }
+  | { state: "unavailable"; reason: string; observedAt: null }
+  | { state: "not_connected" };
+
+export type CapitalObservation = {
+  kind: "wallet" | "policy" | "run_allocation";
+  source: "strategy_entry" | "live_wallet" | "capital_policy";
+  observedAt: string;
+  runId: string | null;
+  totalBalance: string | null;
+  availableBalance: string | null;
+  allocationMode: string | null;
+  capitalAmount: string | null;
+  allocatedBudget: string | null;
+};
+
+export type OwnerUserDetail = {
+  success: boolean;
+  asOf: string;
+  range: ReportRange;
+  historyComplete: boolean;
+  historyVerifiedAt: string | null;
+  profile: OwnerProfile;
+  account: OwnerAccount;
+  automation: { enabled: boolean };
+  capitalPolicy: { allocationMode: string | null; capitalAmount: string | null };
+  wallet: LiveWallet;
+  capitalHistory: CapitalObservation[];
+  performance: { ownerScope: PnlSummary; userScope: PnlSummary };
+};
+
+export type OwnerTradeDetail = {
+  success: boolean;
+  source: "live" | "archive";
+  trade: TradeItem;
+  firstCapturedAt: string;
+  run: RunDetail;
+};
