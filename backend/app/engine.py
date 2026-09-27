@@ -1665,9 +1665,10 @@ class TradingEngine:
 
     async def delete_strategy(self, strategy_id: str, user_id: str) -> None:
         """
-        Remove a finished run and its execution audit trail. Refused while the
-        run could still hold an open Delta position, because deleting the record
-        would leave that position untracked.
+        Remove a finished run and its execution audit trail from the user's history.
+        The store archives a sanitized owner-ledger copy in the same transaction.
+        Refused while the run could still hold an open Delta position, because
+        deleting the record would leave that position untracked.
         """
         rows = await self.db.select(
             "strategies",

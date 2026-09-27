@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 TABLES = frozenset({*LOCAL_TABLES, "automation_settings"})
 PROFILE_COLUMNS = "display_name,avatar_url,phone_number,user_type"
 PROFILE_CACHE_SIZE = 10_000
+# Allowed identity fields for owner views. Nothing else is read from Supabase.
+REGISTERED_PROFILE_COLUMNS = "id,email,display_name,phone_number,avatar_url,user_type,created_at"
 
 
 class Database:
@@ -49,9 +51,52 @@ class Database:
     async def auth_user(self, access_token: str) -> dict[str, Any] | None:
         return await self.auth.user(access_token)
 
-    async def profile(self, user_id: str) -> dict[str, Any]:
+    async def registered_profiles(
+        self, *, offset: int, limit: int, search: str | None = None
+    ) -> tuple[list[dict[str, Any]], int]:
+        """One page of Supabase profiles (owner first) and the total matching count."""
+        params = {
+            "select": REGISTERED_PROFILE_COLUMNS,
+            "order": "user_type.asc,created_at.asc,id.asc",
+            "offset": str(max(0, offset)),
+            "limit": str(max(1, min(limit, 100))),
+        }
+        if search:
+            params["or"] = f"(display_name.ilike.*{search}*,email.ilike.*{search}*)"
+        try:
+            response = await self.client.get(
+                f"{self.settings.supabase_url}/rest/v1/profiles",
+                headers={**self.admin_headers, "Prefer": "count=exact"},
+                params=params,
+            )
+            response.raise_for_status()
+            rows = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise AppError(503, "Profile service is unavailable", "profile_unavailable") from error
+        total_text = response.headers.get("content-range", "").rpartition("/")[2]
+        if not isinstance(rows, list) or not total_text.isdigit():
+            raise AppError(502, "Profile service returned an unexpected page", "profile_page_invalid")
+        return [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)], int(total_text)
+
+    async def registered_profile(self, user_id: str) -> dict[str, Any] | None:
+        """Uncached profile row with registration date, for owner views."""
+        try:
+            response = await self.client.get(
+                f"{self.settings.supabase_url}/rest/v1/profiles",
+                headers=self.admin_headers,
+                params={"select": REGISTERED_PROFILE_COLUMNS, "id": f"eq.{user_id}", "limit": "1"},
+            )
+            response.raise_for_status()
+            rows = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise AppError(503, "Profile service is unavailable", "profile_unavailable") from error
+        return rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+
+    async def profile(self, user_id: str, *, max_age: float | None = None) -> dict[str, Any]:
         """Return the Supabase profile row, or an empty mapping when the user has none."""
         ttl = getattr(self.settings, "auth_profile_cache_seconds", 60)
+        if max_age is not None:
+            ttl = min(ttl, max_age)
         cached = self.profile_cache.get(user_id)
         now = time.monotonic()
         if cached is not None and now - cached[0] < ttl:

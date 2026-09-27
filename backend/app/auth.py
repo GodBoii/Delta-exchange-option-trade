@@ -31,8 +31,10 @@ async def require_user(request: Request, authorization: str | None = Header(defa
     return user
 
 
-async def require_owner(db: Database, user: dict[str, Any]) -> None:
-    profile = await db.profile(str(user["id"]))
+async def require_owner(db: Database, user: dict[str, Any], *, max_age: float | None = None) -> None:
+    user_id = str(user["id"])
+    # Owner reporting passes a short max_age so a role change applies within seconds.
+    profile = await (db.profile(user_id, max_age=max_age) if max_age is not None else db.profile(user_id))
     if profile.get("user_type") != "owner":
         raise AppError(403, "Only the owner can perform this action", "owner_required")
 

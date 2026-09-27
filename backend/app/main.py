@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from ipaddress import ip_address
 from typing import Annotated, Any, Literal
 
@@ -45,6 +46,8 @@ from .models import (
 )
 from .news import router as news_router
 from .portfolio_stream import serve_portfolio
+from .reporting_api import WalletProbe
+from .reporting_api import router as reporting_router
 from .strategy import delta_expiry
 
 settings = get_settings()
@@ -95,6 +98,14 @@ async def lifespan(app: FastAPI):
             await db.runtime.data.request("accounts:updateOutboundIp", {"ip": outbound_ip}, mutation=True)
         except Exception:
             logger.exception("Could not refresh the server outbound IP")
+    app.state.wallet_probe = WalletProbe()
+    if settings.trading_writer_enabled:
+        # Reporting only: an import failure leaves history marked incomplete and never blocks trading.
+        # Deletion archives inside its own transaction, so it never depends on this import.
+        try:
+            await db.runtime.ledger.ensure_backfilled()
+        except Exception:
+            logger.exception("Owner ledger backfill failed; historical P&L stays marked incomplete")
     if settings.trading_writer_enabled and not settings.scheduler_enabled:
         await engine.recover_interrupted_states()
     scheduler.start()
@@ -148,6 +159,7 @@ app.add_middleware(
 )
 app.include_router(news_router)
 app.include_router(automation_router)
+app.include_router(reporting_router)
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 OptionalUser = Annotated[dict[str, Any] | None, Depends(optional_user)]
@@ -410,6 +422,14 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
         available, total_balance = await engine.usd_capital(client)
     finally:
         await client.close()
+    if settings.trading_writer_enabled:
+        try:
+            # Throttled to one live observation per user every 15 minutes.
+            await request.app.state.db.runtime.ledger.record_wallet(
+                user_id, total_balance, available, datetime.now(UTC)
+            )
+        except Exception:
+            logger.exception("Could not record a wallet observation user=%s", user_id)
     maximum_slots = maximum_concurrent_strategies(
         total_balance,
         policy.allocation_mode,
@@ -596,7 +616,7 @@ async def cancel_strategy(request: Request, strategy_id: str, user: RequiredUser
 
 @app.delete("/api/strategies/{strategy_id}/record")
 async def delete_strategy_record(request: Request, strategy_id: str, user: RequiredUser) -> dict[str, bool]:
-    """Erases the run and its execution history. Only allowed once it is settled."""
+    """Removes the run from the user's history once settled; the owner ledger keeps a marked copy."""
     await request.app.state.engine.delete_strategy(strategy_id, str(user["id"]))
     return {"success": True}
 
