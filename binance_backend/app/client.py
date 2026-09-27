@@ -97,7 +97,7 @@ class BinanceMarketClient:
             "ticker",
         )
         if not isinstance(raw, dict) or not raw:
-            raise BinanceMarketError("Binance returned no BTCUSDT ticker data")
+            raise BinanceMarketError(f"Binance returned no {self.settings.binance_symbol} ticker data")
         return normalize_ticker(raw)
 
     async def candles(
