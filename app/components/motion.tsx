@@ -597,7 +597,12 @@ export function useSlidingPill(activeKey: string, selector = '[data-pill-active=
     const pillNode = pill.current;
     if (!barNode || !pillNode) return;
     const active = barNode.querySelector<HTMLElement>(selector);
-    if (!active) return;
+    /* Nothing in this bar is current (the page lives elsewhere, e.g. in the
+       account window), so the pill hides instead of marking a stale item. */
+    if (!active) {
+      pillNode.dataset.ready = "false";
+      return;
+    }
 
     const apply = () => {
       pillNode.style.transform = `translateX(${active.offsetLeft - barNode.clientLeft}px)`;

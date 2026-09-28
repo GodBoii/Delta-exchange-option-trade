@@ -473,12 +473,17 @@ export function ConfirmModal({ title, description, confirm, cancel = "Keep it", 
  * Unlike `ConfirmModal` this surface is wide, scrolls internally, and carries no
  * implied action, so the header keeps a single unambiguous close control.
  */
-export function Dialog({ title, subtitle, aside, footer, size = "default", onClose, children }: {
+export function Dialog({
+  title, subtitle, aside, footer, size = "default", className: extraClass = "", closeLabel = "Close details", onClose, children
+}: {
   title: string;
   subtitle?: ReactNode;
   aside?: ReactNode;
   footer?: ReactNode;
   size?: "default" | "compact";
+  /** Extra class on the surface, for dialogs that need their own width or layout. */
+  className?: string;
+  closeLabel?: string;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -498,7 +503,7 @@ export function Dialog({ title, subtitle, aside, footer, size = "default", onClo
           aria-hidden="true"
         />
         <div
-          className={`dialog${size === "compact" ? " dialog-compact" : ""} t-modal${className}`}
+          className={`dialog${size === "compact" ? " dialog-compact" : ""}${extraClass ? ` ${extraClass}` : ""} t-modal${className}`}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
@@ -511,7 +516,7 @@ export function Dialog({ title, subtitle, aside, footer, size = "default", onClo
             </div>
             <div className="dialog-head-side">
               {aside}
-              <button type="button" className="icon-button" onClick={requestClose} ref={closeButton} aria-label="Close details">
+              <button type="button" className="icon-button" onClick={requestClose} ref={closeButton} aria-label={closeLabel}>
                 <X aria-hidden="true" />
               </button>
             </div>
