@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -201,13 +202,17 @@ def run_news_pipeline(
             "Continue with available evidence when a source fails; explain material gaps. Return the completed "
             "Markdown report using the required headings."
         )
-        report_response = analyst.run(
-            research_prompt,
-            session_id=effective_session_id,
-            user_id=effective_user_id,
+        report_response = asyncio.run(
+            analyst.arun(
+                research_prompt,
+                session_id=effective_session_id,
+                user_id=effective_user_id,
+            )
         )
         if (
-            report_response.status in {RunStatus.error, RunStatus.cancelled}
+            not isinstance(report_response, RunOutput)
+            or report_response.status != RunStatus.completed
+            or "<｜DSML｜" in str(report_response.content)
             or not isinstance(report_response.content, str)
             or not report_response.content.strip()
             or report_response.content.strip().casefold()
