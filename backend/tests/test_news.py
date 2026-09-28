@@ -10,7 +10,7 @@ NEWS_MEMBER = {
     "runId": "news-run-1",
     "agentId": "news-intelligence-analyst",
     "agentName": "News Intelligence Analyst",
-    "model": "xiaomi/mimo-v2.6-pro",
+    "model": "deepseek/deepseek-v4.1-flash",
     "content": "## Summary\nBitcoin news analysis.",
     "createdAt": "2026-08-25T00:00:00Z",
     "researchTools": ["search_news", "read_news_article"],
@@ -38,7 +38,7 @@ def completed_row(member_responses: list[dict] | None = None) -> dict:
     return {
         "id": SESSION_ID,
         "agno_run_id": "team-run-1",
-        "model_id": "xiaomi/mimo-v2.6-pro",
+        "model_id": "deepseek/deepseek-v4.1-flash",
         "member_responses": member_responses if member_responses is not None else [NEWS_MEMBER],
         "created_at": "2026-08-25T00:00:00Z",
         "updated_at": "2026-08-25T00:05:00Z",

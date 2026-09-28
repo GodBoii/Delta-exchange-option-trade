@@ -107,7 +107,7 @@ class LocalControl:
                 "reason": f"User requested a shared {asset} market analysis",
                 "status": "scheduled",
                 "outcome": None,
-                "model_id": "xiaomi/mimo-v2.6-pro",
+                "model_id": "deepseek/deepseek-v4.1-flash",
                 "signals_to_inspect": [],
                 "parent_agent_run_id": None,
                 "created_at": now,

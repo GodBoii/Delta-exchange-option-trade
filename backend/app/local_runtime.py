@@ -342,7 +342,7 @@ class LocalRuntimeStore:
                 "status": "scheduled",
                 "outcome": None,
                 "parent_agent_run_id": None,
-                "model_id": "xiaomi/mimo-v2.6-pro",
+                "model_id": "deepseek/deepseek-v4.1-flash",
                 "signals_to_inspect": [],
                 **row,
             }

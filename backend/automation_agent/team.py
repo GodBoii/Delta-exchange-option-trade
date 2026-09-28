@@ -111,7 +111,7 @@ def run_automation_team(
             id=settings.automation_model_id,
             api_key=settings.require_api_key(),
             supports_native_structured_outputs=False,
-            reasoning_effort="high",
+            reasoning_effort="max",
             timeout=180,
             max_retries=0,
             max_tokens=12000,

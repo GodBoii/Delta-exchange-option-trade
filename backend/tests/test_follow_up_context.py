@@ -91,7 +91,7 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         user_id=USER, agent_run_id=CHILD, session_id="test", account_context=account,
         trigger="agent_follow_up", trigger_reason="Wait for confirmation", signals_to_inspect=["breakout"],
     )
-    assert captured["model"].reasoning_effort == "high"
+    assert captured["model"].reasoning_effort == "max"
     assert "Current verified news" in captured["additional_context"]
     assert "Wait for confirmation" in captured["additional_context"]
     assert "Main chart instructions" in captured["additional_context"]
