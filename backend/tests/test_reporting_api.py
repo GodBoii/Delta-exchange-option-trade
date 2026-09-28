@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.database import Database
+from app.engine import TradingEngine
 from app.errors import AppError
 from tests.test_owner_ledger import settled_run
 
@@ -62,8 +63,13 @@ def supabase(profiles: list[dict], seen: list[httpx.Request]) -> httpx.MockTrans
 class Engine:
     """Delta stand-in: the owner's wallet answers, the brother's exchange call fails."""
 
-    def __init__(self, owner_id: str) -> None:
+    def __init__(self, owner_id: str, db: Database) -> None:
         self.owner_id = owner_id
+        self.application_data = db.local_data
+
+    async def save_capital_policy(self, user_id, mode, amount, *, actor_id=None):
+        # The real engine method, writing through the real local store.
+        await TradingEngine.save_capital_policy(self, user_id, mode, amount, actor_id=actor_id)
 
     async def client_for_user(self, user_id: str):
         if user_id != self.owner_id:
@@ -113,7 +119,7 @@ async def api(monkeypatch):
         await add_account(pool, brother, connected=True, enabled=True)
         current = {"id": owner}
         main.app.state.db = db
-        main.app.state.engine = Engine(owner)
+        main.app.state.engine = Engine(owner, db)
         main.app.state.wallet_probe = None
         monkeypatch.setattr(main, "settings", SimpleNamespace(trading_writer_enabled=True))
         main.app.dependency_overrides[main.require_user] = lambda: dict(current)
@@ -165,8 +171,10 @@ async def test_ordinary_user_cannot_call_owner_endpoints(api):
         ("GET", f"/api/owner/users/{api.brother}/trades"),
         ("GET", f"/api/owner/users/{api.brother}/trades/{uuid4()}"),
         ("PUT", f"/api/owner/users/{api.brother}/automation"),
+        ("PUT", f"/api/owner/users/{api.owner}/capital"),
     ):
-        response = await api.client.request(method, path, json={"enabled": True} if method == "PUT" else None)
+        body = {"enabled": True} if path.endswith("automation") else {"allocationMode": "full_balance"}
+        response = await api.client.request(method, path, json=body if method == "PUT" else None)
         assert response.status_code == 403, path
         assert response.json()["error"]["code"] == "owner_required"
 
@@ -239,3 +247,33 @@ async def test_owner_switches_automation_for_any_account_including_their_own(api
     assert detail["automation"] == {"enabled": False}
     missing = await api.client.put(f"/api/owner/users/{uuid4()}/automation", json={"enabled": True})
     assert missing.status_code == 404
+
+
+async def test_owner_sets_per_strategy_budget_for_any_account(api):
+    fixed = await api.client.put(
+        f"/api/owner/users/{api.brother}/capital", json={"allocationMode": "fixed_amount", "capitalAmount": 75}
+    )
+    assert fixed.status_code == 200
+    assert fixed.json()["capitalPolicy"] == {"allocationMode": "fixed_amount", "capitalAmount": "75.0"}
+    detail = (await api.client.get(f"/api/owner/users/{api.brother}")).json()
+    assert detail["capitalPolicy"]["allocationMode"] == "fixed_amount"
+    assert any(item["source"] == "capital_policy" for item in detail["capitalHistory"])
+    async with api.db.pool.connection() as connection:
+        audit = await (await connection.execute(
+            """select actor_user_id,old_allocation_mode,new_allocation_mode,new_capital_amount
+               from owner_reporting.capital_policy_changes where target_user_id=%s""",
+            (api.brother,),
+        )).fetchall()
+    assert audit == [(api.owner, "half_balance", "fixed_amount", Decimal("75"))]
+
+    # The owner's own account uses the same control, and the preview follows the live wallet.
+    mine = await api.client.put(f"/api/owner/users/{api.owner}/capital", json={"allocationMode": "one_quarter_balance"})
+    assert mine.status_code == 200
+    preview = (await api.client.get(f"/api/owner/users/{api.owner}")).json()["budgetPreview"]
+    assert preview == {"budgetPerStrategy": "30", "nextStrategyCanUse": "30", "maximumConcurrentStrategies": 4}
+
+    missing_amount = await api.client.put(f"/api/owner/users/{api.brother}/capital",
+                                          json={"allocationMode": "fixed_amount"})
+    assert missing_amount.status_code == 400
+    unknown = await api.client.put(f"/api/owner/users/{uuid4()}/capital", json={"allocationMode": "half_balance"})
+    assert unknown.status_code == 404

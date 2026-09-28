@@ -11,6 +11,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -20,8 +21,10 @@ from pydantic import BaseModel, ConfigDict
 
 from .auth import require_owner, require_user
 from .automation import set_account_automation
+from .capital import capital_budget, maximum_concurrent_strategies
 from .database import Database
 from .errors import AppError
+from .models import CapitalSettingsUpdate
 from .owner_ledger import DeletedFilter, OwnerLedger
 
 logger = logging.getLogger(__name__)
@@ -278,6 +281,22 @@ async def owner_users(
     }
 
 
+def _budget_preview(account: dict[str, Any] | None, wallet: dict[str, Any]) -> dict[str, Any] | None:
+    """Per-strategy budget under the saved policy, from the live wallet. None without a live balance."""
+    if not account or wallet.get("state") != "live":
+        return None
+    mode = account["allocationMode"] or "half_balance"
+    total, available = Decimal(wallet["totalBalance"]), Decimal(wallet["availableBalance"])
+    try:
+        return {
+            "budgetPerStrategy": str(capital_budget(total, total, mode, account["capitalAmount"])),
+            "nextStrategyCanUse": str(capital_budget(available, total, mode, account["capitalAmount"])),
+            "maximumConcurrentStrategies": maximum_concurrent_strategies(total, mode, account["capitalAmount"]),
+        }
+    except AppError:
+        return None
+
+
 async def _registered(db: Database, user_id: str) -> dict[str, Any]:
     profile = await db.registered_profile(user_id)
     if profile is None:
@@ -316,6 +335,7 @@ async def owner_user_detail(
             "allocationMode": account["allocationMode"] if account else None,
             "capitalAmount": account["capitalAmount"] if account else None,
         },
+        "budgetPreview": _budget_preview(account, wallet),
         "wallet": wallet,
         "capitalHistory": [
             {
@@ -372,6 +392,32 @@ async def owner_user_trade(request: Request, user_id: str, run_id: str, _owner: 
         "trade": trade_item(row),
         "firstCapturedAt": row["first_captured_at"],
         "run": detail,
+    }
+
+
+@router.put("/api/owner/users/{user_id}/capital")
+async def owner_user_capital(
+    request: Request, user_id: str, body: CapitalSettingsUpdate, owner: OwnerUser
+) -> dict[str, Any]:
+    """Set another account's per-strategy budget. The account holder can still change it themselves."""
+    db: Database = request.app.state.db
+    target = _user_id(user_id)
+    await _registered(db, target)
+    previous = (await db.local_data.account_rows([target])).get(target)
+    await request.app.state.engine.save_capital_policy(
+        target, body.allocationMode, body.capitalAmount, actor_id=str(owner["id"])
+    )
+    saved = (await db.local_data.account_rows([target]))[target]
+    logger.info(
+        "Owner capital change actor=%s target=%s old=%s/%s new=%s/%s",
+        owner["id"], target,
+        previous and previous["allocationMode"], previous and previous["capitalAmount"],
+        saved["allocationMode"], saved["capitalAmount"],
+    )
+    return {
+        "success": True,
+        "capitalPolicy": {"allocationMode": saved["allocationMode"], "capitalAmount": saved["capitalAmount"]},
+        "savedAt": datetime.now(UTC).isoformat(),
     }
 
 
