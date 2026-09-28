@@ -1,18 +1,16 @@
 import asyncio
 import hmac
-import json
 import logging
 import os
-import re
 import sys
 import time
 import uuid
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Path, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.assets import DEFAULT_ASSET, Asset
 from app.decision_report import replace_model_decision
@@ -20,9 +18,8 @@ from app.shared_analysis import SHARED_USER_ID
 from automation_agent.assets import asset_profile
 from automation_agent.team import run_activation_recheck, run_automation_team
 from automation_agent.tools import confirm_activation_recheck, read_automation_state
-from news_agent.config import NEWS_TIMEOUT_SECONDS, RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
+from news_agent.config import RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
-from news_agent.pipeline import run_news_pipeline
 from news_analyzer.worker import run_in_worker
 
 LOG_LEVEL_NAME = os.getenv("NEWS_LOG_LEVEL", "INFO").upper()
@@ -64,8 +61,6 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger(__name__)
 settings = NewsAgentSettings.load()
-SessionPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]+$")]
-UserQuery = Annotated[str, Query(pattern=r"^[A-Za-z0-9_-]+$")]
 
 
 class ServiceError(Exception):
@@ -74,19 +69,6 @@ class ServiceError(Exception):
         self.status = status
         self.message = message
         self.code = code
-
-
-class NewsAnalysisRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(min_length=1)
-    sessionId: str = Field(default="btc-news-desk", pattern=r"^[A-Za-z0-9_-]+$")
-    userId: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-
-    @field_validator("query")
-    @classmethod
-    def normalize_query(cls, value: str) -> str:
-        return " ".join(value.split())
 
 
 class AutomationAnalysisRequest(BaseModel):
@@ -108,143 +90,6 @@ class AutomationAnalysisRequest(BaseModel):
     asset: Asset = DEFAULT_ASSET
 
 
-def _stored_session_id(user_id: str, public_session_id: str) -> str:
-    return f"news:{user_id}:{public_session_id}"
-
-
-def _tool_names(session: Any) -> list[str]:
-    if not session or not session.runs:
-        return []
-    names: list[str] = []
-    for execution in session.runs[-1].tools or []:
-        if isinstance(execution, dict):
-            name = execution.get("tool_name") or execution.get("name")
-        else:
-            name = getattr(execution, "tool_name", None) or getattr(execution, "name", None)
-        if name:
-            names.append(str(name))
-    return names
-
-
-def _markdown_content(content: Any) -> str | None:
-    if isinstance(content, str) and content.strip():
-        return content.strip()
-    if isinstance(content, BaseModel):
-        content = content.model_dump(mode="json")
-    if isinstance(content, (dict, list)):
-        return f"```json\n{json.dumps(content, indent=2, ensure_ascii=False, default=str)}\n```"
-    return None
-
-
-def _valid_outcomes(session: Any) -> list[tuple[str, Any]]:
-    if not session or not session.runs:
-        return []
-    outcomes: list[tuple[str, Any]] = []
-    for run in reversed(session.runs):
-        markdown = _markdown_content(run.content)
-        if markdown:
-            outcomes.append((markdown, run))
-        else:
-            logger.debug("Skipping empty saved news run run_id=%s", getattr(run, "run_id", None))
-    return outcomes
-
-
-def _response_payload(
-    *,
-    session: Any,
-    public_session_id: str,
-    elapsed_ms: int | None = None,
-    research_tools: list[str] | None = None,
-) -> dict[str, Any]:
-    outcomes = _valid_outcomes(session)
-    if not outcomes:
-        raise ServiceError(404, "No saved news analysis was found for this session", "news_session_not_found")
-    analysis, run = outcomes[0]
-    history = [
-        {
-            "runId": saved_run.run_id,
-            "model": saved_run.model or settings.model_id,
-            "analysis": saved_analysis,
-            "createdAt": getattr(saved_run, "created_at", None),
-        }
-        for saved_analysis, saved_run in outcomes[1:]
-    ]
-    payload: dict[str, Any] = {
-        "success": True,
-        "sessionId": public_session_id,
-        "runId": run.run_id,
-        "model": run.model or settings.model_id,
-        "researchTools": research_tools if research_tools is not None else _tool_names(session),
-        "analysis": analysis,
-        "createdAt": getattr(run, "created_at", None),
-        "history": history,
-    }
-    if elapsed_ms is not None:
-        payload["elapsedMs"] = elapsed_ms
-    return payload
-
-
-def _load_response(user_id: str, session_id: str, elapsed_ms: int | None = None) -> dict[str, Any]:
-    stored_session_id = _stored_session_id(user_id, session_id)
-    db = _open_session_db()
-    try:
-        session = db.get_session(stored_session_id, user_id=user_id)
-        return _response_payload(
-            session=session,
-            public_session_id=session_id,
-            elapsed_ms=elapsed_ms,
-        )
-    finally:
-        db.close()
-
-
-def _session_value(session: Any, name: str, default: Any = None) -> Any:
-    return session.get(name, default) if isinstance(session, dict) else getattr(session, name, default)
-
-
-def _plain_text_preview(markdown: str) -> str:
-    without_links = re.sub(r"!?(?:\[([^]]*)\])\([^)]*\)", r"\1", markdown)
-    without_markup = re.sub(r"[#*_`>|~\-]+", " ", without_links)
-    return " ".join(without_markup.split())[:220]
-
-
-def _list_sessions(user_id: str) -> dict[str, Any]:
-    db = _open_session_db()
-    prefix = f"news:{user_id}:"
-    try:
-        stored_sessions = db.get_sessions(
-            user_id=user_id,
-            component_id="news-intelligence-analyst",
-            limit=None,
-            sort_by="updated_at",
-            sort_order="desc",
-        )
-        sessions: list[dict[str, Any]] = []
-        for session in stored_sessions:
-            stored_id = str(_session_value(session, "session_id", ""))
-            if not stored_id.startswith(prefix):
-                continue
-            outcomes = _valid_outcomes(session)
-            if not outcomes:
-                continue
-            latest_analysis, latest_run = outcomes[0]
-            sessions.append(
-                {
-                    "sessionId": stored_id[len(prefix) :],
-                    "runId": getattr(latest_run, "run_id", None),
-                    "model": getattr(latest_run, "model", None) or settings.model_id,
-                    "createdAt": _session_value(session, "created_at"),
-                    "updatedAt": _session_value(session, "updated_at"),
-                    "runCount": len(outcomes),
-                    "preview": _plain_text_preview(latest_analysis),
-                }
-            )
-        logger.info("Listed news sessions user_id=%s count=%d", user_id, len(sessions))
-        return {"success": True, "sessions": sessions}
-    finally:
-        db.close()
-
-
 def _database_service_error(error: Exception) -> ServiceError:
     if isinstance(error, RuntimeError):
         message = str(error)
@@ -258,25 +103,6 @@ def _database_service_error(error: Exception) -> ServiceError:
     return ServiceError(503, message, code)
 
 
-def _open_session_db():
-    db = None
-    started_at = time.perf_counter()
-    try:
-        logger.debug("Opening news session database schema=%s table=%s", settings.db_schema, settings.session_table)
-        db = create_session_db(settings)
-        verify_session_db(db)
-        logger.debug("News session database ready elapsed_ms=%d", round((time.perf_counter() - started_at) * 1_000))
-        return db
-    except Exception as exc:
-        logger.exception(
-            "News session database open failed elapsed_ms=%d",
-            round((time.perf_counter() - started_at) * 1_000),
-        )
-        if db is not None:
-            db.close()
-        raise _database_service_error(exc) from exc
-
-
 def _database_status() -> tuple[bool, str | None]:
     db = None
     try:
@@ -288,79 +114,6 @@ def _database_status() -> tuple[bool, str | None]:
     finally:
         if db is not None:
             db.close()
-
-
-def _run_analysis(body: NewsAnalysisRequest, trace_id: str = "untracked") -> dict[str, Any]:
-    stored_session_id = _stored_session_id(body.userId, body.sessionId)
-    started_at = time.perf_counter()
-    logger.info(
-        "Analysis started trace_id=%s model=%s session_id=%s stored_session_id=%s user_id=%s query_chars=%d",
-        trace_id,
-        settings.model_id,
-        body.sessionId,
-        stored_session_id,
-        body.userId,
-        len(body.query),
-    )
-    logger.debug("Analysis query trace_id=%s query=%r", trace_id, body.query)
-    db = _open_session_db()
-    try:
-        result = run_news_pipeline(
-            body.query,
-            settings=settings,
-            session_id=stored_session_id,
-            user_id=body.userId,
-            db=db,
-            debug_mode=False,
-        )
-        if result.markdown is None:
-            logger.error(
-                "Analysis produced empty output trace_id=%s run_id=%s content_type=%s content=%r",
-                trace_id,
-                result.report_response.run_id,
-                type(result.report_response.content).__name__,
-                result.report_response.content,
-            )
-            raise ServiceError(502, "The news agent returned an empty analysis", "empty_news_analysis")
-        session = db.get_session(stored_session_id, user_id=body.userId)
-        elapsed_ms = round((time.perf_counter() - started_at) * 1_000)
-        payload = _response_payload(
-            session=session,
-            public_session_id=body.sessionId,
-            elapsed_ms=elapsed_ms,
-            research_tools=getattr(result, "research_tools", []),
-        )
-        logger.info(
-            "Analysis completed trace_id=%s run_id=%s elapsed_ms=%d markdown_chars=%d tools=%s",
-            trace_id,
-            payload["runId"],
-            elapsed_ms,
-            len(result.markdown),
-            getattr(result, "research_tools", []),
-        )
-        return payload
-    except ServiceError:
-        logger.exception(
-            "Analysis service error trace_id=%s elapsed_ms=%d",
-            trace_id,
-            round((time.perf_counter() - started_at) * 1_000),
-        )
-        raise
-    except Exception as exc:
-        logger.exception(
-            "News analysis run failed trace_id=%s elapsed_ms=%d",
-            trace_id,
-            round((time.perf_counter() - started_at) * 1_000),
-            exc_info=exc,
-        )
-        raise ServiceError(
-            502,
-            "The news analysis could not be completed. Please try again.",
-            "news_agent_failed",
-        ) from exc
-    finally:
-        db.close()
-        logger.debug("Analysis database closed trace_id=%s", trace_id)
 
 
 def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> dict[str, Any]:
@@ -587,36 +340,6 @@ async def health() -> dict[str, Any]:
         "sessionTable": settings.session_table,
         "model": settings.model_id,
     }
-
-
-@app.get("/v1/sessions/{session_id}")
-async def get_news_session(session_id: SessionPath, userId: UserQuery) -> dict[str, Any]:
-    return await asyncio.to_thread(_load_response, userId, session_id)
-
-
-@app.get("/v1/sessions")
-async def list_news_sessions(userId: UserQuery) -> dict[str, Any]:
-    return await asyncio.to_thread(_list_sessions, userId)
-
-
-@app.post("/v1/analyze")
-async def analyze_news(body: NewsAnalysisRequest, request: Request) -> dict[str, Any]:
-    if not settings.openrouter_api_key:
-        raise ServiceError(503, "News analysis is temporarily unavailable", "news_agent_not_configured")
-    if not settings.database_url:
-        raise ServiceError(
-            503,
-            "News analysis is temporarily unavailable",
-            "news_database_not_configured",
-        )
-    try:
-        return await asyncio.to_thread(
-            run_in_worker, _run_analysis, body, request.state.trace_id, timeout_seconds=NEWS_TIMEOUT_SECONDS,
-        )
-    except TimeoutError as exc:
-        raise ServiceError(504, str(exc), "news_analysis_timeout") from exc
-    except RuntimeError as exc:
-        raise ServiceError(502, "News analysis could not be completed", "news_agent_failed") from exc
 
 
 @app.post("/v1/automation/analyze")
