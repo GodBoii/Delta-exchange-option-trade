@@ -595,7 +595,7 @@ Trading Economics calendar
 + GDELT for research and broader corroboration
 ```
 
-The news output is a read-only record of the news member inside each main automation run. It is not run independently from the Bitcoin News page.
+The news report is an input to each main BTC or ETH automation run. It is saved in the run's `member_responses` for audit. The app has no separate News page and no endpoint that serves the report on its own.
 
 ## 21. Decisions required before implementation
 

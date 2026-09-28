@@ -18,8 +18,7 @@ Trade Cognition is a client-facing Delta Exchange India options strategy worksta
 Next.js frontend
   ├─ Supabase Auth and saved strategy library
   ├─ Strategy builder, dashboard, run history
-  ├─ Market analysis UI
-  └─ News intelligence UI
+  └─ Market analysis UI
 
 Docker services
   ├─ Delta-exchange: authenticated FastAPI trading API + scheduler
@@ -36,7 +35,7 @@ Supabase
 
 The frontend can run in two modes:
 
-- Backend-connected local mode: live Delta connection, contract preview, scheduling, execution, positions, orders, run history, live market analysis, and news analysis.
+- Backend-connected local mode: live Delta connection, contract preview, scheduling, execution, positions, orders, run history, live market analysis, and automation agent reports.
 - Backend-optional design mode: authentication, saved strategy editing, browser recovery, and JSON import/export continue to work without the local trading backend.
 
 The Vercel deployment is suitable for the frontend, but the live scheduler and Delta execution service require an always-on backend with a stable outbound IP. The frontend alone cannot provide reliable scheduled trading.
@@ -473,7 +472,6 @@ The following items remain important before dependable production use:
 - `backend/app/engine.py` — current execution, scheduling, and exit engine.
 - `binance_backend/app/feed.py` — current market stream and fan-out service.
 - `backend/news_agent/` — news research agent and tools.
-- `backend/news_analyzer/main.py` — private analyzer API and session endpoints.
+- `backend/news_analyzer/main.py` — private analysis service that runs the BTC and ETH automation agents.
 - `app/page.tsx` — main authenticated workspace and strategy flows.
 - `app/components/BtcMarketChart.tsx` — market analysis UI.
-- `app/components/NewsAnalysis.tsx` — news run/session UI.

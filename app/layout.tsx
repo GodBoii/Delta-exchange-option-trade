@@ -43,7 +43,7 @@ export const metadata: Metadata = {
     default: "Trade Cognition",
     template: "%s · Trade Cognition"
   },
-  description: "Configure, schedule, and review Delta Exchange India option strategies, with live market and news analysis.",
+  description: "Configure, schedule, and review Delta Exchange India option strategies, with live market analysis and agent reviews.",
   applicationName: "Trade Cognition",
   icons: {
     icon: [{ url: "/icon.png", type: "image/png", sizes: "256x256" }],

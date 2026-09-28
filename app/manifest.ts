@@ -18,7 +18,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Trade Cognition",
     // Android truncates anything much past a dozen characters under the icon.
     short_name: "Cognition",
-    description: "Configure, schedule, and review Delta Exchange India option strategies, with live market and news analysis.",
+    description: "Configure, schedule, and review Delta Exchange India option strategies, with live market analysis and agent reviews.",
     start_url: "/",
     scope: "/",
     display: "standalone",

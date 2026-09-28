@@ -8,8 +8,8 @@ No live strategy was scheduled while validating these changes.
 News research and market collection start together. Research performs three bounded searches,
 opens up to ten distinct article URLs, removes copied article bodies, and makes one synthesis
 request. The main decision agent receives that report once. It no longer delegates repeated
-research through an Agno Team. Saved results retain the existing `memberResponses` field so
-the news report remains available to current readers.
+research through an Agno Team. Saved results keep the news report in the `memberResponses` field
+for audit. No UI or API reads it back.
 
 Rechecks are independent jobs, scheduled at activation minus seven minutes. They retain fresh
 market collection and the two short-term charts. A completed model response with no
