@@ -44,7 +44,6 @@ from .models import (
     SaveStrategyRequest,
     StrategyDefinition,
 )
-from .news import router as news_router
 from .portfolio_stream import serve_portfolio
 from .reporting_api import WalletProbe
 from .reporting_api import router as reporting_router
@@ -157,7 +156,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
-app.include_router(news_router)
 app.include_router(automation_router)
 app.include_router(reporting_router)
 
