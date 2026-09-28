@@ -4,7 +4,7 @@ import {
   useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode
 } from "react";
 import {
-  Activity, ArrowRight, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart, Search,
+  Activity, ArrowRight, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, PieChart, Search,
   ThemeDark, ThemeLight, ThemeSystem, TrendingUp, Users
 } from "@/app/components/icons";
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
@@ -13,7 +13,7 @@ import {
   Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
 
-export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs" | "pnl" | "users";
+export type Tab = "connect" | "builder" | "market" | "automation" | "dashboard" | "runs" | "pnl" | "users";
 
 /** `short` is the label under the icon in the phone dock, where ~56px is all a destination gets. */
 type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
@@ -42,7 +42,6 @@ const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
   { id: "runs", label: "History", short: "History", hint: "Scheduled and active strategies", icon: <Activity />, family: "execute" },
   { id: "dashboard", label: "Portfolio", short: "Portfolio", hint: "Balances, positions and capital", icon: <PieChart />, family: "execute" },
   { id: "market", label: "Market", short: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
-  { id: "news", label: "News", short: "News", hint: "Headlines and market impact", icon: <Newspaper />, family: "research" },
   { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" },
   /* Account pages open from the profile window. My P&L also sits at the end of
      the desktop strip; Users is profile-only (see PROFILE_ONLY), and the phone

@@ -29,10 +29,6 @@ const BtcMarketChart = dynamic(() => import("@/app/components/BtcMarketChart"), 
   loading: () => <TableSkeleton label="market analysis" rows={8} />
 });
 
-const NewsAnalysis = dynamic(() => import("@/app/components/NewsAnalysis"), {
-  loading: () => <TableSkeleton label="news intelligence" rows={6} />
-});
-
 const Automation = dynamic(() => import("@/app/components/Automation"), {
   loading: () => <TableSkeleton label="automation" rows={6} />
 });
@@ -47,8 +43,8 @@ const OwnerUsers = dynamic(() => import("@/app/components/OwnerUsers"), {
 
 type BackendStatus = "checking" | "online" | "offline";
 
-const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "news", "automation", "pnl"];
-const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "news", "automation", "pnl"];
+const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "automation", "pnl"];
+const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "automation", "pnl"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
 /**
@@ -298,7 +294,6 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
       {tab === "market" && <BtcMarketChart />}
-      {tab === "news" && backendOnline && <NewsAnalysis request={requestJson} />}
       {tab === "automation" && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
       {tab === "pnl" && backendOnline && <PnlView />}
       {tab === "users" && backendOnline && user.userType === "owner" && <OwnerUsers onNotice={onNotice} />}

@@ -24,7 +24,7 @@ import {
   Check, CirclesThreePlus, ClockCounterClockwise, Command, Copy, CurrencyDollar,
   DownloadSimple, Equalizer, Eye, FileText, Fingerprint, FloppyDisk, Folders, Gauge,
   DeviceMobile, Export, Info, Key, Lightning, List, Lock, MagnifyingGlass, MagnifyingGlassMinus,
-  MagnifyingGlassPlus, Monitor, MoonStars, Newspaper, Path, Play as PlayGlyph, Plus,
+  MagnifyingGlassPlus, Monitor, MoonStars, Path, Play as PlayGlyph, Plus,
   PlusSquare, Prohibit, Robot, SignOut, Skull, SlidersHorizontal, Spinner, Square, Stack, Sun,
   Trash, TrendUp, UploadSimple, User, UsersThree, Vault, Warning, WifiSlash, X
 } from "@phosphor-icons/react";
@@ -52,7 +52,6 @@ export const Layers = Stack as Icon;
 export const Activity = ClockCounterClockwise as Icon;
 export const PieChart = ChartDonut as Icon;
 export const BarChart3 = ChartBar as Icon;
-export { Newspaper };
 export const Bot = Robot as Icon;
 export const Workflow = Path as Icon;
 
