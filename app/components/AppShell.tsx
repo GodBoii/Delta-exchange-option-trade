@@ -4,19 +4,22 @@ import {
   useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode
 } from "react";
 import {
-  Activity, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart, Search,
-  ThemeDark, ThemeLight, ThemeSystem, TrendingUp, Users, X
+  Activity, ArrowRight, BarChart3, Bot, ChevronDown, KeyRound, Layers3, LogOut, Newspaper, PieChart, Search,
+  ThemeDark, ThemeLight, ThemeSystem, TrendingUp, Users
 } from "@/app/components/icons";
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
 import {
-  Badge, Brand, StatusDot, SwapText, Tooltip, useDisclosure, useSlidingPill
+  Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
 
 export type Tab = "connect" | "builder" | "market" | "news" | "automation" | "dashboard" | "runs" | "pnl" | "users";
 
 /** `short` is the label under the icon in the phone dock, where ~56px is all a destination gets. */
 type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
+
+/** Pages reachable only from the account window: never in the strip, dock or jump menu. */
+const PROFILE_ONLY: ReadonlySet<Tab> = new Set<Tab>(["users"]);
 type NavFamily = "execute" | "research" | "account";
 
 /**
@@ -41,8 +44,9 @@ const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
   { id: "market", label: "Market", short: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
   { id: "news", label: "News", short: "News", hint: "Headlines and market impact", icon: <Newspaper />, family: "research" },
   { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" },
-  /* Account pages open from the profile window and the jump menu. On desktop they
-     also sit at the end of the strip; the phone dock leaves them to the profile. */
+  /* Account pages open from the profile window. My P&L also sits at the end of
+     the desktop strip; Users is profile-only (see PROFILE_ONLY), and the phone
+     dock leaves both to the profile. */
   { id: "pnl", label: "My P&L", short: "P&L", hint: "Your software trade results", icon: <TrendingUp />, family: "account" },
   { id: "users", label: "Users", short: "Users", hint: "Every account, capital and automation", icon: <Users />, family: "account" }
 ];
@@ -72,7 +76,8 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   banner?: ReactNode;
   children: ReactNode;
 }) {
-  const items = NAV_ITEMS.filter(item => availableTabs.includes(item.id));
+  const available = NAV_ITEMS.filter(item => availableTabs.includes(item.id));
+  const items = available.filter(item => !PROFILE_ONLY.has(item.id));
   const pillKey = `${tab}:${availableTabs.join(",")}`;
   const { barRef, pill } = useSlidingPill(pillKey, '[aria-current="page"]');
   const dockPill = useSlidingPill(pillKey, '[aria-current="page"]');
@@ -103,7 +108,7 @@ export function AppShell({ tab, availableTabs, connection, account, badges, onNa
   /** Visible boundaries between the execution, research and account groups of the strip. */
   const firstResearch = items.find(item => item.family === "research")?.id;
   const firstAccount = items.find(item => item.family === "account")?.id;
-  const accountItems = items.filter(item => item.family === "account");
+  const accountItems = available.filter(item => item.family === "account");
   const dockItems = items.filter(item => item.family !== "account");
 
   return (
@@ -377,13 +382,13 @@ const CURRENCY_OPTIONS: { value: DisplayCurrency; label: string; symbol: string 
 /**
  * Account window.
  *
- * A floating, non-modal window anchored to the profile trigger. It holds the
- * account's own pages (My P&L, and Users for the owner), then identity,
- * connection, appearance and currency, then the two ways out. The pages open
- * in the workspace; the window only routes to them.
+ * A centred modal window opened from the profile trigger. It holds the
+ * account's own pages (My P&L, and Users for the owner, which appears nowhere
+ * else), identity, connection, appearance and currency, then the two ways out.
+ * The pages open in the workspace; the window only routes to them.
  *
- * Focus moves into the window on open and returns to the trigger on Escape or
- * when a page is chosen. A pointer press outside closes it.
+ * The shared `Dialog` owns the portal, scrim, focus trap, scroll lock, Escape
+ * and the exit transition. Focus returns to the trigger when it closes.
  */
 function AccountWindow({ account, connection, pages, current, onNavigate, onDisconnect, onSignOut }: {
   account: AccountIdentity;
@@ -395,66 +400,17 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const panel = useRef<HTMLDivElement>(null);
-  const windowId = useId();
-  const titleId = useId();
-  const appearanceId = useId();
-  const currencyId = useId();
-  const { choice, setChoice } = useTheme();
-  const { currency, setCurrency, rateState } = useCurrency();
-  // Kept in the tree for the close transition, so dismissal plays instead of blinking out.
-  const disclosure = useDisclosure(open, "--dropdown-close-dur");
-  /* The bars only exist while the window is mounted, so the mounted flag is part
-     of the key: otherwise the pill is measured before the bar renders. */
-  const appearancePill = useSlidingPill(`${choice}:${disclosure.mounted}`, '[aria-checked="true"]');
-  const currencyPill = useSlidingPill(`${currency}:${disclosure.mounted}`, '[aria-checked="true"]');
-
-  function close(returnFocus: boolean) {
-    setOpen(false);
-    if (returnFocus) trigger.current?.focus();
-  }
-
-  /* The window mounts a render after `open` flips, so focus waits for the mount. */
-  useEffect(() => {
-    if (!open || !disclosure.mounted) return;
-    const frame = requestAnimationFrame(() => {
-      const root = panel.current;
-      (root?.querySelector<HTMLElement>("[data-autofocus]") ?? root?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [open, disclosure.mounted]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && !container.current?.contains(event.target)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); setOpen(false); trigger.current?.focus(); }
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   const initials = account.name.trim().slice(0, 2).toUpperCase() || "TC";
 
   return (
-    <div className="account-menu" ref={container}>
+    <div className="account-menu">
       <button
-        ref={trigger}
         type="button"
         className="account-trigger"
         aria-label={`Account: ${account.name}`}
         aria-expanded={open}
         aria-haspopup="dialog"
-        aria-controls={open ? windowId : undefined}
-        onClick={() => setOpen(value => !value)}
+        onClick={() => setOpen(true)}
       >
         <span className="avatar" aria-hidden="true">{initials}</span>
         <span className="account-trigger-text">
@@ -464,53 +420,94 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
         <ChevronDown className="account-caret" aria-hidden="true" />
       </button>
 
-      {disclosure.mounted && (
-        <div
-          ref={panel}
-          className={`account-dropdown account-window t-dropdown ${disclosure.className}`}
-          data-origin="top-right"
-          id={windowId}
-          role="dialog"
-          aria-labelledby={titleId}
-        >
-          <div className="account-profile">
-            <span className="avatar avatar-lg" aria-hidden="true">{initials}</span>
-            <span className="account-profile-text">
-              <strong id={titleId}>{account.name}</strong>
-              <small>{account.detail}</small>
-            </span>
-            {account.role === "owner" && <span className="account-role">Owner</span>}
-            <button type="button" className="icon-button account-close" aria-label="Close account window" onClick={() => close(true)}>
-              <X aria-hidden="true" />
-            </button>
-          </div>
+      {open && (
+        <AccountPanel
+          account={account}
+          initials={initials}
+          connection={connection}
+          pages={pages}
+          current={current}
+          onClose={() => setOpen(false)}
+          onNavigate={next => { setOpen(false); onNavigate(next); }}
+          onDisconnect={onDisconnect && (() => { setOpen(false); onDisconnect(); })}
+          onSignOut={() => { setOpen(false); onSignOut(); }}
+        />
+      )}
+    </div>
+  );
+}
 
-          <span className={`connection-chip tone-${connection.tone}`}>
-            <StatusDot tone={connection.tone} />
-            {connection.label}
-          </span>
+/**
+ * Body of the account window. Mounted only while open, so the sliding pills
+ * measure bars that already exist. Choosing a page, disconnecting or signing
+ * out closes the window at once, since the user has already picked where to go.
+ */
+function AccountPanel({ account, initials, connection, pages, current, onClose, onNavigate, onDisconnect, onSignOut }: {
+  account: AccountIdentity;
+  initials: string;
+  connection: ConnectionState;
+  pages: NavItem[];
+  current: Tab;
+  onClose: () => void;
+  onNavigate: (tab: Tab) => void;
+  onDisconnect?: () => void;
+  onSignOut: () => void;
+}) {
+  const appearanceId = useId();
+  const currencyId = useId();
+  const { choice, setChoice } = useTheme();
+  const { currency, setCurrency, rateState } = useCurrency();
+  const appearancePill = useSlidingPill(choice, '[aria-checked="true"]');
+  const currencyPill = useSlidingPill(currency, '[aria-checked="true"]');
 
-          {pages.length > 0 && (
-            <nav className="account-pages" aria-label="Account pages">
-              {pages.map((page, index) => (
+  return (
+    <Dialog
+      title="Account"
+      subtitle="Your pages, display settings and session"
+      className="account-window"
+      closeLabel="Close account window"
+      aside={account.role === "owner" && <span className="account-role">Owner</span>}
+      onClose={onClose}
+    >
+      <div className="account-window-profile">
+        <span className="avatar avatar-xl" aria-hidden="true">{initials}</span>
+        <div className="account-window-identity">
+          <span className="account-section-label">Signed in as</span>
+          <strong>{account.name}</strong>
+          <small>{account.detail}</small>
+        </div>
+        <span className={`connection-chip tone-${connection.tone}`}>
+          <StatusDot tone={connection.tone} />
+          {connection.label}
+        </span>
+      </div>
+
+      <div className="account-window-grid">
+        {pages.length > 0 && (
+          <nav className="account-window-pages" aria-label="Account pages">
+            <span className="account-section-label">Your pages</span>
+            <div className="account-pages">
+              {pages.map(page => (
                 <button
                   type="button"
                   key={page.id}
                   className="account-page"
-                  data-autofocus={index === 0 ? "" : undefined}
                   aria-current={page.id === current ? "page" : undefined}
-                  onClick={() => { close(true); onNavigate(page.id); }}
+                  onClick={() => onNavigate(page.id)}
                 >
                   <span className="account-page-icon" aria-hidden="true">{page.icon}</span>
                   <span className="account-page-text">
                     <strong>{page.label}</strong>
                     <small>{page.hint}</small>
                   </span>
+                  <ArrowRight className="account-page-go" aria-hidden="true" />
                 </button>
               ))}
-            </nav>
-          )}
+            </div>
+          </nav>
+        )}
 
+        <div className="account-window-settings">
           <div className="account-section">
             <span className="account-section-label" id={appearanceId}>Appearance</span>
             <div className="appearance-switch" role="radiogroup" aria-labelledby={appearanceId} ref={appearancePill.barRef}>
@@ -563,16 +560,16 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
 
           <div className="account-section">
             {onDisconnect && (
-              <button type="button" className="account-action" onClick={() => { close(true); onDisconnect(); }}>
+              <button type="button" className="account-action" onClick={onDisconnect}>
                 <KeyRound aria-hidden="true" />Disconnect Delta Exchange
               </button>
             )}
-            <button type="button" className="account-action" onClick={() => { close(false); onSignOut(); }}>
+            <button type="button" className="account-action" onClick={onSignOut}>
               <LogOut aria-hidden="true" />Sign out
             </button>
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    </Dialog>
   );
 }

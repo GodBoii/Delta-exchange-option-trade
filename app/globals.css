@@ -3667,25 +3667,6 @@ time,
   text-overflow: ellipsis;
 }
 
-/* Cosmetics only. The panel grows out of the account trigger it is anchored to
-   via `t-dropdown` with `data-origin="top-right"`, and stays mounted for the
-   close so dismissal animates instead of the panel simply disappearing. */
-.account-dropdown {
-  position: absolute;
-  top: calc(100% + var(--s-2));
-  right: 0;
-  z-index: 70;
-  display: grid;
-  gap: var(--s-3);
-  width: 288px;
-  padding: var(--s-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  background: var(--surface-2);
-  background-image: var(--gradient-raised);
-  box-shadow: var(--shadow-3), var(--inset-lit);
-}
-
 .account-profile {
   display: flex;
   align-items: center;
@@ -3807,17 +3788,98 @@ time,
 }
 
 /* Account window.
-   Wider than the old dropdown because it now routes to whole pages. It scrolls
-   inside itself when the viewport is short, so no row is ever out of reach. */
-.account-window {
-  width: 352px;
-  max-height: calc(100dvh - var(--context-h, 64px) - var(--s-6));
-  overflow-y: auto;
-  overscroll-behavior: contain;
+   A centred `Dialog`: identity across the top, then pages on the left and
+   display settings plus the ways out on the right. The dialog body scrolls
+   when the viewport is short, so no row is ever out of reach. */
+.dialog.account-window {
+  width: min(880px, 100%);
+  max-height: min(86vh, 760px);
+  background: var(--surface-2);
+  background-image: var(--gradient-raised);
 }
 
-.account-window .account-profile { align-items: flex-start; }
-.account-window .account-profile-text { flex: 1; }
+.account-window .dialog-body { gap: var(--s-6); padding: var(--s-6); }
+
+.account-window-profile {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+}
+
+.avatar.avatar-xl {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--r-lg);
+  font-size: var(--t-lg);
+}
+
+.account-window-identity {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-window-identity strong { color: var(--text-1); font-size: var(--t-xl); font-weight: 600; }
+
+.account-window-identity small {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.account-window-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+
+.account-window-pages { display: grid; gap: var(--s-3); }
+.account-window-pages .account-pages { padding-top: 0; border-top: 0; gap: var(--s-2); }
+
+.account-window .account-page {
+  padding: var(--s-4);
+  border-color: var(--line);
+  background: var(--surface-1);
+}
+
+.account-window .account-page-icon { width: 44px; height: 44px; }
+.account-window .account-page-icon svg { width: 22px; height: 22px; }
+.account-window .account-page-text { flex: 1; }
+.account-window .account-page-text strong { font-size: var(--t-md); }
+
+.account-page-go {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+  transition: transform var(--dur) ease, color var(--dur) ease;
+}
+
+@media (hover: hover) {
+  .account-page:hover .account-page-go { color: var(--accent); transform: translateX(2px); }
+}
+
+.account-window-settings { display: grid; gap: var(--s-4); }
+.account-window-settings > .account-section:first-child { padding-top: 0; border-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .account-page-go { transition: none; }
+}
+
+@media (max-width: 760px) {
+  .account-window-grid { grid-template-columns: minmax(0, 1fr); }
+  .account-window .dialog-body { padding: var(--s-4); gap: var(--s-4); }
+  .account-window-profile { flex-wrap: wrap; padding: var(--s-4); }
+  .avatar.avatar-xl { width: 48px; height: 48px; }
+}
 
 .account-role {
   flex: none;
@@ -3829,13 +3891,6 @@ time,
   color: var(--accent-strong);
   font-size: 11px;
   font-weight: 600;
-}
-
-.account-close {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  margin: -4px -4px 0 0;
 }
 
 .account-pages {
@@ -7445,19 +7500,9 @@ kbd {
   .account-trigger-text,
   .account-caret { display: none; }
 
-  .account-dropdown {
-    position: fixed;
-    top: calc(var(--context-h) + var(--s-2));
-    right: max(var(--s-3), env(safe-area-inset-right));
-    width: min(380px, calc(100vw - var(--s-6)));
-  }
-
-  /* Leave room for the phone dock at the bottom edge. */
-  .account-window { max-height: calc(100dvh - var(--context-h) - 96px); }
 
   .account-action,
   .account-page { min-height: 44px; }
-  .account-close { width: 44px; height: 44px; }
   .appearance-option { min-height: 40px; }
 
   /* Destinations move from the top strip to a bottom dock: inside thumb reach,
