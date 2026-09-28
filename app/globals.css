@@ -8465,11 +8465,15 @@ kbd {
 .pnl-chart {
   position: relative;
   min-width: 0;
-  height: 240px;
+  min-height: 280px;
+  padding-top: var(--s-2);
 }
 
+/* The global `svg` rule sizes icons to 16px; charts take their measured box. */
 .pnl-chart-svg {
   display: block;
+  width: 100%;
+  height: 280px;
   overflow: visible;
   border-radius: var(--r-sm);
   touch-action: pan-y;
@@ -8480,7 +8484,7 @@ kbd {
   outline-offset: 4px;
 }
 
-.pnl-chart-skeleton { height: 240px; }
+.pnl-chart-skeleton { height: 280px; }
 
 .pnl-grid line { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
 .pnl-grid.is-zero line { stroke: var(--line-strong); }
@@ -8493,13 +8497,16 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
+.pnl-stop.is-gain { stop-color: var(--long); }
+.pnl-stop.is-loss { stop-color: var(--short); }
+
 .pnl-series.is-gain { color: var(--long); }
 .pnl-series.is-loss { color: var(--short); }
 
 .pnl-line {
   fill: none;
   stroke: currentColor;
-  stroke-width: 2;
+  stroke-width: 2.5;
   stroke-linejoin: round;
   stroke-linecap: round;
 }

@@ -19,7 +19,7 @@ import { EmptyState, InlineMessage, Panel, PanelHeader } from "@/app/components/
 const PAGE_SIZE = 50;
 const MAX_PAGES = 20;
 
-const HEIGHT = 240;
+const HEIGHT = 280;
 const MARGIN = { top: 14, right: 16, bottom: 30, left: 76 };
 
 type ChartData =
@@ -220,14 +220,15 @@ function ChartTooltip({ x, width, children }: { x: number; width: number; childr
   return <div className="pnl-tooltip" style={{ left }} aria-hidden="true">{children}</div>;
 }
 
-function LineChart({ points }: { points: PnlPoint[] }) {
+export function LineChart({ points }: { points: PnlPoint[] }) {
   const { ref, width } = useMeasuredWidth();
   const { convertFromUsd, formatMoney } = useCurrency();
   const axis = useAxisFormat();
   const [active, setActive] = useState<number | null>(null);
   const above = useSvgId("pnl-above");
   const below = useSvgId("pnl-below");
-  const fill = useSvgId("pnl-fill");
+  const gainFill = useSvgId("pnl-gain-fill");
+  const lossFill = useSvgId("pnl-loss-fill");
 
   /* The curve starts at zero before the first run, so the first result reads as a step up or down. */
   const values = useMemo(() => [0, ...points.map(point => convertFromUsd(point.cumulative))], [points, convertFromUsd]);
@@ -280,9 +281,14 @@ function LineChart({ points }: { points: PnlPoint[] }) {
           <defs>
             <clipPath id={above}><rect x={0} y={0} width={width} height={zero} /></clipPath>
             <clipPath id={below}><rect x={0} y={zero} width={width} height={HEIGHT - zero} /></clipPath>
-            <linearGradient id={fill} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="currentColor" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="currentColor" stopOpacity="0.02" />
+            {/* Gains fade downward to the zero line, losses fade upward to it. */}
+            <linearGradient id={gainFill} gradientUnits="userSpaceOnUse" x1="0" y1={MARGIN.top} x2="0" y2={zero}>
+              <stop offset="0%" className="pnl-stop is-gain" stopOpacity="0.32" />
+              <stop offset="100%" className="pnl-stop is-gain" stopOpacity="0.03" />
+            </linearGradient>
+            <linearGradient id={lossFill} gradientUnits="userSpaceOnUse" x1="0" y1={HEIGHT - MARGIN.bottom} x2="0" y2={zero}>
+              <stop offset="0%" className="pnl-stop is-loss" stopOpacity="0.32" />
+              <stop offset="100%" className="pnl-stop is-loss" stopOpacity="0.03" />
             </linearGradient>
           </defs>
 
@@ -294,11 +300,11 @@ function LineChart({ points }: { points: PnlPoint[] }) {
           ))}
 
           <g className="pnl-series is-gain" clipPath={`url(#${above})`}>
-            <path className="pnl-area" d={area} fill={`url(#${fill})`} />
+            <path className="pnl-area" d={area} fill={`url(#${gainFill})`} />
             <path className="pnl-line" d={line} />
           </g>
           <g className="pnl-series is-loss" clipPath={`url(#${below})`}>
-            <path className="pnl-area" d={area} fill={`url(#${fill})`} />
+            <path className="pnl-area" d={area} fill={`url(#${lossFill})`} />
             <path className="pnl-line" d={line} />
           </g>
 
@@ -352,7 +358,7 @@ function LineChart({ points }: { points: PnlPoint[] }) {
   );
 }
 
-function BarChart({ buckets, size }: { buckets: PnlBucket[]; size: BucketSize }) {
+export function BarChart({ buckets, size }: { buckets: PnlBucket[]; size: BucketSize }) {
   const { ref, width } = useMeasuredWidth();
   const { convertFromUsd, formatMoney } = useCurrency();
   const axis = useAxisFormat();
