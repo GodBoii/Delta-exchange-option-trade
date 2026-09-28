@@ -7,6 +7,7 @@ import { errorMessage, formatTimestamp, relativeTime } from "@/lib/format";
 import { runStub, tradeQuery } from "@/lib/reporting";
 import type { PnlResponse, ReportRange, TradeItem } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
+import PnlCharts from "@/app/components/PnlCharts";
 import {
   PnlTiles, RangeControl, StateSelect, TradeTable, useTradePages, type StateFilter
 } from "@/app/components/TradeReport";
@@ -30,6 +31,7 @@ export default function PnlView() {
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [summary, setSummary] = useState<SummaryState>({ kind: "loading" });
   const [inspecting, setInspecting] = useState<TradeItem | null>(null);
+  const [chartsToken, setChartsToken] = useState(0);
   const generation = useRef(0);
   const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, state: stateFilter })}`);
 
@@ -55,6 +57,7 @@ export default function PnlView() {
   function refresh() {
     void loadSummary();
     void trades.reload();
+    setChartsToken(token => token + 1);
   }
 
   return (
@@ -107,6 +110,8 @@ export default function PnlView() {
           />
         )}
       </Panel>
+
+      <PnlCharts range={range} refreshToken={chartsToken} />
 
       <Panel className="report-panel">
         <PanelHeader title="Software trades" meta="Newest first. Open a trade to see its fills and settlement." />

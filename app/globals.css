@@ -8442,3 +8442,147 @@ kbd {
 @media (max-width: 720px) {
   .owner-capital-fields { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* --------------------------------------------------------------------------
+   P&L charts
+   Cumulative line and winnings-versus-losses bars on the personal report.
+   Green above zero, red below, on the same tokens as every other P&L figure.
+   -------------------------------------------------------------------------- */
+
+.pnl-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-6);
+  min-width: 0;
+}
+
+.pnl-chart-note {
+  grid-column: 1 / -1;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.pnl-chart {
+  position: relative;
+  min-width: 0;
+  height: 240px;
+}
+
+.pnl-chart-svg {
+  display: block;
+  overflow: visible;
+  border-radius: var(--r-sm);
+  touch-action: pan-y;
+}
+
+.pnl-chart-svg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.pnl-chart-skeleton { height: 240px; }
+
+.pnl-grid line { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
+.pnl-grid.is-zero line { stroke: var(--line-strong); }
+
+.pnl-grid text,
+.pnl-axis-x {
+  fill: var(--text-3);
+  font-family: var(--font-mono-stack);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pnl-series.is-gain { color: var(--long); }
+.pnl-series.is-loss { color: var(--short); }
+
+.pnl-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.pnl-cursor line { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 4; }
+.pnl-cursor circle { stroke: var(--surface-1); stroke-width: 2; }
+.pnl-cursor circle.is-gain { fill: var(--long); }
+.pnl-cursor circle.is-loss { fill: var(--short); }
+
+.pnl-band { fill: var(--surface-3); opacity: 0.6; }
+
+.pnl-bar { transition: opacity var(--dur) ease; }
+.pnl-bar.is-gain { fill: var(--long); }
+.pnl-bar.is-loss { fill: var(--short); }
+
+.pnl-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-4);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.pnl-legend-item { display: inline-flex; align-items: center; gap: var(--s-2); }
+
+.pnl-legend-item::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.pnl-legend-item.is-gain::before { background: var(--long); }
+.pnl-legend-item.is-loss::before { background: var(--short); }
+
+.pnl-tooltip {
+  position: absolute;
+  top: var(--s-2);
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2, var(--shadow-3));
+  font-size: var(--t-xs);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.pnl-tooltip strong {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pnl-tooltip small { color: var(--text-3); }
+
+.pnl-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-4);
+  color: var(--text-2);
+}
+
+.pnl-tooltip-row b {
+  font-family: var(--font-mono-stack);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.pnl-tooltip .is-gain { color: var(--long); }
+.pnl-tooltip .is-loss { color: var(--short); }
+
+@media (max-width: 1100px) {
+  .pnl-charts { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pnl-bar { transition: none; }
+}
