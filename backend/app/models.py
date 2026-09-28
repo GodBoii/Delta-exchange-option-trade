@@ -75,7 +75,7 @@ class StrategyDefinition(StrictModel):
     instrument: Instrument
     entry: EntrySettings
     holdingMode: Literal["intraday", "hold_to_expiry"] = "intraday"
-    expiryPolicy: Literal["same_day", "next_day", "7_day", "30_day"] = "same_day"
+    expiryPolicy: Literal["same_day", "next_day", "7_day", "30_day", "auto"] = "same_day"
     exitMinutesBeforeExpiry: int = Field(default=5, ge=1, le=1_440)
     sameExpiryRequired: bool = True
     squareOff: Literal["partial", "complete"] = "complete"

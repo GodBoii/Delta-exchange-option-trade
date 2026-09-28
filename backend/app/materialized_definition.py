@@ -20,7 +20,7 @@ ENTRY_MUTABLE = {"entryAt", "exitAt", "strategyType"}
 def validate_materialized_definition(source: dict[str, Any], proposed: dict[str, Any]) -> None:
     if proposed.get("holdingMode") not in {None, "intraday", "hold_to_expiry"}:
         raise AppError(422, "Invalid holding mode", "definition_changed")
-    if proposed.get("expiryPolicy") not in {None, "same_day", "next_day", "7_day", "30_day"}:
+    if proposed.get("expiryPolicy") not in {None, "same_day", "next_day", "7_day", "30_day", "auto"}:
         raise AppError(422, "Invalid expiry policy", "definition_changed")
     entry = proposed.get("entry")
     original_entry = source.get("entry") or {}
