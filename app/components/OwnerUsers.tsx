@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { AlertTriangle, Profile, RefreshCw, Search } from "@/app/components/icons";
+import { AlertTriangle, Profile, RefreshCw, Save, Search } from "@/app/components/icons";
+import { CAPITAL_MODE_OPTIONS, isCapitalAllocationMode } from "@/lib/capital";
 import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { EM_DASH, errorMessage, formatDateTime, formatTimestamp, relativeTime, toNumber } from "@/lib/format";
@@ -9,14 +10,14 @@ import {
   allocationModeText, observationLabel, runStub, tradeQuery, walletUnavailableText
 } from "@/lib/reporting";
 import type {
-  OwnerTradeDetail, OwnerUserDetail, OwnerUserRow, OwnerUsersResponse, ReportRange, TradeItem
+  CapitalAllocationMode, OwnerTradeDetail, OwnerUserDetail, OwnerUserRow, OwnerUsersResponse, ReportRange, TradeItem
 } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
 import {
   PnlTiles, RangeControl, StateSelect, TradeTable, useTradePages, type StateFilter
 } from "@/app/components/TradeReport";
 import {
-  DetailList, EmptyState, InlineMessage, Panel, PanelHeader, SectionHeading, Select, StatusChip,
+  DetailList, EmptyState, InlineMessage, NumberField, Panel, PanelHeader, SectionHeading, Select, StatusChip,
   StatusDot, TableSkeleton, TileSkeleton, Toggle, type NoticeHandler
 } from "@/app/components/ui";
 
@@ -306,7 +307,7 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
     );
   }
 
-  const { profile, account, wallet, capitalPolicy, capitalHistory, performance } = detail.data;
+  const { profile, account, wallet, capitalPolicy, budgetPreview, capitalHistory, performance } = detail.data;
   const walletNote = walletUnavailableText(wallet);
   const userScope = performance.userScope;
 
@@ -368,13 +369,29 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
             )}
           </div>
           <div className="detail-tile">
-            <span>Capital policy</span>
-            <strong className="is-text">{allocationModeText(capitalPolicy.allocationMode)}</strong>
-            {capitalPolicy.capitalAmount && (
-              <small className="detail-tile-note">{formatMoneyNumber(capitalPolicy.capitalAmount)} {currencyCode} fixed amount</small>
+            <span>Budget per strategy</span>
+            {budgetPreview ? (
+              <>
+                <strong>{formatMoneyNumber(budgetPreview.budgetPerStrategy)}<small>{currencyCode}</small></strong>
+                <small className="detail-tile-note">
+                  Next entry can use {formatMoneyNumber(budgetPreview.nextStrategyCanUse)} · up to {budgetPreview.maximumConcurrentStrategies} at once
+                </small>
+              </>
+            ) : (
+              <>
+                <strong className="is-text">{allocationModeText(capitalPolicy.allocationMode)}</strong>
+                <small className="detail-tile-note">The amount needs a live wallet balance.</small>
+              </>
             )}
           </div>
         </div>
+        <CapitalPolicyEditor
+          userId={userId}
+          name={displayName(profile)}
+          policy={capitalPolicy}
+          onNotice={onNotice}
+          onSaved={() => setToken(value => value + 1)}
+        />
         <h3 className="owner-subheading">Recorded capital history</h3>
         {capitalHistory.length ? (
           <ul className="capital-history">
@@ -455,3 +472,81 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
   );
 }
 
+
+/**
+ * The owner's control over one account's per-strategy budget. The account holder
+ * can still change it from Portfolio; whichever change is saved last applies to
+ * the next entry. Runs already open keep the budget they entered with.
+ */
+function CapitalPolicyEditor({ userId, name, policy, onNotice, onSaved }: {
+  userId: string;
+  name: string;
+  policy: OwnerUserDetail["capitalPolicy"];
+  onNotice: NoticeHandler;
+  onSaved: () => void;
+}) {
+  const { currencyCode, convertFromUsd, convertToUsd } = useCurrency();
+  const savedMode: CapitalAllocationMode = isCapitalAllocationMode(policy.allocationMode) ? policy.allocationMode : "half_balance";
+  const savedAmountUsd = toNumber(policy.capitalAmount);
+  const [mode, setMode] = useState<CapitalAllocationMode>(savedMode);
+  const [amount, setAmount] = useState(() => convertFromUsd(savedAmountUsd ?? 100));
+  const [status, setStatus] = useState<{ kind: "idle" } | { kind: "saving" } | { kind: "error"; message: string }>({ kind: "idle" });
+
+  const dirty = mode !== savedMode
+    || (mode === "fixed_amount" && Math.abs((savedAmountUsd ?? 0) - convertToUsd(amount)) > 0.00001);
+  const invalid = mode === "fixed_amount" && !(amount > 0);
+  const options = CAPITAL_MODE_OPTIONS.map(option => option.value === "fixed_amount"
+    ? { ...option, label: `Fixed ${currencyCode} amount` } : { ...option });
+
+  async function save() {
+    if (invalid || status.kind === "saving") return;
+    setStatus({ kind: "saving" });
+    try {
+      await requestJson<{ capitalPolicy: OwnerUserDetail["capitalPolicy"] }>(
+        `/api/owner/users/${encodeURIComponent(userId)}/capital`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ allocationMode: mode, capitalAmount: mode === "fixed_amount" ? convertToUsd(amount) : null })
+        }
+      );
+      setStatus({ kind: "idle" });
+      onNotice({ tone: "ok", text: `Budget per strategy saved for ${name}. It applies from the next entry.` });
+      // Reload so the saved policy and its budget come from the server, not from this form.
+      onSaved();
+    } catch (error) {
+      setStatus({ kind: "error", message: errorMessage(error) });
+    }
+  }
+
+  return (
+    <div className="owner-capital-editor">
+      <div className="owner-capital-fields">
+        <Select
+          label="Budget per strategy"
+          value={mode}
+          options={options}
+          onChange={value => { if (isCapitalAllocationMode(value)) setMode(value); }}
+          hint={`Calculated from the account's total USD balance, capped by what is available. ${name} can also change this from Portfolio.`}
+        />
+        {mode === "fixed_amount" && (
+          <NumberField label="Amount" value={amount} min={0.01} step={0.01} suffix={currencyCode} invalid={invalid} onChange={setAmount} />
+        )}
+      </div>
+      <div className="owner-capital-actions">
+        {dirty && (
+          <>
+            <button type="button" className="button ghost small" disabled={status.kind === "saving"}
+              onClick={() => { setMode(savedMode); setAmount(convertFromUsd(savedAmountUsd ?? 100)); setStatus({ kind: "idle" }); }}>
+              Reset
+            </button>
+            <button type="button" className="button primary small" disabled={invalid || status.kind === "saving"} onClick={() => void save()}>
+              <Save aria-hidden="true" />{status.kind === "saving" ? "Saving…" : "Save budget"}
+            </button>
+          </>
+        )}
+        {!dirty && <small className="field-hint">Open runs keep the budget they entered with.</small>}
+      </div>
+      {status.kind === "error" && <InlineMessage tone="error">Budget was not changed. {status.message}</InlineMessage>}
+    </div>
+  );
+}

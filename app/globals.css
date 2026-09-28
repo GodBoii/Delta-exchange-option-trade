@@ -8367,3 +8367,33 @@ kbd {
   .report-filters > * { max-width: none; }
   .trade-table { min-width: 0; }
 }
+
+.owner-capital-editor {
+  display: grid;
+  gap: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.owner-capital-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
+}
+
+.owner-capital-fields > :only-child { grid-column: 1 / -1; max-width: 520px; }
+
+.owner-capital-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+.owner-capital-actions > .field-hint { margin-right: auto; }
+
+@media (max-width: 720px) {
+  .owner-capital-fields { grid-template-columns: minmax(0, 1fr); }
+}
