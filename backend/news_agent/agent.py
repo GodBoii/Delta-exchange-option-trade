@@ -24,7 +24,7 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRou
         reasoning_effort="high",
         timeout=90,
         max_retries=0,
-        max_tokens=6000,
+        max_tokens=None,
         max_completion_tokens=None,
     )
 

@@ -155,6 +155,8 @@ def test_recheck_without_drop_uses_plain_report(monkeypatch, report):
     )
     result = team.run_activation_recheck(**kwargs)
     assert captured["model"].reasoning_effort == "low"
+    assert "max_tokens" not in captured["model"].get_request_params()
+    assert "max_completion_tokens" not in captured["model"].get_request_params()
     assert captured["model"].timeout == 240
     assert "Exact original report" in captured["additional_context"]
     assert "Recheck chart instructions" in captured["additional_context"]

@@ -92,6 +92,8 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         trigger="agent_follow_up", trigger_reason="Wait for confirmation", signals_to_inspect=["breakout"],
     )
     assert captured["model"].reasoning_effort == "max"
+    assert "max_tokens" not in captured["model"].get_request_params()
+    assert "max_completion_tokens" not in captured["model"].get_request_params()
     assert "Current verified news" in captured["additional_context"]
     assert "Wait for confirmation" in captured["additional_context"]
     assert "Main chart instructions" in captured["additional_context"]

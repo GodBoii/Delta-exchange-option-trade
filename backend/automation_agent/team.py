@@ -114,7 +114,7 @@ def run_automation_team(
             reasoning_effort="max",
             timeout=180,
             max_retries=0,
-            max_tokens=12000,
+            max_tokens=None,
             max_completion_tokens=None,
         )
         team = Agent(
@@ -365,7 +365,7 @@ def run_activation_recheck(
         reasoning_effort="low",
         timeout=240,
         max_retries=0,
-        max_tokens=4000,
+        max_tokens=None,
         max_completion_tokens=None,
     )
     agent = Agent(

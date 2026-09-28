@@ -16,8 +16,10 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     assert settings.automation_model_id == agent.model.id
     assert agent.model.reasoning_effort == "high"
     assert agent.model.supports_native_structured_outputs is False
-    assert agent.model.max_tokens == 6000
+    assert agent.model.max_tokens is None
     assert agent.model.max_completion_tokens is None
+    assert "max_tokens" not in agent.model.get_request_params()
+    assert "max_completion_tokens" not in agent.model.get_request_params()
     assert agent.output_schema is None
     assert agent.db is db
     assert agent.add_history_to_context is True
