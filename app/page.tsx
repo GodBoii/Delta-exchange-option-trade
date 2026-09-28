@@ -127,6 +127,18 @@ export default function Home() {
 
   useEffect(() => { void loadSession(); }, [loadSession]);
 
+  // A tapped phone notification opens `/?tab=runs`; honour it once, then clean the URL.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const requested = url.searchParams.get("tab");
+    const known = [...CONNECTED_TABS, ...UNCONNECTED_TABS].find(item => item === requested);
+    if (!requested) return;
+    if (known) setTab(known);
+    url.searchParams.delete("tab");
+    url.searchParams.delete("strategy");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
   const connected = Boolean(account);
   const isOwner = backendStatus === "online" && user?.userType === "owner";
   const availableTabs = tabsFor(

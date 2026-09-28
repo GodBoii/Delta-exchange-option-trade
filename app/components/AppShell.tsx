@@ -9,6 +9,7 @@ import {
 } from "@/app/components/icons";
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
+import { NotificationSettings } from "@/app/components/NotificationSettings";
 import {
   Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
@@ -556,6 +557,8 @@ function AccountPanel({ account, initials, connection, pages, current, onClose, 
             </small>
             <small className="currency-rate-note">Display conversion only. Delta amounts and orders stay in USD.</small>
           </div>
+
+          <NotificationSettings />
 
           <div className="account-section">
             {onDisconnect && (

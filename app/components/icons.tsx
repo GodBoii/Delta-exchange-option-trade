@@ -20,7 +20,7 @@
 import type { ComponentType, SVGProps } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowsClockwise, ArrowSquareOut,
-  ArrowsOutLineHorizontal, Bank, CalendarBlank, CaretDown, CaretUp, ChartBar, ChartDonut,
+  ArrowsOutLineHorizontal, Bank, Bell as BellGlyph, BellSlash, CalendarBlank, CaretDown, CaretUp, ChartBar, ChartDonut,
   Check, CirclesThreePlus, ClockCounterClockwise, Command, Copy, CurrencyDollar,
   DownloadSimple, Equalizer, Eye, FileText, Fingerprint, FloppyDisk, Folders, Gauge,
   DeviceMobile, Export, Info, Key, Lightning, List, Lock, MagnifyingGlass, MagnifyingGlassMinus,
@@ -100,6 +100,8 @@ export const ThemeSystem = Monitor as Icon;
 /* Install to home screen. `ShareSheet` is the iOS share glyph specifically:
    the arrow leaving a tray, because the instructions name that button. */
 export const Smartphone = DeviceMobile as Icon;
+export const Bell = BellGlyph as Icon;
+export const BellOff = BellSlash as Icon;
 export const ShareSheet = Export as Icon;
 export const AddToHomeScreen = PlusSquare as Icon;
 

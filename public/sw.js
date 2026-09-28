@@ -32,6 +32,66 @@ self.addEventListener("activate", event => {
   event.waitUntil(self.clients.claim());
 });
 
+/**
+ * Trade alerts from the backend (backend/app/push.py). Every push has to show a
+ * notification, or Chrome treats the site as abusing silent pushes, so a
+ * payload that does not parse still shows a generic one.
+ */
+self.addEventListener("push", event => {
+  const message = readPushMessage(event.data);
+  event.waitUntil(
+    self.registration.showNotification(message.title, {
+      body: message.body,
+      tag: message.tag,
+      renotify: true,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/badge-96.png",
+      timestamp: Date.now(),
+      data: { url: message.url },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const target = new URL(safePath(event.notification.data?.url), self.location.origin).href;
+  event.waitUntil(openApp(target));
+});
+
+function readPushMessage(data) {
+  const fallback = { title: "Trade Cognition", body: "Open the app for details", tag: "trade-cognition", url: "/" };
+  if (!data) return fallback;
+  try {
+    const parsed = data.json();
+    if (!parsed || typeof parsed !== "object") return fallback;
+    return {
+      title: typeof parsed.title === "string" && parsed.title ? parsed.title : fallback.title,
+      body: typeof parsed.body === "string" ? parsed.body : fallback.body,
+      tag: typeof parsed.tag === "string" && parsed.tag ? parsed.tag : fallback.tag,
+      url: safePath(parsed.url),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/** Only same-origin paths, so a payload can never send the user elsewhere. */
+function safePath(value) {
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+}
+
+async function openApp(target) {
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const open = windows.find(client => new URL(client.url).origin === self.location.origin);
+  if (open) {
+    await open.focus();
+    // A full navigation reloads the app on the right tab with the run selected.
+    if ("navigate" in open) await open.navigate(target).catch(() => undefined);
+    return;
+  }
+  await self.clients.openWindow(target);
+}
+
 self.addEventListener("fetch", event => {
   const { request } = event;
   // `navigate` covers exactly the case worth handling: the document request the
