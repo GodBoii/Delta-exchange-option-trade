@@ -12,7 +12,7 @@ export type MarketOutlook =
   | "wide_sideways"
   | "tight_sideways";
 
-export type ExpiryPolicy = "same_day" | "next_day" | "7_day" | "30_day";
+export type ExpiryPolicy = "same_day" | "next_day" | "7_day" | "30_day" | "auto";
 export type HoldingMode = "intraday" | "hold_to_expiry";
 export type RiskBasis = "net_debit" | "net_credit" | "defined_max_loss";
 export type StrategyLeg = {

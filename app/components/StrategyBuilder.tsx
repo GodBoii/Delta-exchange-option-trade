@@ -13,7 +13,7 @@ import { readStrategyLibrary, saveLibraryStrategy, deleteLibraryStrategy, defini
 import { cleanStrategyName } from "@/lib/strategy-name";
 import { requestJson } from "@/lib/api";
 import {
-  errorMessage, formatDateTime, formatDuration, formatExpiry, relativeTime, toIso, toLocalInput
+  errorMessage, formatDateTime, formatDuration, relativeTime, toIso, toLocalInput
 } from "@/lib/format";
 import {
   AnimatedNumber, ClearableInput, ConfirmModal, Dialog, DrawnTick, EmptyState, Field, InlineMessage,
@@ -100,7 +100,6 @@ function isStrategyDefinition(value: unknown): value is StrategyDefinition {
   const strategy = value as Record<string, unknown>;
   return typeof strategy.name === "string"
     && Boolean(strategy.instrument && typeof strategy.instrument === "object")
-    && Boolean(strategy.entry && typeof strategy.entry === "object")
     && Array.isArray(strategy.legs)
     && strategy.legs.length > 0;
 }
@@ -121,8 +120,9 @@ function hydrateStrategy(
     marketOutlook: strategy.marketOutlook ?? (hasShortLeg ? "sideways" : "large_move_unknown_direction"),
     enabledForAi: strategy.enabledForAi ?? false,
     acknowledgement: true,
+    entry: strategy.entry ?? initialStrategy().entry,
     holdingMode: strategy.holdingMode ?? "intraday",
-    expiryPolicy: strategy.expiryPolicy ?? "same_day",
+    expiryPolicy: strategy.expiryPolicy ?? "auto",
     exitMinutesBeforeExpiry: strategy.exitMinutesBeforeExpiry ?? 5,
     sameExpiryRequired: strategy.sameExpiryRequired ?? true,
     riskMode: strategy.riskMode ?? "legwise",
@@ -134,7 +134,7 @@ function hydrateStrategy(
     emergencyExitEnabled: strategy.emergencyExitEnabled ?? true,
     lotsMode: strategy.lotsMode ?? "manual",
     equalLotsRequired: strategy.equalLotsRequired ?? false,
-    legs: strategy.legs.map(leg => ({ ...leg, role: leg.role ?? undefined }))
+    legs: strategy.legs.map(leg => ({ ...leg, expiry: leg.expiry ?? tomorrow(), role: leg.role ?? undefined }))
   };
 }
 
@@ -210,18 +210,13 @@ function validate(strategy: StrategyDefinition): ValidationIssue[] {
   if (strategy.name.trim().length < 2) issues.push({ field: "name", message: "Give the strategy a name of at least two characters." });
 
   const entryAt = new Date(strategy.entry.entryAt).getTime();
-  const exitAt = new Date(strategy.entry.exitAt).getTime();
   if (!Number.isFinite(entryAt)) issues.push({ field: "entryAt", message: "Set a valid entry time." });
-  if (!Number.isFinite(exitAt) || (Number.isFinite(entryAt) && exitAt <= entryAt)) {
-    issues.push({ field: "exitAt", message: "The exit time must be after the entry time." });
-  }
   if (!strategy.legs.length) issues.push({ field: "legs", message: "Add at least one option leg." });
 
   strategy.legs.forEach((leg, index) => {
     const position = `Leg ${index + 1}`;
     const add = (field: string, message: string) => issues.push({ field: `leg.${leg.id}.${field}`, legId: leg.id, message: `${position}: ${message}` });
     if (strategy.lotsMode === "manual" && (!Number.isFinite(leg.lots) || leg.lots < 1)) add("lots", "lots must be at least 1.");
-    if (!leg.expiry || Number.isNaN(new Date(`${leg.expiry}T00:00:00`).getTime())) add("expiry", "choose an expiry date.");
     if (leg.strikeMode === "exact" && (!leg.exactStrike || leg.exactStrike <= 0)) add("exactStrike", "enter the exact strike.");
     if (leg.orderType === "limit_order" && (!leg.limitPrice || !/^\d+(\.\d+)?$/.test(leg.limitPrice))) add("limitPrice", "enter a numeric limit price.");
     if (strategy.riskMode === "legwise" && leg.position === "sell" && (!leg.stopLoss || leg.stopLoss <= 0)) {
@@ -243,11 +238,8 @@ function validate(strategy: StrategyDefinition): ValidationIssue[] {
   if (strategy.takeProfitPercent <= 0) {
     issues.push({ field: "takeProfitPercent", message: "Take profit must be greater than zero." });
   }
-  if (strategy.holdingMode === "hold_to_expiry" && strategy.exitMinutesBeforeExpiry < 1) {
+  if (strategy.exitMinutesBeforeExpiry < 1) {
     issues.push({ field: "exitMinutesBeforeExpiry", message: "Set an expiry safety buffer of at least one minute." });
-  }
-  if (strategy.sameExpiryRequired && new Set(strategy.legs.map(leg => leg.expiry)).size > 1) {
-    issues.push({ field: "legs", message: "Every leg must use the same fallback expiry date." });
   }
   return issues;
 }
@@ -292,7 +284,7 @@ function checklist(strategy: StrategyDefinition, issues: ValidationIssue[]): Che
       label: "Schedule window",
       passed: scheduled,
       detail: scheduled
-        ? `${formatDateTime(strategy.entry.entryAt)} · held ${formatDuration(strategy.entry.entryAt, strategy.entry.exitAt)}`
+        ? `${formatDateTime(strategy.entry.entryAt)} · exit calculated at scheduling`
         : first(field => field === "entryAt" || field === "exitAt", "")
     },
     {
@@ -368,6 +360,19 @@ function structureModel(legs: StrategyLeg[]): StructureModel {
  * ------------------------------------------------------------------ */
 
 type LibraryState = "loading" | "template" | "local" | "unsaved" | "saving" | "saved" | "error";
+type ExitKind = "intraday" | "overnight" | "positional" | "specific_time" | "expiry";
+type ExitChoice =
+  | { kind: "intraday" | "overnight" | "positional"; hours: number }
+  | { kind: "specific_time"; exit_at: string }
+  | { kind: "expiry"; expiry_number: 1 | 2 };
+type ExitSchedule = {
+  entryIst: string; exitIst: string; exitUtc: string; durationMinutes: number;
+  sessionCrossings: number; contractExpiryIst: string; contractExpiryUtc: string;
+  latestSafeExitUtc: string;
+};
+const HOURS: Record<"intraday" | "overnight" | "positional", readonly number[]> = {
+  intraday: [7, 11], overnight: [16, 24], positional: [48, 72]
+};
 
 const LIBRARY_COPY: Record<LibraryState, { label: string; tone: "active" | "warning" | "negative" | "neutral" }> = {
   loading: { label: "Loading saved strategies", tone: "neutral" },
@@ -393,6 +398,12 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
   const draftIdKey = `${DRAFT_ID_STORAGE_KEY}:${userId}`;
   const localDraftKey = `${LOCAL_DRAFT_KEY}:${userId}`;
   const [strategy, setStrategy] = useState<StrategyDefinition>(initialStrategy);
+  const [exitKind, setExitKind] = useState<ExitKind>("intraday");
+  const [presetHours, setPresetHours] = useState(7);
+  const [expiryNumber, setExpiryNumber] = useState<1 | 2>(1);
+  const [customExitAt, setCustomExitAt] = useState(() => toIso(localDateTime(8)));
+  const [exitPreview, setExitPreview] = useState<ExitSchedule | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const [expandedLeg, setExpandedLeg] = useState<string | null>(strategy.legs[0]?.id ?? null);
   const [showIssues, setShowIssues] = useState(false);
   const [scheduling, setScheduling] = useState(false);
@@ -410,6 +421,13 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
   const importInput = useRef<HTMLInputElement>(null);
 
   const [scheduled, setScheduled] = useState(false);
+
+  const exitChoice: ExitChoice = exitKind === "specific_time"
+    ? { kind: "specific_time", exit_at: customExitAt }
+    : exitKind === "expiry"
+      ? { kind: "expiry", expiry_number: expiryNumber }
+      : { kind: exitKind, hours: presetHours };
+  useEffect(() => setExitPreview(null), [strategy.entry.entryAt, exitKind, presetHours, expiryNumber, customExitAt, strategy.legs, strategy.exitMinutesBeforeExpiry]);
 
   const issues = useMemo(() => validate(strategy), [strategy]);
   const invalidFields = useMemo(
@@ -758,6 +776,32 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
     }
   }
 
+  async function previewExitTime(): Promise<{ saved: SavedStrategy; schedule: ExitSchedule } | null> {
+    setPreviewing(true);
+    setError("");
+    try {
+      const saved = activeSaved && fingerprint(activeSaved.definition) === fingerprint(strategy)
+        ? activeSaved
+        : await persist(strategy, activeSavedId, false);
+      if (!saved) return null;
+      const response = await requestJson<{ result: { schedule: ExitSchedule } }>("/api/strategies/exit-preview", {
+        method: "POST",
+        body: JSON.stringify({
+          savedStrategyId: saved.id, expectedVersion: saved.version,
+          entryAt: strategy.entry.entryAt, exitChoice
+        })
+      });
+      setExitPreview(response.result.schedule);
+      return { saved, schedule: response.result.schedule };
+    } catch (previewError) {
+      setExitPreview(null);
+      setError(errorMessage(previewError));
+      return null;
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   async function scheduleStrategy() {
     if (!liveEnabled) {
       setError("Live trading is currently unavailable. Please try again shortly.");
@@ -780,14 +824,16 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
     setError("");
     setShowIssues(false);
     try {
-      const saved = activeSaved?.isDefault
-        ? { ...activeSaved, definition: strategy }
-        : await persist(strategy, activeSavedId, false);
-      if (!saved) return;
-      const liveStrategy = { ...saved.definition, acknowledgement: true as const };
-      await requestJson<{ result: { id: string } }>("/api/strategies", {
+      const preview = await previewExitTime();
+      if (!preview) return;
+      const { saved, schedule } = preview;
+      await requestJson<{ result: { id: string } }>("/api/strategies/schedule", {
         method: "POST",
-        body: JSON.stringify({ strategy: liveStrategy, status: "scheduled", savedStrategyId: saved.id })
+        body: JSON.stringify({
+          savedStrategyId: saved.id, expectedVersion: saved.version,
+          entryAt: strategy.entry.entryAt, exitChoice,
+          expectedExitUtc: schedule.exitUtc, expectedContractExpiryUtc: schedule.contractExpiryUtc
+        })
       });
       // An immutable run now exists on the server. That is worth confirming on
       // the control that created it, not only in a toast that will time out.
@@ -795,7 +841,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
       window.setTimeout(() => setScheduled(false), 2_600);
       onNotice({
         tone: "ok",
-        text: `Scheduled for ${formatDateTime(liveStrategy.entry.entryAt)}. No order is placed before that time.`
+        text: `Scheduled for ${formatDateTime(schedule.entryIst)}. No order is placed before that time.`
       });
     } catch (scheduleError) {
       setError(errorMessage(scheduleError));
@@ -947,19 +993,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                 })}
                 options={[{ value: "cash", label: "Cash" }, { value: "futures", label: "Futures" }]}
               />
-              <Segmented
-                label="Strategy type"
-                value={strategy.entry.strategyType}
-                onChange={value => setStrategy({
-                  ...strategy,
-                  entry: { ...strategy.entry, strategyType: value as "intraday" | "btst" | "positional" }
-                })}
-                options={[
-                  { value: "intraday", label: "Intraday" },
-                  { value: "btst", label: "BTST, overnight" },
-                  { value: "positional", label: "Positional" }
-                ]}
-              />
               <Toggle
                 label="Available to automation"
 
@@ -972,26 +1005,34 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
           <Panel>
             <PanelHeader icon={<CalendarClock />} title="Schedule" meta="Local time on this machine" />
             <div className="grid-2">
-              <Segmented
-                label="Holding mode"
-                value={strategy.holdingMode}
-                onChange={value => setStrategy({ ...strategy, holdingMode: value as StrategyDefinition["holdingMode"] })}
-                options={[
-                  { value: "intraday", label: "Intraday" },
-                  { value: "hold_to_expiry", label: "Hold to expiry" }
-                ]}
-              />
               <Select
-                label="Expiry policy"
-                value={strategy.expiryPolicy}
-                onChange={value => setStrategy({ ...strategy, expiryPolicy: value as StrategyDefinition["expiryPolicy"] })}
+                label="Exit choice"
+                value={exitKind}
+                onChange={value => {
+                  const kind = value as ExitKind;
+                  setExitKind(kind);
+                  if (kind in HOURS) setPresetHours(HOURS[kind as keyof typeof HOURS][0]);
+                }}
                 options={[
-                  { value: "same_day", label: "Same day" },
-                  { value: "next_day", label: "Next listed day" },
-                  { value: "7_day", label: "Closest listed expiry after 7 days" },
-                  { value: "30_day", label: "Closest listed expiry after 30 days" }
+                  { value: "intraday", label: "Intraday session" },
+                  { value: "overnight", label: "Overnight" },
+                  { value: "positional", label: "Positional" },
+                  { value: "specific_time", label: "Specific exit time" },
+                  { value: "expiry", label: "Contract expiry" }
                 ]}
               />
+              {exitKind in HOURS && <Select
+                label="Holding duration"
+                value={String(presetHours)}
+                onChange={value => setPresetHours(Number(value))}
+                options={HOURS[exitKind as keyof typeof HOURS].map(hours => ({ value: String(hours), label: `${hours} hours` }))}
+              />}
+              {exitKind === "expiry" && <Select
+                label="Listed expiry"
+                value={String(expiryNumber)}
+                onChange={value => setExpiryNumber(Number(value) as 1 | 2)}
+                options={[{ value: "1", label: "First eligible" }, { value: "2", label: "Second eligible" }]}
+              />}
               <Field label="Entry time" invalid={invalidFields.has("entryAt")}>
                 <input
                   type="datetime-local"
@@ -999,25 +1040,29 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                   onChange={event => setStrategy({ ...strategy, entry: { ...strategy.entry, entryAt: toIso(event.target.value) } })}
                 />
               </Field>
-              <Field label={strategy.holdingMode === "intraday" ? "Exit time" : "Fallback exit time"} invalid={invalidFields.has("exitAt")}>
+              {exitKind === "specific_time" && <Field label="Specific exit time">
                 <input
                   type="datetime-local"
-                  value={toLocalInput(strategy.entry.exitAt)}
-                  onChange={event => setStrategy({ ...strategy, entry: { ...strategy.entry, exitAt: toIso(event.target.value) } })}
+                  value={toLocalInput(customExitAt)}
+                  onChange={event => setCustomExitAt(toIso(event.target.value))}
                 />
-              </Field>
-              {strategy.holdingMode === "hold_to_expiry" && (
-                <NumberField
-                  label="Exit minutes before expiry"
-                  min={1}
-                  max={1440}
-                  value={strategy.exitMinutesBeforeExpiry}
-                  invalid={invalidFields.has("exitMinutesBeforeExpiry")}
-                  onChange={exitMinutesBeforeExpiry => setStrategy({ ...strategy, exitMinutesBeforeExpiry })}
-                />
-              )}
+              </Field>}
+              <NumberField
+                label="Exit minutes before expiry"
+                min={1}
+                max={1440}
+                value={strategy.exitMinutesBeforeExpiry}
+                invalid={invalidFields.has("exitMinutesBeforeExpiry")}
+                onChange={exitMinutesBeforeExpiry => setStrategy({ ...strategy, exitMinutesBeforeExpiry })}
+              />
             </div>
-            <ScheduleTimeline entryAt={strategy.entry.entryAt} exitAt={strategy.entry.exitAt} />
+            <button type="button" className="button secondary" disabled={previewing || !backendOnline} onClick={() => void previewExitTime()}>
+              {previewing ? "Calculating…" : "Calculate exit time"}
+            </button>
+            {exitPreview && <>
+              <p className="fine-print">Exit {formatDateTime(exitPreview.exitIst)} · {exitPreview.durationMinutes / 60} hours · contract expires {formatDateTime(exitPreview.contractExpiryIst)} · {exitPreview.sessionCrossings} session boundaries crossed.</p>
+              <ScheduleTimeline entryAt={exitPreview.entryIst} exitAt={exitPreview.exitIst} />
+            </>}
           </Panel>
 
           <Panel>
@@ -1052,11 +1097,6 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                 label="Equal lots on every leg"
                 checked={strategy.equalLotsRequired}
                 onChange={equalLotsRequired => setStrategy({ ...strategy, equalLotsRequired })}
-              />
-              <Toggle
-                label="Require one expiry"
-                checked={strategy.sameExpiryRequired}
-                onChange={sameExpiryRequired => setStrategy({ ...strategy, sameExpiryRequired })}
               />
             </div>
           </Panel>
@@ -1211,7 +1251,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
               <div><dt>Instrument</dt><dd>{strategy.instrument.index} · {strategy.instrument.underlyingFrom}</dd></div>
               <div><dt>Legs</dt><dd>{strategy.legs.length} ({structure.shortLots} short / {structure.longLots} long lots)</dd></div>
               <div><dt>Entry</dt><dd>{formatDateTime(strategy.entry.entryAt)} <small>{relativeTime(strategy.entry.entryAt)}</small></dd></div>
-              <div><dt>Hold</dt><dd>{formatDuration(strategy.entry.entryAt, strategy.entry.exitAt)}</dd></div>
+              <div><dt>Hold</dt><dd>{exitPreview ? `${exitPreview.durationMinutes / 60} hours, ending ${formatDateTime(exitPreview.exitIst)}` : "Calculate exit time before scheduling"}</dd></div>
               <div><dt>Lots</dt><dd>{strategy.lotsMode === "auto" ? "Automatic from account capital policy" : "Manual"}</dd></div>
               <div>
                 <dt>Risk</dt>
@@ -1623,7 +1663,7 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
           <strong>{leg.optionType === "call" ? "Call" : "Put"}</strong>
           <span className="leg-fact">{leg.lots} {leg.lots === 1 ? "lot" : "lots"}</span>
           <span className="leg-fact">{strikeLabel}</span>
-          <span className="leg-fact">{formatExpiry(leg.expiry)}</span>
+          <span className="leg-fact">Expiry selected at scheduling</span>
           <span className="leg-fact">{leg.orderType === "limit_order" ? `Limit ${leg.limitPrice ?? ""}` : "Market"}</span>
           {/* Flipped vertically rather than rotated: it passes through the same
               flat line at the midpoint and animates in every browser. */}
@@ -1666,14 +1706,6 @@ function LegRow({ leg, index, total, riskMode, open, invalidFields, onToggle, on
                 onChange={value => onUpdate({ optionType: value as "call" | "put" })}
                 options={[{ value: "call", label: "Call" }, { value: "put", label: "Put" }]}
               />
-              <Field label="Expiry" invalid={invalid("expiry")}>
-                <input
-                  type="date"
-                  min={new Date().toISOString().slice(0, 10)}
-                  value={leg.expiry}
-                  onChange={event => onUpdate({ expiry: event.target.value })}
-                />
-              </Field>
               <Select
                 label="Strike selection"
                 value={leg.strikeMode}

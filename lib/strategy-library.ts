@@ -3,8 +3,23 @@ import type { StrategyDefinition } from "@/lib/strategy-types";
 import type { SavedStrategyRow } from "@/lib/supabase/types";
 import { requestJson } from "@/lib/api";
 
-/** Identity of a definition independent of its stored revision number, so revisions do not trigger autosave. */
-export const definitionFingerprint = (strategy: StrategyDefinition) => JSON.stringify({ ...strategy, version: 0 });
+/** Saved templates contain trading rules, while each run owns its own schedule and contract expiry. */
+export const templateDefinition = (strategy: StrategyDefinition) => {
+  const template: Record<string, unknown> = {
+    ...strategy, schemaVersion: 3, sameExpiryRequired: true,
+    legs: strategy.legs.map(leg => {
+      const shape: Record<string, unknown> = { ...leg };
+      delete shape.expiry;
+      return shape;
+    })
+  };
+  delete template.entry;
+  delete template.holdingMode;
+  delete template.expiryPolicy;
+  return template;
+};
+
+export const definitionFingerprint = (strategy: StrategyDefinition) => JSON.stringify({ ...templateDefinition(strategy), version: 0 });
 
 /** The signed-in user's saved strategies plus the shared templates, from the trading backend. */
 export async function readStrategyLibrary(): Promise<SavedStrategyRow[]> {
@@ -16,7 +31,7 @@ export async function saveLibraryStrategy(definition: StrategyDefinition, existi
   const editable = existing && (!existing.isDefault || isOwner) ? existing : undefined;
   const id = editable?.id ?? crypto.randomUUID();
   const response = await requestJson<{ result: SavedStrategyRow }>(`/api/library/${id}`, {
-    method: "PUT", body: JSON.stringify({ id, name: definition.name, definitionJson: JSON.stringify(definition),
+    method: "PUT", body: JSON.stringify({ id, name: definition.name, definitionJson: JSON.stringify(templateDefinition(definition)),
       enabled: definition.enabledForAi, expectedVersion: editable?.version ?? null }),
   });
   return response.result;
