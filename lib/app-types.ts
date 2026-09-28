@@ -379,6 +379,12 @@ export type OwnerUserDetail = {
   account: OwnerAccount;
   automation: { enabled: boolean };
   capitalPolicy: { allocationMode: string | null; capitalAmount: string | null };
+  /** Per-strategy budget under the saved policy. Null when the live wallet could not be read. */
+  budgetPreview: {
+    budgetPerStrategy: string;
+    nextStrategyCanUse: string;
+    maximumConcurrentStrategies: number;
+  } | null;
   wallet: LiveWallet;
   capitalHistory: CapitalObservation[];
   performance: { ownerScope: PnlSummary; userScope: PnlSummary };

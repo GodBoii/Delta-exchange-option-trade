@@ -5,28 +5,14 @@ import { CircleDollarSign, RefreshCw, Save } from "@/app/components/icons";
 import type { CapitalAllocationMode, CapitalOverview } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
+import { CAPITAL_MODE_OPTIONS, isCapitalAllocationMode } from "@/lib/capital";
 import { useCurrency } from "@/app/components/currency";
 import {
   IconSwap, InlineMessage, Meter, NumberField, Panel, PanelHeader, Select, Shimmer,
   type NoticeHandler, type SelectOption
 } from "@/app/components/ui";
 
-/**
- * Every rule is one sentence about what it does to the balance, so the choice
- * can be made from the list itself instead of from the paragraph that used to
- * sit underneath the form explaining all five.
- */
-const MODE_OPTIONS: SelectOption[] = [
-  { value: "full_balance", label: "100% per strategy", hint: "One live strategy at a time" },
-  { value: "half_balance", label: "50% per strategy", hint: "Up to two live strategies" },
-  { value: "one_third_balance", label: "33.33% per strategy", hint: "Up to three live strategies" },
-  { value: "one_quarter_balance", label: "25% per strategy", hint: "Up to four live strategies" },
-  { value: "fixed_amount", label: "Fixed USD amount", hint: "A flat budget you set below" }
-];
-
-function isCapitalAllocationMode(value: string): value is CapitalAllocationMode {
-  return MODE_OPTIONS.some(option => option.value === value);
-}
+const MODE_OPTIONS: SelectOption[] = CAPITAL_MODE_OPTIONS.map(option => ({ ...option }));
 
 /**
  * Capital policy.
