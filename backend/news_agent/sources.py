@@ -68,6 +68,14 @@ DISCUSSION_SITES = {
     "facebook": "facebook.com",
     "binance_square": "binance.com/en/square",
 }
+EXCHANGE_SITES = {
+    "binance": "binance.com/en/support/announcement",
+    "coinbase": "coinbase.com/blog",
+    "kraken": "blog.kraken.com",
+    "okx": "okx.com/help",
+    "bybit": "announcements.bybit.com",
+    "delta": "delta.exchange/blog",
+}
 
 
 def _text(value: Any, limit: int = 500) -> str:
@@ -311,11 +319,49 @@ class PublicSourceTools(Toolkit):
     def __init__(self, settings: NewsAgentSettings, budget: ResearchBudget, **kwargs: Any) -> None:
         self.settings = settings
         self.budget = budget
-        self.search = WebSearchTools(budget)
+        self.search = WebSearchTools(budget, timelimit="w")
         super().__init__(
             name="public_source_tools",
-            tools=[self.curate_public_sources, self.search_public_discussion],
+            tools=[self.curate_public_sources, self.search_public_discussion, self.search_exchange_announcements],
             **kwargs,
+        )
+
+    async def search_exchange_announcements(self, topic: str, exchanges: list[str]) -> str:
+        """Find public exchange announcements for later reading at their original URLs."""
+        try:
+            self.budget.consume("search_exchange_announcements")
+        except (TimeoutError, ValueError) as error:
+            return json.dumps({"announcements": [], "errors": [{"exchange": "search", "error": str(error)}]})
+        selected = list(dict.fromkeys(name.lower() for name in exchanges if name.lower() in EXCHANGE_SITES))[:4]
+        if not selected:
+            selected = ["binance", "coinbase", "kraken", "okx"]
+
+        async def discover(exchange: str) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+            query = f"site:{EXCHANGE_SITES[exchange]} {topic[:120]}"
+            result = json.loads(await self.search.web_search(query, max_results=5))
+            if not isinstance(result, list):
+                return [], {"exchange": exchange, "error": str(result.get("error") or "Search unavailable")}
+            return [
+                {
+                    "exchange": exchange,
+                    "title": row.get("title"),
+                    "url": row.get("url"),
+                    "excerpt": row.get("body"),
+                    "search_date": row.get("date"),
+                    "access": "search_snippet",
+                }
+                for row in result
+                if isinstance(row, dict) and row.get("url")
+            ], None
+
+        outcomes = await asyncio.gather(*(discover(exchange) for exchange in selected))
+        return json.dumps(
+            {
+                "topic": topic[:120],
+                "announcements": [item for items, _ in outcomes for item in items],
+                "errors": [error for _, error in outcomes if error],
+            },
+            ensure_ascii=False,
         )
 
     async def search_public_discussion(self, topic: str, platforms: list[str]) -> str:

@@ -1,22 +1,150 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from typing import Any
 
 from agno.db.base import BaseDb
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 
-from .agent import WebSearchTools, create_news_agent
+from .agent import create_news_agent
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
-from .tools import NewsResearchTools
 
 logger = logging.getLogger(__name__)
+BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
+
+
+def _tool_field(execution: Any, *names: str) -> Any:
+    for name in names:
+        value = execution.get(name) if isinstance(execution, dict) else getattr(execution, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _tool_names(run: RunOutput) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(name) for execution in run.tools or [] if (name := _tool_field(execution, "tool_name", "name"))
+        )
+    )
+
+
+def _decode_result(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return value[:240]
+
+
+def _trace_result(name: str, value: Any) -> dict[str, Any]:
+    result = _decode_result(value)
+    if isinstance(result, list):
+        return {
+            "count": len(result),
+            "items": [
+                {
+                    key: (row.get(key)[:200] if key == "body" and isinstance(row.get(key), str) else row.get(key))
+                    for key in ("title", "url", "date", "source", "body")
+                    if row.get(key) is not None
+                }
+                for row in result[:10]
+                if isinstance(row, dict)
+            ],
+        }
+    if not isinstance(result, dict):
+        return {"text": str(result)[:240]}
+    if name == "curate_public_sources":
+        return {
+            "source_count": result.get("source_count"),
+            "count": len(result.get("sources") or []),
+            "items": [
+                {
+                    key: (item.get(key)[:200] if key == "excerpt" and isinstance(item.get(key), str) else item.get(key))
+                    for key in ("source", "title", "url", "published_at", "excerpt")
+                }
+                for item in (result.get("sources") or [])[:40]
+            ],
+            "errors": result.get("errors") or [],
+        }
+    if name == "search_public_discussion":
+        return {
+            "count": len(result.get("posts") or []),
+            "items": [
+                {key: item.get(key) for key in ("platform", "title", "url", "published_at", "access")}
+                for item in (result.get("posts") or [])[:25]
+            ],
+            "errors": result.get("errors") or [],
+        }
+    if name == "search_exchange_announcements":
+        return {
+            "count": len(result.get("announcements") or []),
+            "items": [
+                {key: item.get(key) for key in ("exchange", "title", "url", "search_date", "access")}
+                for item in (result.get("announcements") or [])[:20]
+            ],
+            "errors": result.get("errors") or [],
+        }
+    if name == "build_news_dossier":
+        items = []
+        for item in (result.get("items") or [])[:10]:
+            article = item.get("article") or {}
+            items.append(
+                {
+                    "ok": item.get("ok"),
+                    "url": article.get("final_url") or item.get("url"),
+                    "title": article.get("title"),
+                    "published_at": article.get("published_at"),
+                    "text_chars": len(article.get("text") or ""),
+                    "excerpt": (article.get("text") or "")[:200],
+                    "error": item.get("error"),
+                }
+            )
+        return {
+            "requested": result.get("requested"),
+            "successful": result.get("successful"),
+            "items": items,
+            "error": result.get("error"),
+        }
+    if name == "read_news_article":
+        article = result.get("article") or {}
+        return {
+            "ok": result.get("ok"),
+            "url": article.get("final_url") or result.get("url"),
+            "title": article.get("title"),
+            "published_at": article.get("published_at"),
+            "text_chars": len(article.get("text") or ""),
+            "excerpt": (article.get("text") or "")[:200],
+            "error": result.get("error"),
+        }
+    return {"error": result.get("error"), "count": len(result.get("results") or [])}
+
+
+def research_trace(run: RunOutput) -> list[dict[str, Any]]:
+    """Persist bounded research outcomes without copying full article bodies."""
+    trace = []
+    for execution in run.tools or []:
+        name = _tool_field(execution, "tool_name", "name")
+        if not name:
+            continue
+        args = _tool_field(execution, "tool_args", "arguments")
+        metrics = _tool_field(execution, "metrics")
+        trace.append(
+            {
+                "name": str(name),
+                "args": args if isinstance(args, dict) else str(args)[:500],
+                "result": _trace_result(str(name), _tool_field(execution, "result", "tool_result")),
+                "duration_seconds": getattr(metrics, "duration", None),
+            }
+        )
+    return trace
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +153,6 @@ class NewsPipelineResult:
     model_id: str
     session_id: str
     user_id: str
-    bootstrap_tools: tuple[str, ...] = ()
 
     @property
     def markdown(self) -> str | None:
@@ -34,91 +161,11 @@ class NewsPipelineResult:
 
     @property
     def research_tools(self) -> list[str]:
-        return list(dict.fromkeys([*self.bootstrap_tools, *_tool_names(self.report_response)]))
+        return _tool_names(self.report_response)
 
-
-def _tool_names(run: RunOutput) -> list[str]:
-    names: list[str] = []
-    for execution in run.tools or []:
-        if isinstance(execution, dict):
-            name = execution.get("tool_name") or execution.get("name")
-            function = execution.get("function")
-            if not name and isinstance(function, dict):
-                name = function.get("name")
-        else:
-            name = getattr(execution, "tool_name", None) or getattr(execution, "name", None)
-        if name:
-            names.append(str(name))
-    return names
-
-
-BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
-
-
-async def collect_live_news_context(
-    prompt: str, settings: NewsAgentSettings, focus_query: str = BTC_FOCUS_QUERY
-) -> tuple[str, tuple[str, ...]]:
-    """Collect bounded, diverse evidence once, before one model synthesis."""
-    budget = ResearchBudget()
-    search = WebSearchTools(budget)
-    articles = NewsResearchTools(settings, budget)
-    queries = [
-        f"{prompt[:180]} latest news",
-        focus_query,
-        "Federal Reserve inflation rates dollar latest news",
-    ]
-    results = await asyncio.gather(*(search.search_news(query) for query in queries))
-    rows = []
-    for result in results:
-        decoded = json.loads(result)
-        if isinstance(decoded, list):
-            rows.append(decoded)
-    tools = ["search_news"]
-    if not any(rows):
-        fallback = json.loads(await search.web_search(queries[0]))
-        rows = [fallback] if isinstance(fallback, list) else []
-        tools.append("web_search")
-    # Round robin across subjects so one large result set cannot consume every article slot.
-    candidates = []
-    seen: set[str] = set()
-    domains: dict[str, int] = {}
-    for index in range(10):
-        for group in rows:
-            if index >= len(group):
-                continue
-            row = group[index]
-            url = row["url"]
-            domain = urlsplit(url).hostname or ""
-            if url in seen or domains.get(domain, 0) >= 2:
-                continue
-            seen.add(url)
-            domains[domain] = domains.get(domain, 0) + 1
-            candidates.append(row)
-    candidates = candidates[:10]
-    dossier = json.loads(await articles.build_news_dossier([row["url"] for row in candidates]))
-    tools.append("build_news_dossier")
-    context = json.dumps(
-        {
-            "search_results": candidates,
-            "article_dossier": dossier,
-            "coverage": "Unavailable pages and copied reporting are not independent verification.",
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    logger.info(
-        "news.evidence articles=%d context_chars=%d calls=%s",
-        dossier.get("successful", 0),
-        len(context),
-        dict(budget.calls),
-    )
-    return context, tuple(tools)
-
-
-def _collect_live_news_context(
-    prompt: str, settings: NewsAgentSettings, focus_query: str = BTC_FOCUS_QUERY
-) -> tuple[str, tuple[str, ...]]:
-    return asyncio.run(collect_live_news_context(prompt, settings, focus_query))
+    @property
+    def research_trace(self) -> list[dict[str, Any]]:
+        return research_trace(self.report_response)
 
 
 def run_news_pipeline(
@@ -132,80 +179,55 @@ def run_news_pipeline(
     asset: str = "BTC",
     focus_query: str = BTC_FOCUS_QUERY,
 ) -> NewsPipelineResult:
-    """Collect current evidence, then let the model synthesize a natural Markdown analysis."""
+    """Let the analyst choose source collection, web searches, and article reads."""
     settings = settings or NewsAgentSettings.load()
     effective_session_id = session_id or settings.default_session_id
     effective_user_id = user_id or settings.default_user_id
-
     owns_db = db is None
     session_db = db or create_session_db(settings)
     started_at = time.perf_counter()
-    logger.info(
-        "News pipeline started model=%s session_id=%s user_id=%s prompt_chars=%d debug_mode=%s",
-        settings.model_id,
-        effective_session_id,
-        effective_user_id,
-        len(prompt),
-        debug_mode,
-    )
-    logger.debug("News pipeline prompt=%r", prompt)
     try:
-        live_news_context, bootstrap_tools = _collect_live_news_context(prompt, settings, focus_query)
-        research_prompt = (
-            f"{prompt}\n\n"
-            "Live news-search evidence has already been collected below. Analyze it now; do not return an "
-            "intermediate promise to search. Use the supplied URLs as source candidates. If evidence is "
-            "insufficient, state that explicitly. Respond naturally in Markdown and return the completed "
-            "customer-facing report using the required headings from your instructions.\n\n"
-            f"<live_news_search_evidence>\n{live_news_context}\n</live_news_search_evidence>"
-        )
-        logger.debug("News pipeline research context chars=%d", len(live_news_context))
         analyst = create_news_agent(
             settings=settings,
             db=session_db,
             debug_mode=debug_mode,
-            include_research_tools=False,
             asset=asset,
+            research_budget=ResearchBudget(),
         )
-        report_response = analyst.run(research_prompt, session_id=effective_session_id, user_id=effective_user_id)
-
+        research_prompt = (
+            f"{prompt}\n\nFocus query: {focus_query}. Gather current material from public sources and "
+            "search the web yourself. Investigate related global developments, scheduled meetings, "
+            "crypto announcements, and public discussion. Open useful source pages before citing them. "
+            "Continue with available evidence when a source fails; explain material gaps. Return the completed "
+            "Markdown report using the required headings."
+        )
+        report_response = analyst.run(
+            research_prompt,
+            session_id=effective_session_id,
+            user_id=effective_user_id,
+        )
         if (
-            not isinstance(report_response.content, str)
+            report_response.status in {RunStatus.error, RunStatus.cancelled}
+            or not isinstance(report_response.content, str)
             or not report_response.content.strip()
-            or report_response.content.strip().casefold() == "provider returned error"
+            or report_response.content.strip().casefold()
+            in {"provider returned error", "the operation was aborted", "request timed out", "request timed out."}
         ):
-            raise RuntimeError("News synthesis returned no report within its output budget")
-
-        metrics = report_response.metrics
+            raise RuntimeError("News synthesis returned no report")
         logger.info(
-            "news.model input_tokens=%s output_tokens=%s reasoning_tokens=%s",
-            getattr(metrics, "input_tokens", None),
-            getattr(metrics, "output_tokens", None),
-            getattr(metrics, "reasoning_tokens", None),
-        )
-
-        logger.info(
-            "News pipeline completed run_id=%s elapsed_ms=%d markdown=%s tools=%s",
+            "News pipeline completed run_id=%s elapsed_ms=%d tools=%s",
             report_response.run_id,
-            round((time.perf_counter() - started_at) * 1_000),
-            bool(isinstance(report_response.content, str) and report_response.content.strip()),
+            round((time.perf_counter() - started_at) * 1000),
             _tool_names(report_response),
         )
-
         return NewsPipelineResult(
             report_response=report_response,
             model_id=analyst.model.id,
             session_id=effective_session_id,
             user_id=effective_user_id,
-            bootstrap_tools=bootstrap_tools,
         )
     except Exception:
-        logger.exception(
-            "News pipeline failed elapsed_ms=%d session_id=%s user_id=%s",
-            round((time.perf_counter() - started_at) * 1_000),
-            effective_session_id,
-            effective_user_id,
-        )
+        logger.exception("News pipeline failed session_id=%s user_id=%s", effective_session_id, effective_user_id)
         raise
     finally:
         if owns_db:

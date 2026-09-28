@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 class WebSearchTools(AgnoWebSearchTools):
     """Native keyless Agno search with bounded results, calls, and elapsed time."""
 
-    def __init__(self, budget: ResearchBudget | None = None) -> None:
+    def __init__(self, budget: ResearchBudget | None = None, *, timelimit: str | None = None) -> None:
         self.budget = budget or ResearchBudget()
         self.cache: dict[tuple[str, str, int], str] = {}
-        super().__init__(timeout=10, fixed_max_results=10, timelimit=None)
+        super().__init__(timeout=10, fixed_max_results=10, timelimit=timelimit)
 
     async def _search(self, name: str, query: str, max_results: int | None) -> str:
         started = time.perf_counter()

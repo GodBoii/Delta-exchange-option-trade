@@ -12,12 +12,13 @@ from pathlib import Path
 
 import httpx
 
+from automation_agent.assets import asset_profile
 from news_agent.config import NewsAgentSettings
 from news_agent.search import WebSearchTools
 from news_agent.tools import canonicalize_url, deduplicate_articles, fetch_public_document, parse_article_html
 
 
-async def audit(log: Path, output: Path) -> None:
+async def audit(log: Path, output: Path, asset: str = "BTC") -> None:
     urls = set()
     if log.exists():
         for match in re.finditer(
@@ -26,8 +27,9 @@ async def audit(log: Path, output: Path) -> None:
         ):
             urls.add(canonicalize_url(match[1]))
     search = WebSearchTools()
+    search_query = asset_profile(asset).news_focus_query
     started = time.perf_counter()
-    results = json.loads(await search.search_news("Bitcoin BTC latest news"))
+    results = json.loads(await search.search_news(search_query))
     search_ms = round((time.perf_counter() - started) * 1000)
     if isinstance(results, list):
         urls.update(row["url"] for row in results)
@@ -78,9 +80,14 @@ async def audit(log: Path, output: Path) -> None:
     for item in measurements:
         article = item.pop("article", {})
         item["title"] = article.get("title")
+        item["published_at"] = article.get("published_at")
+        item["excerpt"] = (article.get("text") or "")[:200]
         item["text_chars"] = len(article.get("text") or "")
     report = {
         "measured_at": datetime.now(UTC).isoformat(),
+        "asset": asset,
+        "search_query": search_query,
+        "search_results": results,
         "search_ms": search_ms,
         "url_count": len(urls),
         "duplicate_groups": duplicates,
@@ -103,5 +110,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--asset", choices=("BTC", "ETH"), default="BTC")
     args = parser.parse_args()
-    asyncio.run(audit(args.log, args.output))
+    asyncio.run(audit(args.log, args.output, args.asset))

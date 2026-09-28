@@ -102,3 +102,28 @@ async def test_public_discussion_search_labels_snippets(monkeypatch) -> None:
     assert queries == ["site:reddit.com Ethereum update"]
     assert result["posts"][0]["access"] == "search_snippet"
     assert result["posts"][0]["kind"] == "discussion"
+
+
+@pytest.mark.asyncio
+async def test_exchange_search_keeps_original_announcement_url(monkeypatch) -> None:
+    tools = PublicSourceTools(object(), ResearchBudget())
+    queries = []
+
+    async def search(query: str, max_results: int = 5) -> str:
+        queries.append(query)
+        return json.dumps(
+            [
+                {
+                    "title": "Binance network maintenance",
+                    "url": "https://www.binance.com/en/support/announcement/detail/example",
+                    "body": "Exchange notice",
+                    "date": "2026-09-28",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(tools.search, "web_search", search)
+    result = json.loads(await tools.search_exchange_announcements("Ethereum", ["binance"]))
+    assert queries == ["site:binance.com/en/support/announcement Ethereum"]
+    assert result["announcements"][0]["access"] == "search_snippet"
+    assert result["announcements"][0]["url"].endswith("/detail/example")

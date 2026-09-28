@@ -30,9 +30,11 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     assert agent.store_events is True
     assert agent.send_media_to_model is True
     assert any("Inspect images attached to the run" in instruction for instruction in agent.instructions)
-    assert [type(toolkit).__name__ for toolkit in agent.tools] == ["WebSearchTools", "NewsResearchTools"]
-    assert agent.tools[0].timeout == 10
-    assert agent.tools[0].fixed_max_results == 10
+    assert [type(toolkit).__name__ for toolkit in agent.tools] == [
+        "PublicSourceTools", "WebSearchTools", "NewsResearchTools",
+    ]
+    assert agent.tools[1].timeout == 10
+    assert agent.tools[1].fixed_max_results == 10
 
     tool_names = {name for toolkit in agent.tools for name in toolkit.async_functions}
     assert tool_names == {
@@ -40,6 +42,9 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
         "read_news_article",
         "search_news",
         "web_search",
+        "curate_public_sources",
+        "search_public_discussion",
+        "search_exchange_announcements",
     }
     assert not any(token in name for name in tool_names for token in ("trade", "order", "delta", "binance"))
 

@@ -313,6 +313,7 @@ def run_automation_team(
                 {
                     **_response_summary(news_result.report_response),
                     "researchTools": news_result.research_tools,
+                    "researchTrace": news_result.research_trace,
                 }
             ],
             tool_calls=[_tool_summary(item) for item in response.tools or []],

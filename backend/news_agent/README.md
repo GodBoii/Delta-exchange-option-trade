@@ -1,104 +1,34 @@
-# Agno news intelligence prototype
+# News research agent
 
-This is an isolated, read-only prototype. It is not imported by the Delta FastAPI application or the Binance collector and has no trading tools.
+The BTC and ETH automation runs each call `run_news_pipeline` for a news report. The news agent has no order or account tools. It chooses its own searches and article reads, then writes a Markdown report for the automation agent to consider.
 
-The runtime uses deterministic evidence collection followed by one Agno synthesis agent. Agno handles the native Markdown response, session persistence, and PostgreSQL table creation.
+## Research flow
 
-## Capabilities
+1. `curate_public_sources` reads public official feeds, crypto publisher feeds, exchange and project announcements, economic calendars, GDELT discovery, and Polymarket event pages. It returns dated source cards and an error for each unavailable source. A missing source does not stop research.
+2. `search_news` and `web_search` let the agent form follow-up queries. `search_public_discussion` makes site-restricted searches across Reddit, X, Threads, Facebook, and Binance Square. `search_exchange_announcements` finds public notices from Binance, Coinbase, Kraken, OKX, Bybit, and Delta Exchange when announcement listings are blocked. Both tools label search snippets as leads for further reading.
+3. `read_news_article` and `build_news_dossier` fetch selected original pages, extract readable text and metadata, and retain source URLs. Failed pages return individual errors so the agent can look elsewhere.
+4. The agent separates reported events, scheduled meetings, market expectations, and public discussion. It cites material claims and states what it could not verify.
 
-- General web and news search through Agno `WebSearchTools` and DDGS.
-- BeautifulSoup article extraction with title, publisher, dates, canonical URL, readable text, and image metadata.
-- Multi-article evidence dossiers for corroboration and contradiction checks.
-- News image search and article image extraction with source-page provenance.
-- Transparent domain classification for official and established sources.
-- Native model-authored Markdown output with clickable source links; no JSON or structured-output schema is forced.
-- Persistent Agno sessions in Supabase PostgreSQL through `PostgresDb`.
-- SSRF protections that block localhost, private/reserved addresses, credentials, and nonstandard ports.
+Research has a four-minute tool budget per run. Each search or article tool has a ten-call allowance; article downloads, redirects, and body size are also bounded. These are resource limits, not rules about whether the agent may analyze the evidence it found. The source allowlist is empty by default, so the fetcher accepts public HTTP(S) sites while blocking local, private, and reserved targets.
 
-The news agent, automation team leader, and activation recheck agent all use `xiaomi/mimo-v2.6-pro` through OpenRouter. Agno sends images attached to a run to the model, so the news member can inspect the server-rendered BTC chart images forwarded by the automation team. Article research tools still return publisher image URLs and metadata without downloading arbitrary image files into the standalone news pipeline.
+The automation report stores the news Markdown, tool names, and `researchTrace` in `ai.analysis_reports.member_responses`. The trace records queries, source URLs, counts, durations, brief excerpts, and failures without copying complete article bodies. Automation and activation behavior is outside this package.
 
-## Install
+## Run and test
 
-From the `backend` directory:
+From `backend`:
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -r requirements-news-agent.txt
-```
-
-Add the OpenRouter key to `backend/.env`:
-
-```text
-OPENROUTER_API_KEY=sk-or-v1-your-key
-```
-
-## Run
-
-```powershell
-.venv\Scripts\python.exe -m news_agent "Analyze today's highest-impact Bitcoin news and explain the volatility channels"
-```
-
-JSON output:
-
-```powershell
-.venv\Scripts\python.exe -m news_agent --json "Analyze recent US trade-policy news relevant to BTC"
-```
-
-Save a Markdown report containing source links and renderable image URLs:
-
-```powershell
-.venv\Scripts\python.exe -m news_agent --save reports\btc-news.md "Analyze the latest Bitcoin ETF and regulation news"
-```
-
-Continue a named research session across separate CLI runs:
-
-```powershell
-.venv\Scripts\python.exe -m news_agent --session-id btc-macro --user-id local-user "Analyze today's BTC macro risks"
-.venv\Scripts\python.exe -m news_agent --session-id btc-macro --user-id local-user "What changed since the previous report?"
-```
-
-Without `--session-id`, the CLI uses `news-research-default`. Session messages, responses, run metadata, and tool calls are written automatically by Agno. `PostgresDb(db_url=...)` creates its tables on first use. JSON output includes the session ID and run ID.
-
-## Test
-
-```powershell
+.venv\Scripts\python.exe -m news_agent "Analyze Bitcoin news and upcoming macro meetings"
 .venv\Scripts\python.exe -m pytest news_agent\tests
 .venv\Scripts\python.exe -m ruff check news_agent
 ```
 
-Tests do not require an OpenRouter key or live internet access.
+The CLI defaults to BTC. Automation passes its BTC or ETH asset profile and corresponding search focus. `--json` includes the report, model, session ID, run ID, and research tool names. `--save` writes the report to a chosen path.
 
-## Configuration
+`backend/.env` needs `OPENROUTER_API_KEY` for model calls and `AI_DATABASE_URL` for persistent standalone sessions. Automation uses an in-memory news session per run. The model default and database settings are in `config.py`.
 
-`backend/.env` supports:
+## Source limitations
 
-```text
-OPENROUTER_API_KEY=
-SUPABASE_DB_URL=postgresql://postgres.project-ref:password@aws-1-region.pooler.supabase.com:5432/postgres
-```
+Public feeds and pages change. Binance's announcement page can return an empty automated response, GDELT may time out, and Forex Factory may rate-limit requests. The agent receives these as source errors and can search for alternate accounts. Social platforms may limit anonymous page access; public web discovery does not provide complete platform coverage. Search snippets, publisher dates, article text, and prediction-market prices have different meanings and should remain labelled in the report.
 
-For the shared Supabase Session pooler, the database username must be
-`postgres.<project-ref>`. Copy the complete URI from **Supabase Dashboard →
-Connect → Session pooler** rather than assembling it by hand, and use the
-intended application project. Percent-encode special characters in the database
-password. The analyzer adds SSL connection settings
-without changing credentials.
-
-Agno v2 stores all runs for a session in one row. This service explicitly uses
-`ai.news_agent_sessions`, so the table location is deterministic. The schema
-and table are created on the first successful run.
-
-Non-secret operational settings live beside the implementation instead of in
-`.env`. The model and session defaults are in `config.py`. The application
-does not impose output-token, completion-token, reasoning-step, tool-call,
-article-time, article-size, extracted-text, redirect-count, or analysis-concurrency
-caps. Up to 15 prior session runs are added to model context. The source
-allowlist is empty by default, which permits public HTTP(S) domains while still
-blocking localhost and non-public network targets.
-
-## Important limitations
-
-Search results and scraped pages can be incomplete, stale, copyrighted, adversarial, or incorrect. Website terms and robots policies remain applicable. The URL validator reduces SSRF risk but does not turn this prototype into a hardened public scraping proxy. Use an explicit domain allowlist before exposing it as a public service.
-
-OpenRouter model availability, context windows, provider routing, pricing, rate limits, and model-side generation limits can change and are not controlled by this application. The model writes normal Markdown without a forced response schema. Do not send secrets or private trading data through this prototype.
-
-The production agent uses Agno `PostgresDb` with Supabase. `SUPABASE_DB_URL` is a server-only PostgreSQL connection URI and must never be exposed through a `NEXT_PUBLIC_` variable. The dedicated `news-analyzer` container is the only service that needs this URI and the OpenRouter key. `GET /health` reports `databaseReady`, `databaseSchema`, and `sessionTable`; it never returns the connection URI or password.
+Do not add undocumented exchange endpoints or bypass site access restrictions. Check a source's current terms and published interface before changing its connector.
