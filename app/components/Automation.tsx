@@ -151,7 +151,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
         {latestDecision?.report ? (
           <div className="automation-run-output">
             <RunCharts charts={latestDecision.charts} />
-            <article className="automation-report news-markdown">
+            <article className="automation-report agent-markdown">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(latestDecision.report)}</ReactMarkdown>
             </article>
           </div>
@@ -187,7 +187,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
                 <div className="automation-run-body">
                   <RunCharts charts={run.charts} />
                   {run.report ? (
-                    <article className="news-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(run.report)}</ReactMarkdown></article>
+                    <article className="agent-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanAgentMarkdown(run.report)}</ReactMarkdown></article>
                   ) : run.error ? (
                     <InlineMessage tone="error">{run.error}</InlineMessage>
                   ) : (

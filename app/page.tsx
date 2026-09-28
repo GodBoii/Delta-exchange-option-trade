@@ -312,7 +312,7 @@ function LoadingScreen() {
   return (
     <div className="boot-screen t-stagger is-shown" role="status">
       <span className="t-stagger-line t-stagger-line--1"><Brand /></span>
-      <span className="news-orb t-stagger-line t-stagger-line--2">
+      <span className="agent-orb t-stagger-line t-stagger-line--2">
         <ThinkingOrb state="connecting" size={64} theme="auto" aria-label="Restoring your secure session" />
       </span>
       <div className="boot-copy">
