@@ -28,9 +28,11 @@ def test_scheduling_sends_parent_run_and_snapshot_to_the_writer(monkeypatch):
     monkeypatch.setattr(tools, "previous_fixed_run", lambda _: SimpleNamespace(scheduled_for=now - timedelta(hours=1)))
     toolkit = tools.AutomationStrategyTools(SETTINGS, user_id=USER, agent_run_id=PARENT, market_snapshot_id=SNAPSHOT)
 
-    result = json.loads(toolkit.scheduled_next_agent_run(
-        (now + timedelta(minutes=10)).isoformat(), "Wait for confirmation", ["range breakout", " "]
-    ))
+    result = json.loads(
+        toolkit.scheduled_next_agent_run(
+            (now + timedelta(minutes=10)).isoformat(), "Wait for confirmation", ["range breakout", " "]
+        )
+    )
 
     assert result["scheduledRunId"] == CHILD and result["status"] == "committed"
     assert sent["path"] == "runtimeAutomation:followup" and sent["mutation"] is True
@@ -39,10 +41,19 @@ def test_scheduling_sends_parent_run_and_snapshot_to_the_writer(monkeypatch):
     assert sent["args"]["signals"] == ["range breakout"]
 
 
-@pytest.mark.parametrize("parent", [None, {
-    "id": PARENT, "scheduled_for": "2026-09-15T00:00:00Z", "trigger": "asia_session",
-    "outcome": "wait_and_run_again", "report_markdown": "Full report\n" * 3000,
-}])
+@pytest.mark.parametrize(
+    "parent",
+    [
+        None,
+        {
+            "id": PARENT,
+            "scheduled_for": "2026-09-15T00:00:00Z",
+            "trigger": "asia_session",
+            "outcome": "wait_and_run_again",
+            "report_markdown": "Full report\n" * 3000,
+        },
+    ],
+)
 def test_parent_lookup_uses_the_exact_parent_and_does_not_truncate(monkeypatch, parent):
     def request(path, args, **_):
         assert path == "runtimeAutomation:context"
@@ -62,19 +73,33 @@ def test_parent_lookup_uses_the_exact_parent_and_does_not_truncate(monkeypatch, 
 def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, previous):
     captured = {}
     monkeypatch.setattr(team, "read_parent_run_context", lambda *_, **__: previous)
-    monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
-        collect_market_packet=lambda: {"source": "Binance Spot"}, collect_delta_option_context=lambda: {},
-    ))
+    monkeypatch.setattr(
+        team,
+        "MarketIntelligenceTools",
+        lambda **_: SimpleNamespace(
+            collect_market_packet=lambda: {"source": "Binance Spot"},
+            collect_delta_option_context=lambda: {},
+        ),
+    )
     monkeypatch.setattr(team, "ChartStorage", lambda _: SimpleNamespace(save_run_charts=lambda **_: []))
-    monkeypatch.setattr(team, "_chart_artifacts", lambda *_: [
-        SimpleNamespace(id="btc-test", context={"readingNotes": ["Main chart instructions"]})
-    ])
+    monkeypatch.setattr(
+        team,
+        "_chart_artifacts",
+        lambda *_: [SimpleNamespace(id="btc-test", context={"readingNotes": ["Main chart instructions"]})],
+    )
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: SNAPSHOT)
     monkeypatch.setattr(team, "AutomationStrategyTools", lambda *_, **__: object())
     monkeypatch.setattr(team, "create_session_db", lambda *_, **__: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(team, "run_news_pipeline", lambda *_, **__: SimpleNamespace(
-        markdown="Current verified news", research_tools=["search_news", "build_news_dossier"],
-        report_response=RunOutput(content="Current verified news")))
+    monkeypatch.setattr(
+        team,
+        "run_news_pipeline",
+        lambda *_, **__: SimpleNamespace(
+            markdown="Current verified news",
+            research_tools=["search_news", "build_news_dossier"],
+            research_trace=[],
+            report_response=RunOutput(content="Current verified news"),
+        ),
+    )
 
     class Agent:
         def __init__(self, **kwargs):
@@ -86,10 +111,16 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
     monkeypatch.setattr(team, "Agent", Agent)
     account = {"activeStrategies": []}
     team.run_automation_team(
-        settings=SimpleNamespace(automation_session_table="sessions", automation_model_id="model",
-                                 require_api_key=lambda: "test-key"),
-        user_id=USER, agent_run_id=CHILD, session_id="test", account_context=account,
-        trigger="agent_follow_up", trigger_reason="Wait for confirmation", signals_to_inspect=["breakout"],
+        settings=SimpleNamespace(
+            automation_session_table="sessions", automation_model_id="model", require_api_key=lambda: "test-key"
+        ),
+        user_id=USER,
+        agent_run_id=CHILD,
+        session_id="test",
+        account_context=account,
+        trigger="agent_follow_up",
+        trigger_reason="Wait for confirmation",
+        signals_to_inspect=["breakout"],
     )
     assert captured["model"].reasoning_effort == "max"
     assert "max_tokens" not in captured["model"].get_request_params()

@@ -22,6 +22,7 @@ from app.automation_schedule import (
 )
 from app.capital import percentage_concurrency_limit
 from app.errors import AppError
+from app.exit_schedule import ExitChoice, resolve_exit_schedule
 from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
@@ -63,6 +64,7 @@ class AutomationStrategyTools(Toolkit):
             name="automation_strategy_tools",
             tools=[
                 self.show_available_strategy,
+                self.calculate_exit_time,
                 self.select_strategy_and_time,
                 self.scheduled_next_agent_run,
             ],
@@ -86,7 +88,8 @@ class AutomationStrategyTools(Toolkit):
         occupied = context["occupied"]
         visible = sorted(
             (
-                row for row in rows
+                row
+                for row in rows
                 if row["enabled_for_ai"]
                 and (self.user_id != SHARED_USER_ID or row.get("user_id") is None)
                 # Each agent lists only strategies written for its own underlying.
@@ -95,8 +98,7 @@ class AutomationStrategyTools(Toolkit):
             key=lambda row: (str(row["name"]).casefold(), str(row["id"])),
         )
         self.strategy_references = {
-            f"S{index:02d}": (str(row["id"]), int(row["version"]))
-            for index, row in enumerate(visible, start=1)
+            f"S{index:02d}": (str(row["id"]), int(row["version"])) for index, row in enumerate(visible, start=1)
         }
         return json.dumps(
             {
@@ -164,28 +166,40 @@ class AutomationStrategyTools(Toolkit):
         if not verified:
             logger.exception("Automation %s tool outcome is unknown run_id=%s", action, self.agent_run_id)
             return {
-                "success": False, "status": "unconfirmed", "outcome": None,
-                "strategyScheduled": None, "sharedProposalRecorded": None,
+                "success": False,
+                "status": "unconfirmed",
+                "outcome": None,
+                "strategyScheduled": None,
+                "sharedProposalRecorded": None,
                 "agentRunScheduled": None,
-                "canRetry": True, "errorCode": "commit_unconfirmed",
+                "canRetry": True,
+                "errorCode": "commit_unconfirmed",
                 "message": (
-                    "The action could not be confirmed. Retry this tool; "
-                    "the run guard will prevent a duplicate."
+                    "The action could not be confirmed. Retry this tool; the run guard will prevent a duplicate."
                 ),
             }
         if isinstance(error, ValueError):
             return {
-                "success": False, "status": "rejected", "outcome": None,
-                "strategyScheduled": False, "sharedProposalRecorded": False,
+                "success": False,
+                "status": "rejected",
+                "outcome": None,
+                "strategyScheduled": False,
+                "sharedProposalRecorded": False,
                 "agentRunScheduled": False,
-                "canRetry": True, "errorCode": "invalid_tool_input", "message": str(error),
+                "canRetry": True,
+                "errorCode": "invalid_tool_input",
+                "message": str(error),
             }
         logger.exception("Automation %s tool failed run_id=%s", action, self.agent_run_id, exc_info=error)
         return {
-            "success": False, "status": "rejected", "outcome": None,
-            "strategyScheduled": False, "sharedProposalRecorded": False,
+            "success": False,
+            "status": "rejected",
+            "outcome": None,
+            "strategyScheduled": False,
+            "sharedProposalRecorded": False,
             "agentRunScheduled": False,
-            "canRetry": True, "errorCode": error.code if isinstance(error, AppError) else "tool_failed",
+            "canRetry": True,
+            "errorCode": error.code if isinstance(error, AppError) else "tool_failed",
             "message": (
                 f"{error.message} No action was committed. Retry if the setup remains valid."
                 if isinstance(error, AppError)
@@ -201,17 +215,15 @@ class AutomationStrategyTools(Toolkit):
         reasoning_summary: str,
         supporting_signals: list[str],
         invalidation_signals: list[str],
-        holding_policy: Literal["saved", "intraday", "overnight", "positional", "hold_to_expiry"] = "saved",
-        planned_exit_time: str | None = None,
-        expiry_policy: Literal["same_day", "next_day", "7_day", "30_day"] | None = None,
+        exit_choice: dict[str, Any],
     ) -> str:
         """Schedule the strategyRef returned by show_available_strategy.
 
-        holding_policy: saved preserves the template; intraday, overnight and positional
-        require planned_exit_time as an aware ISO timestamp. hold_to_expiry exits before
-        expiry using the saved safety buffer. Stops and profit targets remain active.
-        expiry_policy: optionally choose a listed expiry horizon. Risk, legs and sizing
-        remain owned by the saved strategy. Explain the holding choice in reasoning_summary.
+        First call calculate_exit_time with the same entry time, strategyRef and exit_choice.
+        exit_choice is {kind: intraday|overnight|positional, hours: allowed preset},
+        {kind: specific_time, exit_at: aware ISO timestamp}, or
+        {kind: expiry, expiry_number: 1|2}. The server resolves a listed contract
+        covering the chosen exit. Risk, legs and sizing remain owned by the saved strategy.
         Returns JSON confirming a scheduled account strategy or a shared proposal.
         Rejected calls may be corrected and retried. A committed run cannot schedule again.
         """
@@ -235,25 +247,30 @@ class AutomationStrategyTools(Toolkit):
                     reasoning_summary=reasoning_summary,
                     supporting_signals=supporting_signals,
                     invalidation_signals=invalidation_signals,
-                    holding_policy=holding_policy,
-                    planned_exit_time=planned_exit_time,
-                    expiry_policy=expiry_policy,
+                    exit_choice=exit_choice,
                 )
             )
             shared = self.user_id == SHARED_USER_ID
-            return json.dumps({
-                **result,
-                "success": True, "status": "committed", "newActionCreated": True,
-                "strategyScheduled": not shared, "sharedProposalRecorded": shared,
-                "agentRunScheduled": False,
-                "activationRecheckScheduled": True, "accountSchedulingPending": shared,
-                "canRetry": False,
-                "message": (
-                    "Shared proposal and recheck recorded. Account strategies are scheduled "
-                    "only after recheck and allocation."
-                    if shared else "Account strategy and activation recheck scheduled. No order has been placed yet."
-                ),
-            })
+            return json.dumps(
+                {
+                    **result,
+                    "success": True,
+                    "status": "committed",
+                    "newActionCreated": True,
+                    "strategyScheduled": not shared,
+                    "sharedProposalRecorded": shared,
+                    "agentRunScheduled": False,
+                    "activationRecheckScheduled": True,
+                    "accountSchedulingPending": shared,
+                    "canRetry": False,
+                    "message": (
+                        "Shared proposal and recheck recorded. Account strategies are scheduled "
+                        "only after recheck and allocation."
+                        if shared
+                        else "Account strategy and activation recheck scheduled. No order has been placed yet."
+                    ),
+                }
+            )
         except Exception as error:
             return json.dumps(self._failed_action(error, action="strategy scheduling"))
 
@@ -267,9 +284,7 @@ class AutomationStrategyTools(Toolkit):
         reasoning_summary: str,
         supporting_signals: list[str],
         invalidation_signals: list[str],
-        holding_policy: Literal["saved", "intraday", "overnight", "positional", "hold_to_expiry"],
-        planned_exit_time: str | None,
-        expiry_policy: Literal["same_day", "next_day", "7_day", "30_day"] | None,
+        exit_choice: dict[str, Any],
     ) -> str:
         activation = _future_datetime(activation_time, "activation_time")
         expiry = activation + PROPOSAL_LIFETIME
@@ -287,70 +302,101 @@ class AutomationStrategyTools(Toolkit):
         if not reasoning_summary.strip():
             raise ValueError("reasoning_summary is required")
 
-        external = self.application_data.selection_context(self.user_id, saved_id)
-        if not external or not external[0] or not external[0][0]["enabled_for_ai"]:
-            raise ValueError("Selected strategy is unavailable")
-        strategy = external[0][0]
-        if strategy["version"] != saved_strategy_version:
-            raise ValueError("The saved strategy version changed")
-        context = self.runtime_data.request_sync(
-            "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
+        live_definition, schedule = self._resolve_selection(
+            saved_id, saved_strategy_version, activation, ExitChoice.model_validate(exit_choice)
         )
-        snapshot = context["snapshot"]
-        if not snapshot or snapshot["id"] != self.market_snapshot_id:
-            raise ValueError("Current market snapshot is unavailable")
-        market = snapshot["market_json"]
-        live_definition, exit_at = materialize_live_definition(
-            strategy["definition_json"],
-            activation=activation,
-            option_context=market.get("executionOptionContext") or market.get("deltaOptionContext") or {},
-            holding_policy=holding_policy,
-            planned_exit_time=planned_exit_time,
-            expiry_policy=expiry_policy,
-        )
+        exit_at = datetime.fromisoformat(schedule["exitUtc"])
         if self.user_id == SHARED_USER_ID:
             return json.dumps(
-                self.runtime_data.request_sync(
-                    "sharedAnalysis:publish",
+                {
+                    **self.runtime_data.request_sync(
+                        "sharedAnalysis:publish",
+                        {
+                            "runId": self.agent_run_id,
+                            "candidates": [{"id": saved_id, "version": saved_strategy_version}],
+                            "activation": activation.isoformat(),
+                            "expiry": expiry.isoformat(),
+                            "exit": exit_at.isoformat(),
+                            "definitionJson": json.dumps(live_definition),
+                            "confidence": ai_confidence,
+                            "reasoning": reasoning_summary.strip(),
+                            "supporting": supporting_signals,
+                            "invalidation": invalidation_signals,
+                            "snapshotId": self.market_snapshot_id,
+                        },
+                        mutation=True,
+                    ),
+                    "schedule": schedule,
+                }
+            )
+        return json.dumps(
+            {
+                **self.runtime_data.request_sync(
+                    "runtimeAutomation:schedule",
                     {
+                        "userId": self.user_id,
                         "runId": self.agent_run_id,
-                        "candidates": [{"id": saved_id, "version": saved_strategy_version}],
+                        "savedId": saved_id,
+                        "savedVersion": saved_strategy_version,
                         "activation": activation.isoformat(),
                         "expiry": expiry.isoformat(),
                         "exit": exit_at.isoformat(),
+                        "recheck": recheck_at.isoformat(),
                         "definitionJson": json.dumps(live_definition),
                         "confidence": ai_confidence,
                         "reasoning": reasoning_summary.strip(),
                         "supporting": supporting_signals,
                         "invalidation": invalidation_signals,
                         "snapshotId": self.market_snapshot_id,
+                        "newsId": self.news_analysis_id,
                     },
                     mutation=True,
-                )
-            )
-        return json.dumps(
-            self.runtime_data.request_sync(
-                "runtimeAutomation:schedule",
-                {
-                    "userId": self.user_id,
-                    "runId": self.agent_run_id,
-                    "savedId": saved_id,
-                    "savedVersion": saved_strategy_version,
-                    "activation": activation.isoformat(),
-                    "expiry": expiry.isoformat(),
-                    "exit": exit_at.isoformat(),
-                    "recheck": recheck_at.isoformat(),
-                    "definitionJson": json.dumps(live_definition),
-                    "confidence": ai_confidence,
-                    "reasoning": reasoning_summary.strip(),
-                    "supporting": supporting_signals,
-                    "invalidation": invalidation_signals,
-                    "snapshotId": self.market_snapshot_id,
-                    "newsId": self.news_analysis_id,
-                },
-                mutation=True,
-            )
+                ),
+                "schedule": schedule,
+            }
         )
+
+    def _resolve_selection(
+        self, saved_id: str, expected_version: int, activation: datetime, choice: ExitChoice
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        rows, _ = self.application_data.selection_context(self.user_id, saved_id)
+        if not rows or not rows[0]["enabled_for_ai"]:
+            raise ValueError("Selected strategy is unavailable")
+        strategy = rows[0]
+        if strategy["version"] != expected_version:
+            raise ValueError("The saved strategy version changed")
+        context = self.runtime_data.request_sync(
+            "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
+        )
+        snapshot = context.get("snapshot")
+        if not snapshot or snapshot["id"] != self.market_snapshot_id:
+            raise ValueError("Current market snapshot is unavailable")
+        market = snapshot["market_json"]
+        option_context = market.get("executionOptionContext") or market.get("deltaOptionContext") or {}
+        if option_context.get("underlying") != self.asset:
+            raise ValueError("Option chain does not match the selected asset")
+        return resolve_exit_schedule(
+            strategy["definition_json"],
+            entry_at=activation,
+            choice=choice,
+            options=option_context.get("options") or [],
+        )
+
+    def calculate_exit_time(self, strategy_ref: str, activation_time: str, exit_choice: dict[str, Any]) -> str:
+        """Preview the exact holding duration, option expiry and safety cutoff without scheduling."""
+        try:
+            selection = self.strategy_references.get(strategy_ref.strip().upper())
+            if selection is None:
+                raise ValueError("Unknown strategyRef. Call show_available_strategy first")
+            _, schedule = self._resolve_selection(
+                selection[0],
+                selection[1],
+                _aware_datetime(activation_time, "activation_time"),
+                ExitChoice.model_validate(exit_choice),
+            )
+            return json.dumps({"valid": True, "schedule": schedule})
+        except (ValueError, AppError) as error:
+            return json.dumps({"valid": False, "reason": str(error)})
 
     def scheduled_next_agent_run(
         self,
@@ -363,22 +409,24 @@ class AutomationStrategyTools(Toolkit):
             committed = self._committed_action()
             if committed:
                 return json.dumps(committed)
-            result = json.loads(
-                self._schedule_next_agent_run(next_run_time, reason_for_waiting, signals_to_inspect)
+            result = json.loads(self._schedule_next_agent_run(next_run_time, reason_for_waiting, signals_to_inspect))
+            return json.dumps(
+                {
+                    **result,
+                    "success": True,
+                    "status": "committed",
+                    "agentRunScheduled": True,
+                    "strategyScheduled": False,
+                    "sharedProposalRecorded": False,
+                    "newActionCreated": not bool(
+                        result.get("reusedExistingRun") or result.get("rescheduledExistingFollowUp")
+                    ),
+                    "canRetry": False,
+                    "message": (
+                        "A future agent review is scheduled or an existing review was reused. No trade was scheduled."
+                    ),
+                }
             )
-            return json.dumps({
-                **result,
-                "success": True, "status": "committed", "agentRunScheduled": True,
-                "strategyScheduled": False, "sharedProposalRecorded": False,
-                "newActionCreated": not bool(
-                    result.get("reusedExistingRun") or result.get("rescheduledExistingFollowUp")
-                ),
-                "canRetry": False,
-                "message": (
-                    "A future agent review is scheduled or an existing review was reused. "
-                    "No trade was scheduled."
-                ),
-            })
         except Exception as error:
             return json.dumps(self._failed_action(error, action="follow-up scheduling"))
 

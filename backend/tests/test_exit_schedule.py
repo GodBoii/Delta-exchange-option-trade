@@ -1,9 +1,13 @@
+import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from app.default_strategies import default_strategy_definitions, eth_strategy_definitions
 from app.exit_schedule import ExitChoice, resolve_exit_schedule, template_from_definition
+from app.materialized_definition import validate_materialized_definition
+from automation_agent.tools import AutomationStrategyTools
 
 
 def chain(asset: str, *expiries: datetime, omit_put_at: datetime | None = None) -> list[dict]:
@@ -12,7 +16,9 @@ def chain(asset: str, *expiries: datetime, omit_put_at: datetime | None = None) 
     return [
         {
             "symbol": f"{prefix}-{asset}-{strike}-{expiry:%d%m%y}",
-            "strike": strike, "spot": center, "expiry": expiry.isoformat(),
+            "strike": strike,
+            "spot": center,
+            "expiry": expiry.isoformat(),
         }
         for expiry in expiries
         for prefix in ("C", "P")
@@ -36,11 +42,21 @@ def test_preset_holds_choose_first_contract_covering_exit(asset: str, hours: int
     # Sixteen hours from 18:30 IST stays in the same session and is deliberately rejected.
     if hours == 16:
         with pytest.raises(ValueError, match="overnight"):
-            resolve_exit_schedule(template(asset), entry_at=entry, choice=ExitChoice(kind=kind, hours=hours), options=chain(asset, *expiries))
+            resolve_exit_schedule(
+                template(asset),
+                entry_at=entry,
+                choice=ExitChoice(kind=kind, hours=hours),
+                options=chain(asset, *expiries),
+            )
         return
-    live, detail = resolve_exit_schedule(template(asset), entry_at=entry, choice=ExitChoice(kind=kind, hours=hours), options=chain(asset, *expiries))
+    live, detail = resolve_exit_schedule(
+        template(asset), entry_at=entry, choice=ExitChoice(kind=kind, hours=hours), options=chain(asset, *expiries)
+    )
     assert detail["durationMinutes"] == hours * 60
-    assert all(datetime.fromisoformat(leg["expiry"]).date() == datetime.fromisoformat(detail["contractExpiryIst"]).date() for leg in live["legs"])
+    assert all(
+        datetime.fromisoformat(leg["expiry"]).date() == datetime.fromisoformat(detail["contractExpiryIst"]).date()
+        for leg in live["legs"]
+    )
     assert datetime.fromisoformat(detail["latestSafeExitUtc"]) >= datetime.fromisoformat(detail["exitUtc"])
     assert live["expiryPolicy"] == "auto"
 
@@ -51,7 +67,9 @@ def test_session_boundary_is_at_1730_ist() -> None:
     with pytest.raises(ValueError, match="intraday"):
         resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="intraday", hours=7), options=options)
     late = datetime(2026, 9, 29, 12, 1, tzinfo=UTC)  # 17:31 IST
-    live, detail = resolve_exit_schedule(template(), entry_at=late, choice=ExitChoice(kind="intraday", hours=7), options=options)
+    live, detail = resolve_exit_schedule(
+        template(), entry_at=late, choice=ExitChoice(kind="intraday", hours=7), options=options
+    )
     assert detail["sessionCrossings"] == 0
     assert live["entry"]["strategyType"] == "intraday"
 
@@ -62,11 +80,15 @@ def test_expiry_choices_skip_short_hold_and_incomplete_chain() -> None:
     tomorrow = today + timedelta(days=1)
     following = today + timedelta(days=2)
     options = chain("BTC", today, tomorrow, following, omit_put_at=tomorrow)
-    first, detail = resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="expiry", expiry_number=1), options=options)
+    first, detail = resolve_exit_schedule(
+        template(), entry_at=entry, choice=ExitChoice(kind="expiry", expiry_number=1), options=options
+    )
     assert first["legs"][0]["expiry"] == following.date().isoformat()
     assert detail["durationMinutes"] > 90
     with pytest.raises(ValueError, match="requested listed expiry"):
-        resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="expiry", expiry_number=2), options=options)
+        resolve_exit_schedule(
+            template(), entry_at=entry, choice=ExitChoice(kind="expiry", expiry_number=2), options=options
+        )
 
 
 def test_missing_chain_and_uncovered_exit_fail_without_shortening() -> None:
@@ -74,9 +96,51 @@ def test_missing_chain_and_uncovered_exit_fail_without_shortening() -> None:
     with pytest.raises(ValueError, match="no listed options"):
         resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="positional", hours=72), options=[])
     with pytest.raises(ValueError, match="full requested hold"):
-        resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="positional", hours=72), options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)))
+        resolve_exit_schedule(
+            template(),
+            entry_at=entry,
+            choice=ExitChoice(kind="positional", hours=72),
+            options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)),
+        )
 
 
 def test_specific_time_requires_timezone() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         ExitChoice(kind="specific_time", exit_at=datetime(2026, 9, 30))
+
+
+def test_new_saved_template_contains_only_trading_rules_and_materializes_safely() -> None:
+    saved = template()
+    assert saved["schemaVersion"] == 3
+    assert not any(key in saved for key in ("entry", "holdingMode", "expiryPolicy"))
+    assert all("expiry" not in leg for leg in saved["legs"])
+    live, _ = resolve_exit_schedule(
+        saved,
+        entry_at=datetime(2026, 9, 29, 13, tzinfo=UTC),
+        choice=ExitChoice(kind="intraday", hours=7),
+        options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)),
+    )
+    validate_materialized_definition(saved, live)
+
+
+def test_agent_calculator_uses_the_same_resolver_as_selection() -> None:
+    entry = datetime(2026, 9, 29, 13, tzinfo=UTC)
+    options = chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC))
+    tool = object.__new__(AutomationStrategyTools)
+    tool.strategy_references = {"S01": ("saved-1", 7)}
+    tool.application_data = SimpleNamespace(selection_context=lambda *_args: ([
+        {"version": 7, "enabled_for_ai": True, "definition_json": template()}
+    ], {}))
+    tool.runtime_data = SimpleNamespace(request_sync=lambda *_args: {
+        "snapshot": {"id": "snapshot-1", "market_json": {
+            "executionOptionContext": {"underlying": "BTC", "options": options}
+        }}
+    })
+    tool.user_id = "user-1"
+    tool.agent_run_id = "run-1"
+    tool.market_snapshot_id = "snapshot-1"
+    tool.asset = "BTC"
+    choice = {"kind": "intraday", "hours": 7}
+    preview = json.loads(tool.calculate_exit_time("S01", entry.isoformat(), choice))
+    _, committed_schedule = tool._resolve_selection("saved-1", 7, entry, ExitChoice.model_validate(choice))
+    assert preview == {"valid": True, "schedule": committed_schedule}

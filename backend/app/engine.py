@@ -6,7 +6,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -154,9 +154,11 @@ class TradingEngine:
         self.account_groups_refresh_at = 0.0
         self.session_lock = asyncio.Lock()
         self.wake = asyncio.Event()
-        self.public_marks = PublicMarkFeeds(
-            self.wake, settings.delta_public_ws_url, settings.delta_private_ws_url
-        ) if getattr(settings, "delta_events_enabled", False) else None
+        self.public_marks = (
+            PublicMarkFeeds(self.wake, settings.delta_public_ws_url, settings.delta_private_ws_url)
+            if getattr(settings, "delta_events_enabled", False)
+            else None
+        )
         self.last_public_mark_prune = 0.0
         self.risk_errors: dict[str, str] = {}
         self.application_data = getattr(db, "local_data", None)
@@ -349,10 +351,7 @@ class TradingEngine:
             for (index, leg), response in zip(short_legs, leverage_responses, strict=True):
                 result = response.get("result")
                 selected = optional_decimal(result.get("leverage")) if isinstance(result, dict) else None
-                if (
-                    selected is None or selected <= 0
-                    or str(result.get("product_id")) != str(leg["productId"])
-                ):
+                if selected is None or selected <= 0 or str(result.get("product_id")) != str(leg["productId"]):
                     raise AppError(502, "Delta order leverage is unavailable", "order_leverage_unavailable")
                 account_leverages[index] = selected
         contract_values = [decimal_value(product.get("contract_value")) for product in products]
@@ -406,7 +405,8 @@ class TradingEngine:
 
         if definition.riskBasis == "defined_max_loss" and signed_premium <= estimated_entry_fees * Decimal("2.36"):
             raise AppError(
-                409, "Executable spread credit does not cover estimated round-trip fees",
+                409,
+                "Executable spread credit does not cover estimated round-trip fees",
                 "spread_credit_too_small",
             )
 
@@ -628,9 +628,7 @@ class TradingEngine:
         """Queue a phone alert for a lifecycle change. Never raises into the trading path."""
         if self.notifier is None:
             return
-        self.notifier.spawn(
-            self._send_strategy_notice(strategy_id, event, detail), name=f"push-{event}-{strategy_id}"
-        )
+        self.notifier.spawn(self._send_strategy_notice(strategy_id, event, detail), name=f"push-{event}-{strategy_id}")
 
     async def _send_strategy_notice(self, strategy_id: str, event: StrategyEvent, detail: str | None) -> None:
         # Loaded after the state change commits, so the alert shows the final P&L and exit reason.
@@ -909,6 +907,27 @@ class TradingEngine:
                     str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy
                 )
             resolved = await self.resolve_strategy(client, definition)
+            if definition.expiryPolicy == "auto":
+                settlements = []
+                for leg in resolved:
+                    product = await self.product_spec(client, str(leg["productSymbol"]))
+                    raw = product.get("settlement_time")
+                    if not raw:
+                        raise AppError(
+                            409, "Selected contract settlement time is unavailable", "contract_expiry_unknown"
+                        )
+                    settlement = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                    if settlement.utcoffset() is None:
+                        raise AppError(
+                            409, "Selected contract settlement time lacks a timezone", "contract_expiry_unknown"
+                        )
+                    settlements.append(settlement)
+                if len(set(settlements)) != 1 or definition.entry.exitAt > settlements[0] - timedelta(
+                    minutes=definition.exitMinutesBeforeExpiry
+                ):
+                    raise AppError(
+                        409, "Selected contracts no longer cover the planned exit", "contract_expiry_mismatch"
+                    )
             validate_entry_policy(definition, resolved)
             resolved = await self.apply_automatic_lots(client, definition, resolved, policy, wallet)
             exclusive = getattr(client, "order_journal", None) is not None
@@ -2129,6 +2148,7 @@ class TradingEngine:
                 "limit": "25",
             },
         )
+
         async def monitor_one(row: dict[str, Any]) -> None:
             try:
                 if await self.monitor_combined_strategy(row):
@@ -2457,9 +2477,7 @@ class TradingEngine:
                     for start in range(0, len(missing), 100)
                 )
             )
-            self.account_groups.update(
-                (item["userId"], item["accountId"]) for group in groups for item in group
-            )
+            self.account_groups.update((item["userId"], item["accountId"]) for group in groups for item in group)
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             user_id = str(row["user_id"])

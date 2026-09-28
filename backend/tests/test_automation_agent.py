@@ -32,8 +32,7 @@ def option_context(*expiries: datetime) -> dict:
 
 def test_verified_action_precedes_unexecuted_model_suggestion():
     report = (
-        "## Market regime\n\nSideways.\n\n## Decision\n\n"
-        "Selected: Short OTM put.\n\n## Invalidation\n\nRange break."
+        "## Market regime\n\nSideways.\n\n## Decision\n\nSelected: Short OTM put.\n\n## Invalidation\n\nRange break."
     )
     rendered = verified_decision_report("no_trade_for_current_window", report, shared=False)
     assert rendered.startswith("## Verified action\n\nNo strategy was scheduled during this review.")
@@ -74,9 +73,7 @@ def test_strategy_activation_rejects_a_fixed_session_minute() -> None:
             reasoning_summary="Confirmed setup",
             supporting_signals=["price"],
             invalidation_signals=["volume"],
-            holding_policy="saved",
-            planned_exit_time=None,
-            expiry_policy=None,
+            exit_choice={"kind": "intraday", "hours": 7},
         )
 
 
@@ -95,7 +92,9 @@ def test_strategy_catalog_uses_short_references() -> None:
                     "version": 7,
                     "name": "Short strangle",
                     "definition_json": {
-                        "description": "Range-bound BTC until expiry.", "takeProfitPercent": 50, "instrument": btc,
+                        "description": "Range-bound BTC until expiry.",
+                        "takeProfitPercent": 50,
+                        "instrument": btc,
                     },
                     "enabled_for_ai": True,
                     "user_id": None,
@@ -165,9 +164,13 @@ def test_strategy_tool_retries_rejection_then_reports_duplicate(monkeypatch) -> 
 
     monkeypatch.setattr(tool, "_select_strategy_and_time", schedule)
     args = {
-        "strategy_ref": "s01", "activation_time": "2026-09-26T05:00:00Z", "ai_confidence": 0.7,
-        "reasoning_summary": "Confirmed range", "supporting_signals": ["range"],
+        "strategy_ref": "s01",
+        "activation_time": "2026-09-26T05:00:00Z",
+        "ai_confidence": 0.7,
+        "reasoning_summary": "Confirmed range",
+        "supporting_signals": ["range"],
         "invalidation_signals": ["breakout"],
+        "exit_choice": {"kind": "intraday", "hours": 7},
     }
 
     rejected = json.loads(tool.select_strategy_and_time(**args))
@@ -225,11 +228,17 @@ def test_tool_recovers_commit_after_response_is_lost(monkeypatch) -> None:
         raise RuntimeError("Response lost after commit")
 
     monkeypatch.setattr(tool, "_select_strategy_and_time", schedule)
-    result = json.loads(tool.select_strategy_and_time(
-        strategy_ref="S01", activation_time="2026-09-26T05:00:00Z", ai_confidence=0.7,
-        reasoning_summary="Confirmed range", supporting_signals=["range"],
-        invalidation_signals=["breakout"],
-    ))
+    result = json.loads(
+        tool.select_strategy_and_time(
+            strategy_ref="S01",
+            activation_time="2026-09-26T05:00:00Z",
+            ai_confidence=0.7,
+            reasoning_summary="Confirmed range",
+            supporting_signals=["range"],
+            invalidation_signals=["breakout"],
+            exit_choice={"kind": "intraday", "hours": 7},
+        )
+    )
 
     assert result["status"] == "already_committed"
     assert result["strategyScheduled"] is True and result["canRetry"] is False
@@ -248,11 +257,17 @@ def test_tool_does_not_claim_rejection_when_commit_status_cannot_be_read(monkeyp
         raise ValueError("Response could not be decoded")
 
     monkeypatch.setattr(tool, "_select_strategy_and_time", schedule)
-    result = json.loads(tool.select_strategy_and_time(
-        strategy_ref="S01", activation_time="2026-09-26T05:00:00Z", ai_confidence=0.7,
-        reasoning_summary="Confirmed range", supporting_signals=["range"],
-        invalidation_signals=["breakout"],
-    ))
+    result = json.loads(
+        tool.select_strategy_and_time(
+            strategy_ref="S01",
+            activation_time="2026-09-26T05:00:00Z",
+            ai_confidence=0.7,
+            reasoning_summary="Confirmed range",
+            supporting_signals=["range"],
+            invalidation_signals=["breakout"],
+            exit_choice={"kind": "intraday", "hours": 7},
+        )
+    )
 
     assert result["status"] == "unconfirmed"
     assert result["strategyScheduled"] is None and result["canRetry"] is True
@@ -281,10 +296,16 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
                 return []
             if table == "automation_market_snapshots":
                 assert params["select"] == "id,chart_images:market_json->chartImages"
-                return [{"id": "snapshot-1", "run_id": "completed", "chart_images": [
-                    {"id": "btc-daily", "label": "BTC daily", "runId": "completed"},
-                    {"id": "btc-expired", "label": "Removed by retention", "runId": "completed"},
-                ]}]
+                return [
+                    {
+                        "id": "snapshot-1",
+                        "run_id": "completed",
+                        "chart_images": [
+                            {"id": "btc-daily", "label": "BTC daily", "runId": "completed"},
+                            {"id": "btc-expired", "label": "Removed by retention", "runId": "completed"},
+                        ],
+                    }
+                ]
             if table == "automation_agent_runs":
                 self.run_queries.append(params)
                 if params["status"] == "eq.scheduled":
@@ -324,10 +345,14 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
     overview = await automation_overview(request, {"id": "user-1"})  # type: ignore[arg-type]
 
     assert [run["id"] for run in overview["runs"]] == ["completed"]
-    assert overview["runs"][0]["charts"] == [{
-        "id": "btc-daily", "label": "BTC daily", "altText": "BTC daily",
-        "url": "/api/charts/completed/btc-daily?expires=1&signature=s",
-    }]
+    assert overview["runs"][0]["charts"] == [
+        {
+            "id": "btc-daily",
+            "label": "BTC daily",
+            "altText": "BTC daily",
+            "url": "/api/charts/completed/btc-daily?expires=1&signature=s",
+        }
+    ]
     assert [run["id"] for run in overview["upcomingRuns"]] == ["upcoming"]
     assert any(query.get("status") == "in.(running,completed,failed)" for query in database.run_queries)
     assert any(query.get("order") == "scheduled_for.asc" for query in database.run_queries)
@@ -487,10 +512,17 @@ async def test_live_option_sizing_uses_selected_exchange_leverage(leverage, expe
         sized = await engine.apply_automatic_lots(
             client,
             definition,
-            [{
-                "productId": 123, "productSymbol": "P-BTC-79000-250926", "bestBid": "100",
-                "markPrice": "100", "spotPrice": "80000", "position": "sell", "optionType": "put",
-            }],
+            [
+                {
+                    "productId": 123,
+                    "productSymbol": "P-BTC-79000-250926",
+                    "bestBid": "100",
+                    "markPrice": "100",
+                    "spotPrice": "80000",
+                    "position": "sell",
+                    "optionType": "put",
+                }
+            ],
             wallet=(Decimal("100"), Decimal("100")),
         )
     finally:
@@ -510,10 +542,17 @@ async def test_live_option_sizing_rejects_unknown_account_leverage():
             await engine.apply_automatic_lots(
                 client,
                 definition,
-                [{
-                    "productId": 123, "productSymbol": "P-BTC-79000-250926", "bestBid": "100",
-                    "markPrice": "100", "spotPrice": "80000", "position": "sell", "optionType": "put",
-                }],
+                [
+                    {
+                        "productId": 123,
+                        "productSymbol": "P-BTC-79000-250926",
+                        "bestBid": "100",
+                        "markPrice": "100",
+                        "spotPrice": "80000",
+                        "position": "sell",
+                        "optionType": "put",
+                    }
+                ],
                 wallet=(Decimal("100"), Decimal("100")),
             )
     finally:

@@ -142,11 +142,13 @@ def run_automation_team(
                 ),
                 (
                     "Preserve the saved option legs, strike rules, size policy, stops, profit target and order types. "
-                    "Choose entry time, holding_policy and expiry_policy to match the market thesis. Saved holding "
-                    "durations are defaults, not a seven-hour cap. Choose intraday, overnight or positional with an "
-                    "explicit planned_exit_time, or hold_to_expiry with the saved expiry safety buffer. Intraday "
-                    "means an exit on the same IST date; overnight means the next IST date. A positional exit can "
-                    "span several days but must precede the chosen expiry buffer. Use saved to retain the template. "
+                    "Choose an entry time and exit_choice to match the market thesis. Intraday presets are 7 or "
+                    "11 hours, overnight presets 16 or 24 hours, and positional presets 48 or 72 hours. Intraday "
+                    "must remain within one 17:30 IST options session, overnight must cross one session boundary, "
+                    "and positional must cross at least two. The specific_time choice needs an aware exit_at; the "
+                    "expiry choice needs expiry_number 1 or 2 for the first or second eligible listed expiry. "
+                    "Call calculate_exit_time with the strategyRef, activation_time and exit_choice before selecting. "
+                    "Use its exact duration, exit and listed contract expiry in the decision report. "
                     "Use each strategy description to understand its intended market conditions and payoff. "
                     "Explain the exact entry, exit, expiry and holding rationale in the report. "
                     "Do not extend naked shorts simply to avoid realizing a loss. Consider event timing, executable "
@@ -155,7 +157,8 @@ def run_automation_team(
                     "proposed horizon, choose a shorter supported hold or no trade."
                 ),
                 (
-                    "To select a trade, call select_strategy_and_time with a strategyRef from show_available_strategy. "
+                    "To select a trade, call select_strategy_and_time with the same strategyRef, activation_time "
+                    "and exit_choice you previewed. "
                     "The tool derives proposal expiry and resolves the saved UUID and version. Choose an activation "
                     "at least eight minutes in the future so the seven-minute pre-entry recheck can run. The engine "
                     "applies the trading budget, calculates lots, and executes later."
@@ -409,9 +412,14 @@ def run_activation_recheck(
     )
     images = [
         Image(
-            content=chart.content, format="png", mime_type="image/png",
-            id=chart.id, alt_text=chart.alt_text, detail="high",
-        ) for chart in stored_charts
+            content=chart.content,
+            format="png",
+            mime_type="image/png",
+            id=chart.id,
+            alt_text=chart.alt_text,
+            detail="high",
+        )
+        for chart in stored_charts
     ]
     stored_session_id = f"activation-recheck:{user_id}:{session_id}"
     response = agent.run(

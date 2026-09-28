@@ -35,6 +35,7 @@ from .database import Database
 from .delta import DeltaClient
 from .engine import Scheduler, TradingEngine
 from .errors import AppError
+from .exit_schedule import ExitChoice, fetch_option_catalog, resolve_exit_schedule
 from .instance_lock import InstanceLock
 from .models import (
     CancelOrderRequest,
@@ -66,9 +67,7 @@ async def lifespan(app: FastAPI):
             ai_url=settings.ai_database_url,
             reader_url=settings.local_reader_database_url,
         )
-    pool = AsyncConnectionPool(
-        settings.database_url, min_size=2, max_size=settings.database_pool_size, open=False
-    )
+    pool = AsyncConnectionPool(settings.database_url, min_size=2, max_size=settings.database_pool_size, open=False)
     await pool.open(wait=True)
     instance_lock = InstanceLock(settings.trading_lock_path) if settings.trading_writer_enabled else None
     if instance_lock is not None:
@@ -599,6 +598,8 @@ async def strategy_detail(request: Request, strategy_id: str, user: RequiredUser
 @app.post("/api/strategies", status_code=201)
 async def save_strategy(request: Request, body: SaveStrategyRequest, user: RequiredUser) -> dict[str, Any]:
     await current_account(request.app.state.db, user, required=True)
+    if body.status == "scheduled":
+        raise AppError(422, "Use the exit-choice scheduling endpoint", "exit_choice_required")
     result = await request.app.state.engine.save_strategy(
         str(user["id"]),
         body.strategy,
@@ -606,6 +607,67 @@ async def save_strategy(request: Request, body: SaveStrategyRequest, user: Requi
         str(body.savedStrategyId) if body.savedStrategyId else None,
     )
     return {"success": True, "result": result}
+
+
+class ExitScheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    savedStrategyId: str
+    expectedVersion: int
+    entryAt: datetime
+    exitChoice: ExitChoice
+
+
+class CommitExitScheduleRequest(ExitScheduleRequest):
+    expectedExitUtc: datetime
+    expectedContractExpiryUtc: datetime
+
+
+async def resolve_saved_schedule(
+    request: Request, user_id: str, body: ExitScheduleRequest
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    saved = await request.app.state.engine.saved_strategies(user_id, body.savedStrategyId)
+    if not saved or saved[0]["version"] != body.expectedVersion:
+        raise AppError(409, "Saved strategy version changed", "saved_strategy_changed")
+    template = saved[0]["definition_json"]
+    client = await delta_client_for_user(request.app.state.db, settings, user_id)
+    try:
+        options = await fetch_option_catalog(client, template["instrument"]["underlying"])
+    finally:
+        await client.close()
+    try:
+        return resolve_exit_schedule(template, entry_at=body.entryAt, choice=body.exitChoice, options=options)
+    except ValueError as error:
+        raise AppError(422, str(error), "exit_schedule_invalid") from error
+
+
+@app.post("/api/strategies/exit-preview")
+async def preview_exit_schedule(request: Request, body: ExitScheduleRequest, user: RequiredUser) -> dict[str, Any]:
+    await current_account(request.app.state.db, user, required=True)
+    definition, schedule = await resolve_saved_schedule(request, str(user["id"]), body)
+    return {"success": True, "result": {"definition": definition, "schedule": schedule}}
+
+
+@app.post("/api/strategies/schedule", status_code=201)
+async def schedule_with_exit_choice(
+    request: Request, body: CommitExitScheduleRequest, user: RequiredUser
+) -> dict[str, Any]:
+    await current_account(request.app.state.db, user, required=True)
+    definition, schedule = await resolve_saved_schedule(request, str(user["id"]), body)
+    if body.expectedExitUtc.astimezone(UTC) != datetime.fromisoformat(
+        schedule["exitUtc"]
+    ) or body.expectedContractExpiryUtc.astimezone(UTC) != datetime.fromisoformat(schedule["contractExpiryUtc"]):
+        raise AppError(409, "Option availability or schedule changed; preview again", "exit_preview_stale")
+    current = await request.app.state.engine.saved_strategies(str(user["id"]), body.savedStrategyId)
+    if not current or current[0]["version"] != body.expectedVersion:
+        raise AppError(409, "Saved strategy version changed", "saved_strategy_changed")
+    result = await request.app.state.engine.save_strategy(
+        str(user["id"]),
+        StrategyDefinition.model_validate(definition),
+        "scheduled",
+        body.savedStrategyId,
+    )
+    return {"success": True, "result": {**result, "schedule": schedule}}
 
 
 @app.post("/api/strategies/preview")

@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from copy import deepcopy
 from datetime import UTC, datetime, time, timedelta
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from .models import StrategyDefinition
+
+if TYPE_CHECKING:
+    from .delta import DeltaClient
 
 IST = ZoneInfo("Asia/Kolkata")
 SESSION_END = time(17, 30)
@@ -21,6 +27,52 @@ PRESETS: dict[str, frozenset[int]] = {
 MIN_EXPIRY_HOLD = timedelta(minutes=90)
 
 
+async def fetch_option_catalog(client: DeltaClient, underlying: str) -> list[dict[str, Any]]:
+    """Read Delta's live products and authoritative settlement times for manual schedules."""
+    response = await client.request(
+        "GET",
+        "/v2/tickers",
+        query={"contract_types": "call_options,put_options", "underlying_asset_symbols": underlying},
+    )
+    rows = response.get("result")
+    if not isinstance(rows, list):
+        raise ValueError("Delta option catalog is unavailable")
+    representatives: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "")
+        match = re.search(r"-(\d{6})$", symbol)
+        if match and f"-{underlying}-" in symbol:
+            representatives.setdefault(match.group(1), symbol)
+
+    async def settlement(code: str, symbol: str) -> tuple[str, str | None]:
+        product = await client.request("GET", f"/v2/products/{quote(symbol, safe='')}")
+        value = product.get("result")
+        return code, str(value.get("settlement_time")) if isinstance(value, dict) and value.get(
+            "settlement_time"
+        ) else None
+
+    times = dict(await asyncio.gather(*(settlement(code, symbol) for code, symbol in representatives.items())))
+    options = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "")
+        match = re.search(r"-(\d{6})$", symbol)
+        expiry = times.get(match.group(1)) if match else None
+        if expiry:
+            options.append(
+                {
+                    "symbol": symbol,
+                    "expiry": expiry,
+                    "strike": row.get("strike_price"),
+                    "spot": row.get("spot_price"),
+                }
+            )
+    return options
+
+
 class ExitChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -30,12 +82,17 @@ class ExitChoice(BaseModel):
     expiry_number: Literal[1, 2] | None = None
 
     @model_validator(mode="after")
-    def validate_choice(self) -> "ExitChoice":
+    def validate_choice(self) -> ExitChoice:
         if self.kind in PRESETS:
             if self.hours not in PRESETS[self.kind] or self.exit_at is not None or self.expiry_number is not None:
                 raise ValueError(f"{self.kind} requires one of {sorted(PRESETS[self.kind])} hours only")
         elif self.kind == "specific_time":
-            if self.exit_at is None or self.exit_at.utcoffset() is None or self.hours is not None or self.expiry_number is not None:
+            if (
+                self.exit_at is None
+                or self.exit_at.utcoffset() is None
+                or self.hours is not None
+                or self.expiry_number is not None
+            ):
                 raise ValueError("specific_time requires a timezone-aware exit_at only")
         elif self.expiry_number not in (1, 2) or self.hours is not None or self.exit_at is not None:
             raise ValueError("expiry requires expiry_number 1 or 2 only")
@@ -106,6 +163,7 @@ def template_from_definition(value: dict[str, Any]) -> dict[str, Any]:
     """Discard schedule and expiry fields while retaining the strategy's trading rules."""
     template = deepcopy(value)
     template["schemaVersion"] = 3
+    template["sameExpiryRequired"] = True
     for key in ("entry", "holdingMode", "expiryPolicy", "selectionCriteria"):
         template.pop(key, None)
     for leg in template.get("legs") or []:
@@ -173,17 +231,21 @@ def resolve_exit_schedule(
     crossings = session_number(exit_at) - session_number(entry)
     live["entry"] = {
         "strategyType": "intraday" if crossings == 0 else "btst" if crossings == 1 else "positional",
-        "entryAt": entry.isoformat(), "exitAt": exit_at.isoformat(),
+        "entryAt": entry.isoformat(),
+        "exitAt": exit_at.isoformat(),
     }
     for leg in live["legs"]:
         leg["expiry"] = expiry.astimezone(IST).date().isoformat()
     definition = StrategyDefinition.model_validate(live).model_dump(mode="json", exclude_none=True)
     detail = {
-        "entryUtc": entry.isoformat(), "entryIst": entry.astimezone(IST).isoformat(),
-        "exitUtc": exit_at.isoformat(), "exitIst": exit_at.astimezone(IST).isoformat(),
+        "entryUtc": entry.isoformat(),
+        "entryIst": entry.astimezone(IST).isoformat(),
+        "exitUtc": exit_at.isoformat(),
+        "exitIst": exit_at.astimezone(IST).isoformat(),
         "durationMinutes": int((exit_at - entry).total_seconds() // 60),
         "sessionCrossings": crossings,
-        "contractExpiryUtc": expiry.isoformat(), "contractExpiryIst": expiry.astimezone(IST).isoformat(),
+        "contractExpiryUtc": expiry.isoformat(),
+        "contractExpiryIst": expiry.astimezone(IST).isoformat(),
         "latestSafeExitUtc": (expiry - cutoff).isoformat(),
         "choice": choice.model_dump(mode="json", exclude_none=True),
     }

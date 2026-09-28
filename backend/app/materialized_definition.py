@@ -5,6 +5,7 @@ from typing import Any
 from .errors import AppError
 
 MUTABLE = {
+    "schemaVersion",
     "entry",
     "legs",
     "holdingMode",
@@ -18,6 +19,8 @@ ENTRY_MUTABLE = {"entryAt", "exitAt", "strategyType"}
 
 
 def validate_materialized_definition(source: dict[str, Any], proposed: dict[str, Any]) -> None:
+    if source.get("schemaVersion") == 3 and proposed.get("schemaVersion") != 2:
+        raise AppError(422, "Invalid resolved strategy version", "definition_changed")
     if proposed.get("holdingMode") not in {None, "intraday", "hold_to_expiry"}:
         raise AppError(422, "Invalid holding mode", "definition_changed")
     if proposed.get("expiryPolicy") not in {None, "same_day", "next_day", "7_day", "30_day", "auto"}:
