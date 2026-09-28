@@ -16,7 +16,7 @@ from .owner_ledger import record_policy
 
 DEFAULT_AUTOMATION = {
     "enabled": False,
-    "model_id": "xiaomi/mimo-v2.6-pro",
+    "model_id": "deepseek/deepseek-v4.1-flash",
     "minimum_follow_up_minutes": 5,
     "maximum_agent_runs_per_day": 3,
 }
@@ -198,13 +198,25 @@ class LocalApplicationData:
         user_id = value["user_id"]
         await self.ensure_user(user_id)
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("select record from trade.users where user_id=%s for update", (user_id,))
+            await cursor.execute("select capital,record from trade.users where user_id=%s for update", (user_id,))
             current = await cursor.fetchone()
             record = {**current["record"], "capital": value, "updatedAt": datetime.now(UTC).isoformat()}
             await cursor.execute(
                 "update trade.users set capital=%s,record=%s where user_id=%s",
                 (Jsonb({key: value[key] for key in ("allocation_mode", "capital_amount")}), Jsonb(record), user_id),
             )
+            actor = args.get("actorId")
+            if actor is not None:
+                # An owner change is audited with the policy write; if the audit fails, neither is saved.
+                previous = current["capital"] or {}
+                await cursor.execute(
+                    """insert into owner_reporting.capital_policy_changes
+                       (actor_user_id,target_user_id,old_allocation_mode,old_capital_amount,
+                        new_allocation_mode,new_capital_amount)
+                       values (%s,%s,%s,%s,%s,%s)""",
+                    (actor, user_id, previous.get("allocation_mode"), previous.get("capital_amount"),
+                     value["allocation_mode"], value["capital_amount"]),
+                )
             await record_policy(connection, user_id, value["allocation_mode"], value["capital_amount"])
 
     async def _library_get(self, args: dict[str, Any]) -> dict[str, Any] | None:

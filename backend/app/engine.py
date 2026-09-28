@@ -271,13 +271,19 @@ class TradingEngine:
     async def saved_strategies(self, user_id: str, strategy_id: str | None = None) -> list[dict[str, Any]]:
         return await self.application_data.saved_strategies(user_id, strategy_id)
 
-    async def save_capital_policy(self, user_id: str, mode: str, amount: float | None) -> None:
+    async def save_capital_policy(
+        self, user_id: str, mode: str, amount: float | None, *, actor_id: str | None = None
+    ) -> None:
+        """Save an account's per-strategy budget. ``actor_id`` marks an owner change and audits it."""
         payload = {
             "user_id": user_id,
             "allocation_mode": mode,
             "capital_amount": str(amount) if mode == "fixed_amount" else None,
         }
-        await self.application_data.request("library:setCapital", {"value": payload}, mutation=True)
+        args: dict[str, Any] = {"value": payload}
+        if actor_id is not None:
+            args["actorId"] = actor_id
+        await self.application_data.request("library:setCapital", args, mutation=True)
 
     async def usd_capital(self, client: DeltaClient) -> tuple[Decimal, Decimal]:
         balances = (await client.balances()).get("result") or []
