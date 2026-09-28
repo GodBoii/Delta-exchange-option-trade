@@ -45,6 +45,8 @@ from .models import (
     StrategyDefinition,
 )
 from .portfolio_stream import serve_portfolio
+from .push import PushNotifier
+from .push_api import router as push_router
 from .reporting_api import WalletProbe
 from .reporting_api import router as reporting_router
 from .strategy import delta_expiry
@@ -77,7 +79,16 @@ async def lifespan(app: FastAPI):
     engine_settings = (
         settings if settings.trading_writer_enabled else settings.model_copy(update={"delta_events_enabled": False})
     )
-    engine = TradingEngine(db, engine_settings)
+    # Only the writer changes trade state, so only the writer sends trade alerts.
+    push = PushNotifier(
+        pool,
+        public_key=settings.vapid_public_key,
+        private_key=settings.vapid_private_key if settings.trading_writer_enabled else None,
+        subject=settings.vapid_subject,
+    )
+    if settings.trading_writer_enabled and not push.enabled:
+        logger.warning("Phone notifications are off: VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are not set")
+    engine = TradingEngine(db, engine_settings, notifier=push)
     scheduler = Scheduler(
         engine,
         settings.scheduler_poll_seconds,
@@ -87,6 +98,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.change_feed = change_feed
     app.state.engine = engine
+    app.state.push = push
     app.state.scheduler = scheduler
     app.state.automation_scheduler = automation_scheduler
     if settings.trading_writer_enabled:
@@ -158,6 +170,7 @@ app.add_middleware(
 )
 app.include_router(automation_router)
 app.include_router(reporting_router)
+app.include_router(push_router)
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 OptionalUser = Annotated[dict[str, Any] | None, Depends(optional_user)]

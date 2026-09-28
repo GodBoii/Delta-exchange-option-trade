@@ -23,6 +23,7 @@ from .fill_accounting import PositionResult, exclusive_fill_positions
 from .local_journal import LocalOrderJournal
 from .models import StrategyDefinition
 from .order_journal import OrderJournal
+from .push import PushNotifier, StrategyEvent, strategy_message
 from .run_accounting import run_detail_payload
 from .settlement import (
     decimal_value,
@@ -132,9 +133,10 @@ def settlement_client_order_id(strategy_id: str, fill: dict[str, Any]) -> str:
 
 
 class TradingEngine:
-    def __init__(self, db: Database, settings: Settings) -> None:
+    def __init__(self, db: Database, settings: Settings, notifier: PushNotifier | None = None) -> None:
         self.db = db
         self.settings = settings
+        self.notifier = notifier
         self.contract_values: dict[str, Decimal] = {}
         self.product_specs: dict[str, dict[str, Any]] = {}
         self.last_attention_reconcile = 0.0
@@ -622,6 +624,28 @@ class TradingEngine:
         if not rows:
             raise AppError(409, "Only draft or scheduled strategies can be cancelled", "cannot_cancel")
 
+    def notify_strategy(self, strategy_id: str, event: StrategyEvent, detail: str | None = None) -> None:
+        """Queue a phone alert for a lifecycle change. Never raises into the trading path."""
+        if self.notifier is None:
+            return
+        self.notifier.spawn(
+            self._send_strategy_notice(strategy_id, event, detail), name=f"push-{event}-{strategy_id}"
+        )
+
+    async def _send_strategy_notice(self, strategy_id: str, event: StrategyEvent, detail: str | None) -> None:
+        # Loaded after the state change commits, so the alert shows the final P&L and exit reason.
+        row = await self.strategy_by_id(strategy_id)
+        orders = await self.entry_orders(strategy_id)
+        message = strategy_message(
+            event=event,
+            strategy_id=strategy_id,
+            row=row,
+            legs=[(order.get("side"), order.get("product_symbol")) for order in orders],
+            detail=detail,
+        )
+        if self.notifier is not None:
+            await self.notifier.send(str(row["user_id"]), message)
+
     async def strategy_by_id(self, strategy_id: str) -> dict[str, Any]:
         rows = await self.db.select("strategies", {"select": "*", "id": f"eq.{strategy_id}", "limit": "1"})
         if not rows:
@@ -1094,6 +1118,7 @@ class TradingEngine:
                 ),
             )
             if failure:
+                self.notify_strategy(strategy_id, "entry_failed", str(failure))
                 if submitted_orders == 0 and not reservation_should_remain:
                     await self.release_capital_slot(str(row["user_id"]), strategy_id)
                 else:
@@ -1119,6 +1144,7 @@ class TradingEngine:
                 {"strategy_id": f"eq.{strategy_id}", "status": "eq.scheduled"},
             )
             reservation_should_remain = True
+            self.notify_strategy(strategy_id, "activated")
             return {
                 "executionId": execution_id,
                 "legs": len(resolved),
@@ -1456,6 +1482,7 @@ class TradingEngine:
         if not updated:
             raise AppError(500, "Could not finalize the Delta settlement", "settlement_finalize_failed")
         await self.release_capital_slot(str(row["user_id"]), strategy_id)
+        self.notify_strategy(strategy_id, "closed", "Settled at expiry")
         logger.info("Reconciled Delta settlement strategy_id=%s user_id=%s", strategy_id, row["user_id"])
         return summary
 
@@ -2396,8 +2423,10 @@ class TradingEngine:
             )
             settlement = await self.record_settlement(client, strategy_id)
             if failure:
+                self.notify_strategy(strategy_id, "exit_failed", str(failure))
                 raise failure
             await self.release_capital_slot(str(row["user_id"]), strategy_id)
+            self.notify_strategy(strategy_id, "closed")
             return {
                 "executionId": execution_id,
                 "ordersSubmitted": submitted,
@@ -2591,6 +2620,7 @@ class TradingEngine:
         )
         if not rows:
             return
+        self.notify_strategy(strategy_id, "entry_rejected", error.message)
         await self.write_audit(
             "strategy_proposals",
             {"status": "rejected", "rejection_reason": reason},

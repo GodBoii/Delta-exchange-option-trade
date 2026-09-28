@@ -53,6 +53,10 @@ class Settings(BaseSettings):
         "https://www.tradecognition.online"
     )
     frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+    # Web Push keys (base64url, from scripts/generate_vapid_keys.py). Push is off while either is empty.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    vapid_subject: str = "mailto:alerts@tradecognition.online"
     log_level: str = "INFO"
 
     @model_validator(mode="after")
