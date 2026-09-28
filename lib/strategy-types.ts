@@ -21,7 +21,7 @@ export type StrategyLeg = {
   lots: number;
   position: "buy" | "sell";
   optionType: "call" | "put";
-  /** Fallback date for legacy runs and previews. New definitions use expiryPolicy. */
+  /** Resolved on a scheduled run; absent from saved v3 templates. */
   expiry: string;
   strikeMode: "atm" | "itm" | "otm" | "exact";
   strikeSteps: number;

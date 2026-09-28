@@ -138,11 +138,13 @@ def exit_templates(cursor: psycopg.Cursor, apply: bool) -> int:
     )
     rows = cursor.fetchall()
     canonical = {item.name: item.description for item in builtin_strategy_definitions(datetime.now(UTC))}
-    names = {row["name"] for row in rows}
+    shared_names = {row["name"] for row in rows if row["user_id"] is None}
     duplicate_ids = [
         row["id"]
         for row in rows
-        if row["name"].endswith(RETIRED_SUFFIX) and row["name"].removesuffix(RETIRED_SUFFIX) in names
+        if row["user_id"] is None
+        and row["name"].endswith(RETIRED_SUFFIX)
+        and row["name"].removesuffix(RETIRED_SUFFIX) in shared_names
     ]
     if apply:
         cursor.execute(

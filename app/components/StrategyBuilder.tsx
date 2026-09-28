@@ -73,7 +73,7 @@ const initialStrategy = (): StrategyDefinition => ({
   instrument: { index: "BTCUSD", underlying: "BTC", underlyingFrom: "cash" },
   entry: { strategyType: "intraday", entryAt: toIso(localDateTime(1)), exitAt: toIso(localDateTime(8)) },
   holdingMode: "hold_to_expiry",
-  expiryPolicy: "same_day",
+  expiryPolicy: "auto",
   exitMinutesBeforeExpiry: 5,
   sameExpiryRequired: true,
   squareOff: "complete",

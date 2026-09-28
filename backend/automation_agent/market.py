@@ -5,7 +5,7 @@ import math
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -182,7 +182,8 @@ class MarketIntelligenceTools(Toolkit):
                     settlement = product.get("settlement_time")
                 except (httpx.HTTPError, ValueError, AttributeError):
                     settlement = None
-                settlements[code] = str(settlement or _expiry_from_symbol(symbol) or "")
+                # A symbol date is not proof of the exchange's actual settlement timestamp.
+                settlements[code] = str(settlement or "")
             for option in options:
                 code = _expiry_code(str(option.get("symbol") or ""))
                 option["expiry"] = settlements.get(code or "") or option.get("expiry")
@@ -323,12 +324,3 @@ def _expiry_code(symbol: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _expiry_from_symbol(symbol: str) -> str | None:
-    code = _expiry_code(symbol)
-    if not code:
-        return None
-    try:
-        expiry_date = datetime.strptime(code, "%d%m%y").date()
-    except ValueError:
-        return None
-    return datetime.combine(expiry_date, time(12), tzinfo=UTC).isoformat()

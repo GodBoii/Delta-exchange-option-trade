@@ -482,7 +482,7 @@ export function RunDetailDialog({ run, refreshToken, onClose, onAction, load, no
     { label: "Underlying price from", value: readable(definition.instrument?.underlyingFrom) },
     { label: "Strategy type", value: readable(definition.entry?.strategyType) },
     { label: "Holding mode", value: readable(definition.holdingMode) },
-    { label: "Expiry selection", value: definition.expiryPolicy === "next_day" ? "Next listed expiry after entry date" : readable(definition.expiryPolicy) },
+    { label: "Expiry selection", value: definition.expiryPolicy === "auto" ? "Selected to cover planned exit" : definition.expiryPolicy === "next_day" ? "Next listed expiry after entry date" : readable(definition.expiryPolicy) },
     { label: "Lot sizing", value: definition.lotsMode === "auto" ? "Automatic, see filled lots below" : "Manual" },
     { label: "Square off", value: readable(definition.squareOff) },
     { label: "Risk mode", value: readable(definition.riskMode) },
