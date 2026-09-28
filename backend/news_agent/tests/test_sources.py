@@ -23,6 +23,21 @@ def test_rss_cards_keep_article_links_and_dates() -> None:
     assert cards[0]["url"].endswith("/a.htm")
 
 
+def test_discovery_feed_keeps_original_publisher_and_provenance() -> None:
+    source = Source("Google News asset", "discovery", "https://news.google.com/rss/search?q=ethereum")
+    cards = parse_feed(
+        b"<rss><channel><item><title>Ethereum update</title>"
+        b"<link>https://news.google.com/rss/articles/example</link>"
+        b"<source>CoinDesk</source><pubDate>Mon, 28 Sep 2026 12:00:00 GMT</pubDate>"
+        b"</item></channel></rss>",
+        source,
+        "2026-09-28T12:01:00+00:00",
+    )
+    assert cards[0]["publisher"] == "CoinDesk"
+    assert cards[0]["kind"] == "discovery"
+    assert "open the publisher" in cards[0]["note"]
+
+
 def test_calendar_and_prediction_markets_remain_distinct_from_news() -> None:
     calendar = Source("Forex Factory", "calendar", "https://example.com/week.json")
     cards = parse_calendar(
@@ -77,6 +92,7 @@ async def test_source_curation_keeps_good_items_when_another_feed_fails(monkeypa
     result = json.loads(await tools.curate_public_sources("ETH", ["policy"]))
     assert len(result["sources"]) == 1
     assert result["errors"][0]["source"] == "bad"
+    assert tools.source_index["https://example.com/story"]["source"] == "good"
 
 
 @pytest.mark.asyncio

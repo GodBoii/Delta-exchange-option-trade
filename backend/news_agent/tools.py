@@ -429,9 +429,17 @@ def deduplicate_articles(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class NewsResearchTools(Toolkit):
     """Bounded article retrieval. No browser, image search, or repeated page downloads."""
 
-    def __init__(self, settings: NewsAgentSettings, budget: ResearchBudget | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        settings: NewsAgentSettings,
+        budget: ResearchBudget | None = None,
+        *,
+        source_index: dict[str, dict[str, str | None]] | None = None,
+        **kwargs: Any,
+    ) -> None:
         self.settings = settings
         self.budget = budget or ResearchBudget()
+        self.source_index = source_index if source_index is not None else {}
         self.cache: dict[str, dict[str, Any]] = {}
         self.pending: dict[str, asyncio.Task] = {}
         self.domain_failures: dict[str, int] = {}
@@ -462,6 +470,14 @@ class NewsResearchTools(Toolkit):
                 article["source_class"] = classify_source_url(fetched.final_url)["source_class"]
                 article["final_url"] = fetched.final_url
                 article["requested_url"] = fetched.requested_url
+                feed_source = self.source_index.get(canonicalize_url(fetched.requested_url)) or self.source_index.get(
+                    canonicalize_url(fetched.final_url)
+                )
+                if feed_source:
+                    article["feed_published_at"] = feed_source["published_at"]
+                    if not article.get("published_at") and feed_source["published_at"]:
+                        article["published_at"] = feed_source["published_at"]
+                        article["publication_date_source"] = "source_feed"
                 # Image URLs alone are not visual evidence. Keep compact provenance for later inspection.
                 article["images"] = article["images"][:3]
                 if len(article.get("text") or "") < 200:

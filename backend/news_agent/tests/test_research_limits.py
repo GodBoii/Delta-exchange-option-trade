@@ -18,6 +18,22 @@ HTML = (
 
 
 @pytest.mark.asyncio
+async def test_article_uses_feed_date_when_page_has_no_publication_metadata(monkeypatch):
+    async def fetch(url, *_, **__):
+        return FetchResult(url, url, "text/html", HTML)
+
+    monkeypatch.setattr("news_agent.tools.fetch_public_document", fetch)
+    url = "https://example.com/story"
+    tools = NewsResearchTools(
+        SETTINGS,
+        source_index={url: {"source": "official", "published_at": "2026-09-28T12:00:00+00:00"}},
+    )
+    article = json.loads(await tools.read_news_article(url))["article"]
+    assert article["published_at"] == "2026-09-28T12:00:00+00:00"
+    assert article["publication_date_source"] == "source_feed"
+
+
+@pytest.mark.asyncio
 async def test_dossier_fetches_concurrently_and_reuses_article_cache(monkeypatch):
     active = maximum = calls = 0
 

@@ -55,6 +55,8 @@ SOURCES = (
     Source("BLS calendar", "calendar", "https://www.bls.gov/schedule/news_release/bls.ics"),
     Source("Forex Factory calendar", "calendar", "https://nfs.faireconomy.media/ff_calendar_thisweek.json"),
     Source("CoinDesk", "publisher", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    Source("Decrypt", "publisher", "https://decrypt.co/feed"),
+    Source("Blockworks", "publisher", "https://blockworks.com/feed"),
     Source("Cointelegraph Bitcoin", "publisher", "https://cointelegraph.com/rss/tag/bitcoin", ("BTC",)),
     Source("Cointelegraph Ethereum", "publisher", "https://cointelegraph.com/rss/tag/ethereum", ("ETH",)),
     Source("Ethereum Foundation", "organization", "https://blog.ethereum.org/en/feed.xml", ("ETH",)),
@@ -154,6 +156,14 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
             ),
             excerpt=field("description", "{http://www.w3.org/2005/Atom}summary"),
             retrieved=retrieved,
+            extra=(
+                {
+                    "publisher": field("source"),
+                    "note": "Discovery lead; open the publisher article before citing it",
+                }
+                if source.kind == "discovery"
+                else None
+            ),
         )
         if card:
             cards.append(card)
@@ -296,6 +306,12 @@ def _sources(asset: str, topics: list[str]) -> list[Source]:
     selected = [source for source in SOURCES if asset in source.assets]
     query = " ".join(topics).strip()[:160]
     for label, term in (
+        ("asset", "Ethereum ETH staking ETF" if asset == "ETH" else "Bitcoin BTC ETF"),
+        ("global", query or "central bank inflation geopolitics"),
+    ):
+        params = urlencode({"q": f"{term} when:2d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
+        selected.append(Source(f"Google News {label}", "discovery", f"https://news.google.com/rss/search?{params}"))
+    for label, term in (
         ("asset", "Ethereum OR ETH" if asset == "ETH" else "Bitcoin OR BTC"),
         ("global", query or "central bank inflation geopolitics"),
     ):
@@ -319,6 +335,7 @@ class PublicSourceTools(Toolkit):
     def __init__(self, settings: NewsAgentSettings, budget: ResearchBudget, **kwargs: Any) -> None:
         self.settings = settings
         self.budget = budget
+        self.source_index: dict[str, dict[str, str | None]] = {}
         self.search = WebSearchTools(budget, timelimit="w")
         super().__init__(
             name="public_source_tools",
@@ -429,7 +446,7 @@ class PublicSourceTools(Toolkit):
             async def collect(source: Source) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
                 started = time.perf_counter()
                 try:
-                    async with semaphore, asyncio.timeout(self.budget.remaining(35)):
+                    async with semaphore, asyncio.timeout(self.budget.remaining(12)):
                         fetched = await fetch_public_document(
                             source.url, self.settings, client=client, accepted_types=SOURCE_TYPES
                         )
@@ -489,6 +506,10 @@ class PublicSourceTools(Toolkit):
                         continue
                 seen.add(item["url"])
                 cards.append(item)
+                self.source_index[item["url"]] = {
+                    "source": item["source"],
+                    "published_at": item["published_at"],
+                }
                 count += 1
                 if count >= (1 if older and item["kind"] != "expectations" else 4):
                     break

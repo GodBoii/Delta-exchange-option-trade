@@ -31,10 +31,13 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     assert agent.send_media_to_model is True
     assert any("Inspect images attached to the run" in instruction for instruction in agent.instructions)
     assert [type(toolkit).__name__ for toolkit in agent.tools] == [
-        "PublicSourceTools", "WebSearchTools", "NewsResearchTools",
+        "PublicSourceTools",
+        "WebSearchTools",
+        "NewsResearchTools",
     ]
     assert agent.tools[1].timeout == 10
     assert agent.tools[1].fixed_max_results == 10
+    assert agent.tools[1].timelimit == "w"
 
     tool_names = {name for toolkit in agent.tools for name in toolkit.async_functions}
     assert tool_names == {

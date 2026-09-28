@@ -31,7 +31,12 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRou
 
 
 def _create_research_tools(settings: NewsAgentSettings, budget: ResearchBudget) -> list:
-    return [PublicSourceTools(settings, budget), WebSearchTools(budget), NewsResearchTools(settings, budget)]
+    public_sources = PublicSourceTools(settings, budget)
+    return [
+        public_sources,
+        WebSearchTools(budget, timelimit="w"),
+        NewsResearchTools(settings, budget, source_index=public_sources.source_index),
+    ]
 
 
 def create_news_agent(
@@ -70,6 +75,8 @@ def create_news_agent(
             "results are about unrelated assets, stale pages, or generic price profiles.",
             "Use source cards as leads, not as a complete account. Distinguish a fetched article from a search "
             "snippet and a public post from a verified announcement.",
+            "For Google News discovery cards, find and read the original publisher article before citing it; "
+            "the Google News link is a discovery link, not the publisher's article URL.",
             "Treat search results with no reliable publication date as undated. Open the original page before "
             "describing a post or announcement as current.",
         ]
