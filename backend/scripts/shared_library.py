@@ -22,7 +22,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from app.default_strategies import builtin_strategy_definitions
-from app.models import StrategyDefinition
+from app.exit_schedule import validate_template
 
 # Stable identities for templates added after the original catalog, so reruns stay idempotent.
 FIXED_IDS = {
@@ -38,6 +38,7 @@ ETH_FIXED_IDS = {
     "ETH Short ATM straddle - next-day expiry": "20000000-0000-4000-8000-000000000006",
 }
 OPEN_STATUSES = ("scheduled", "executing_entry", "active", "executing_exit", "attention")
+RETIRED_SUFFIX = " - next-day expiry"
 
 
 def shared_templates(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
@@ -50,7 +51,7 @@ def shared_templates(cursor: psycopg.Cursor) -> list[dict[str, Any]]:
 
 
 def update_definition(cursor: psycopg.Cursor, row: dict[str, Any], definition: dict[str, Any]) -> None:
-    StrategyDefinition.model_validate(definition)
+    definition = validate_template(definition)
     cursor.execute(
         """update trade.saved_strategies
            set definition_json=%s, version=version+1, updated_at=now()
@@ -80,7 +81,7 @@ def seed(cursor: psycopg.Cursor, apply: bool) -> int:
                 (
                     {**FIXED_IDS, **ETH_FIXED_IDS}.get(item.name, str(uuid4())),
                     item.name,
-                    Jsonb(item.model_dump(mode="json", exclude_none=True)),
+                    Jsonb(validate_template(item.model_dump(mode="json", exclude_none=True))),
                     now,
                     now,
                 ),
@@ -129,15 +130,69 @@ def take_profit(cursor: psycopg.Cursor, apply: bool) -> int:
     return changed
 
 
+def exit_templates(cursor: psycopg.Cursor, apply: bool) -> int:
+    """Convert saved templates and retire duplicate expiry-only entries."""
+    cursor.execute(
+        """select id::text as id,user_id,name,definition_json,version from trade.saved_strategies
+           where not deleted order by id for update"""
+    )
+    rows = cursor.fetchall()
+    canonical = {item.name: item.description for item in builtin_strategy_definitions(datetime.now(UTC))}
+    names = {row["name"] for row in rows}
+    duplicate_ids = [
+        row["id"]
+        for row in rows
+        if row["name"].endswith(RETIRED_SUFFIX) and row["name"].removesuffix(RETIRED_SUFFIX) in names
+    ]
+    if apply:
+        cursor.execute(
+            """select count(*) as count from trade.strategy_proposals
+               where status='scheduled' and activation_time>now()""",
+        )
+        if cursor.fetchone()["count"]:
+            raise RuntimeError("A future proposal is pending; retry after its activation recheck")
+    changed = 0
+    for row in rows:
+        if row["id"] in duplicate_ids:
+            print(f"{'Retiring' if apply else 'Would retire'} {row['name']}")
+            if apply:
+                cursor.execute(
+                    """update trade.saved_strategies set deleted=true,enabled_for_ai=false,
+                       version=version+1,updated_at=now() where id=%s and version=%s""",
+                    (row["id"], row["version"]),
+                )
+            changed += 1
+            continue
+        definition = validate_template(row["definition_json"])
+        if row["user_id"] is None and row["name"] in canonical:
+            definition["description"] = canonical[row["name"]]
+        if definition == row["definition_json"]:
+            continue
+        print(f"{'Converting' if apply else 'Would convert'} {row['name']}")
+        if apply:
+            cursor.execute(
+                """update trade.saved_strategies set definition_json=%s,version=version+1,
+                   updated_at=now() where id=%s and version=%s""",
+                (Jsonb(definition), row["id"], row["version"]),
+            )
+        changed += 1
+    return changed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("seed", "descriptions", "take-profit"))
+    parser.add_argument("command", choices=("seed", "descriptions", "take-profit", "exit-templates"))
     parser.add_argument("--apply", action="store_true", help="Commit the changes")
     parser.add_argument("--database-url", default=os.getenv("LOCAL_DATABASE_URL"))
     args = parser.parse_args()
     if not args.database_url:
         raise RuntimeError("LOCAL_DATABASE_URL is required")
-    operation = {"seed": seed, "descriptions": descriptions, "take-profit": take_profit}[args.command]
+    operation = {
+        "seed": seed,
+        "descriptions": descriptions,
+        "take-profit": take_profit,
+        "exit-templates": exit_templates,
+    }[args.command]
     with psycopg.connect(args.database_url, row_factory=dict_row) as connection, connection.cursor() as cursor:
         changed = operation(cursor, args.apply)
         if not args.apply:

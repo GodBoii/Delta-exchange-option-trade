@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from .errors import AppError
+from .exit_schedule import validate_template
 from .owner_ledger import record_policy
 
 DEFAULT_AUTOMATION = {
@@ -214,8 +215,14 @@ class LocalApplicationData:
                        (actor_user_id,target_user_id,old_allocation_mode,old_capital_amount,
                         new_allocation_mode,new_capital_amount)
                        values (%s,%s,%s,%s,%s,%s)""",
-                    (actor, user_id, previous.get("allocation_mode"), previous.get("capital_amount"),
-                     value["allocation_mode"], value["capital_amount"]),
+                    (
+                        actor,
+                        user_id,
+                        previous.get("allocation_mode"),
+                        previous.get("capital_amount"),
+                        value["allocation_mode"],
+                        value["capital_amount"],
+                    ),
                 )
             await record_policy(connection, user_id, value["allocation_mode"], value["capital_amount"])
 
@@ -314,9 +321,7 @@ class LocalApplicationData:
             raise AppError(422, "Use the shared analysis settings for the global switch", "automation_target_invalid")
         await self.ensure_user(user_id)
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute(
-                "select automation,record from trade.users where user_id=%s for update", (user_id,)
-            )
+            await cursor.execute("select automation,record from trade.users where user_id=%s for update", (user_id,))
             current = await cursor.fetchone()
             previous = current["automation"].get("enabled")
             value = {**DEFAULT_AUTOMATION, **current["automation"], "enabled": enabled, "model_id": model_id}
@@ -424,6 +429,10 @@ class LocalApplicationData:
             or len(value["definitionJson"]) > 262144
         ):
             raise AppError(422, "Invalid strategy definition", "strategy_definition_invalid")
+        try:
+            definition = validate_template(definition)
+        except ValueError as error:
+            raise AppError(422, "Invalid strategy template", "strategy_definition_invalid") from error
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute("select owner_user_id from trade.system_settings where key='main'")
             owner = await cursor.fetchone()

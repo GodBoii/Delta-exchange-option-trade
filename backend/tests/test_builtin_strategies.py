@@ -14,7 +14,7 @@ from automation_agent.tools import materialize_live_definition
 
 NOW = datetime(2026, 9, 4, 14, tzinfo=UTC)
 DEFINITIONS = default_strategy_definitions(NOW)
-ADDED = DEFINITIONS[6:13]
+ADDED = DEFINITIONS[6:10]
 CHAIN = [
     {
         "product_id": strike + offset,
@@ -56,9 +56,13 @@ def test_new_credit_spreads_have_a_bounded_expiry_loss(name, kind):
         assert protection["strike"] > short["strike"]
     payoff = [
         {
-            "side": leg["position"], "option_type": kind, "expiry": leg["expiry"],
-            "strike": leg["strike"], "entry_price": 20 if leg["position"] == "buy" else 80,
-            "filled_size": 1, "contract_value": ".001",
+            "side": leg["position"],
+            "option_type": kind,
+            "expiry": leg["expiry"],
+            "strike": leg["strike"],
+            "entry_price": 20 if leg["position"] == "buy" else 80,
+            "filled_size": 1,
+            "contract_value": ".001",
         }
         for leg in resolved
     ]
@@ -126,9 +130,15 @@ async def test_builtin_entry_preserves_sizing_and_short_emergency_stops(definiti
             return_value={"result": [{"asset_symbol": "USD", "balance": "100", "available_balance": "100"}]}
         ),
         option_chain=AsyncMock(return_value={"result": CHAIN}),
-        product=AsyncMock(return_value={"result": {
-            "contract_value": "0.001", "initial_margin": "0.5", "taker_commission_rate": "0.0001",
-        }}),
+        product=AsyncMock(
+            return_value={
+                "result": {
+                    "contract_value": "0.001",
+                    "initial_margin": "0.5",
+                    "taker_commission_rate": "0.0001",
+                }
+            }
+        ),
         place_order=AsyncMock(
             return_value={"result": {"id": 123, "unfilled_size": 0, "average_fill_price": "100", "state": "closed"}}
         ),
@@ -174,19 +184,29 @@ async def test_credit_spread_entry_buys_protection_before_selling_short(definiti
     ]
 
     async def place_order(order):
-        return {"result": {
-            "id": 123 + (order["side"] == "sell"), "unfilled_size": 0,
-            "average_fill_price": "20" if order["side"] == "buy" else "80", "state": "closed",
-        }}
+        return {
+            "result": {
+                "id": 123 + (order["side"] == "sell"),
+                "unfilled_size": 0,
+                "average_fill_price": "20" if order["side"] == "buy" else "80",
+                "state": "closed",
+            }
+        }
 
     client = SimpleNamespace(
-        balances=AsyncMock(return_value={"result": [
-            {"asset_symbol": "USD", "balance": "100", "available_balance": "100"}
-        ]}),
+        balances=AsyncMock(
+            return_value={"result": [{"asset_symbol": "USD", "balance": "100", "available_balance": "100"}]}
+        ),
         option_chain=AsyncMock(return_value={"result": quoted}),
-        product=AsyncMock(return_value={"result": {
-            "contract_value": "0.001", "initial_margin": "0.5", "taker_commission_rate": "0.0001",
-        }}),
+        product=AsyncMock(
+            return_value={
+                "result": {
+                    "contract_value": "0.001",
+                    "initial_margin": "0.5",
+                    "taker_commission_rate": "0.0001",
+                }
+            }
+        ),
         place_order=AsyncMock(side_effect=place_order),
         close=AsyncMock(),
     )
@@ -259,8 +279,12 @@ async def test_risk_checks_continue_between_persisted_snapshots():
     engine.contract_value = AsyncMock(return_value=Decimal("0.001"))
     orders = [
         {
-            "leg_id": leg.id, "product_symbol": f"product-{leg.id}", "side": leg.position,
-            "size": 1, "filled_size": 1, "average_fill_price": "100",
+            "leg_id": leg.id,
+            "product_symbol": f"product-{leg.id}",
+            "side": leg.position,
+            "size": 1,
+            "filled_size": 1,
+            "average_fill_price": "100",
         }
         for leg in definition.legs
     ]

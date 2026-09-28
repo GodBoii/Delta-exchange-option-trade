@@ -90,6 +90,7 @@ def test_collected_packet_includes_history_and_survives_history_failure(monkeypa
             200,
             json={
                 "symbol": "BTCUSDT",
+                "deltaContext": {"symbol": "BTCUSD"},
                 "interval": request.url.params["interval"],
                 "analysis": {"sidewaysProbability": 89},
                 "candles": [],

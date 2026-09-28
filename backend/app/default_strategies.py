@@ -137,7 +137,7 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Long ATM straddle",
             description=(
-                "Buy an at-the-money call and put with today's expiry when a sharp move is likely before expiry "
+                "Buy an at-the-money call and put when a sharp move is likely during the selected hold "
                 "but its direction is unclear. Either leg can gain from a large move. The combined debit is at "
                 "risk, and the move must outweigh both premiums, rapid same-day time decay, and any drop in "
                 "implied volatility."
@@ -193,8 +193,8 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Short ATM straddle",
             description=(
-                "Sell the at-the-money call and put with today's expiry when BTC is likely to remain close to "
-                "its current price until the expiry exit. Both premiums benefit from time decay. A strong move "
+                "Sell the at-the-money call and put when BTC is likely to remain close to "
+                "its current price through the selected hold. Both premiums benefit from time decay. A strong move "
                 "in either direction can overwhelm the credit; the uncovered shorts have substantial tail risk "
                 "and monitored stops cannot guarantee a loss limit."
             ),
@@ -213,8 +213,8 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             now,
             name="Short strangle",
             description=(
-                "Sell a call and put two listed strikes out of the money with today's expiry when BTC is "
-                "likely to remain between those strikes until the expiry exit. This collects less premium than "
+                "Sell a call and put two listed strikes out of the money when BTC is "
+                "likely to remain between those strikes through the selected hold. This collects less premium than "
                 "an at-the-money straddle but allows a wider range. A breakout or volatility surge can erase "
                 "the credit; both uncovered shorts have substantial tail risk."
             ),
@@ -310,42 +310,6 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             )
         )
 
-    existing = {definition["name"]: definition for definition in definitions}
-    for source_name, description in (
-        (
-            "Long ATM straddle",
-            "Buy an at-the-money call and put with the next listed expiry when a sharp BTC move is likely "
-            "during the planned hold but direction is unclear. This expiry keeps both legs alive beyond "
-            "today's settlement. The combined debit is at risk; the move must overcome both premiums, time "
-            "decay, and any drop in implied volatility.",
-        ),
-        (
-            "Short ATM straddle",
-            "Sell the at-the-money call and put with the next listed expiry when BTC is likely to stay "
-            "near its current price during the planned hold. This expiry covers a window beyond today's "
-            "settlement. Time decay helps both legs, but a directional move or volatility jump can exceed "
-            "the credit. Uncovered shorts carry substantial tail risk; stops cannot guarantee a loss limit.",
-        ),
-        (
-            "Short strangle",
-            "Sell a call and put two listed strikes out of the money with the next listed expiry when BTC "
-            "is likely to stay between those strikes during the planned hold. This expiry covers a window "
-            "beyond today's settlement. Time decay earns the credit while the range holds; a breakout or "
-            "volatility surge can erase it. Both uncovered shorts carry substantial tail risk.",
-        ),
-    ):
-        source = existing[source_name]
-        definitions.append(
-            {
-                **source,
-                "name": f"{source['name']} - next-day expiry",
-                "description": description,
-                "expiryPolicy": "next_day",
-                "holdingMode": "intraday",
-                "legs": [{**leg, "expiry": _fallback_expiry(now, "next_day")} for leg in source["legs"]],
-            }
-        )
-
     # Buy the farther wing first. Delta submits distinct option products one by one,
     # so an incomplete entry must not leave an uncovered short option behind.
     for option_type, outlook, boundary, name in (
@@ -402,8 +366,6 @@ ETH_TEMPLATE_SOURCES = (
     "Long put",
     "Long ATM straddle",
     "Short ATM straddle",
-    "Long ATM straddle - next-day expiry",
-    "Short ATM straddle - next-day expiry",
 )
 ETH_INSTRUMENT = {"index": "ETHUSD", "underlying": "ETH", "underlyingFrom": "cash"}
 
@@ -428,6 +390,6 @@ def eth_strategy_definitions(now: datetime | None = None) -> list[StrategyDefini
 
 
 def builtin_strategy_definitions(now: datetime | None = None) -> list[StrategyDefinition]:
-    """Every shared template: the fifteen BTC strategies followed by the six ETH strategies."""
+    """Every shared strategy shape: twelve BTC followed by four ETH templates."""
     now = now or datetime.now(UTC)
     return [*default_strategy_definitions(now), *eth_strategy_definitions(now)]

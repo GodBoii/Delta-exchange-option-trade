@@ -1,44 +1,13 @@
-# Agent holding decisions
+# Exit choices and contract expiry
 
-The saved seven-hour interval is a fallback, not a scheduler limit. The scheduling
-tool takes a short `strategy_ref` from `show_available_strategy`, chooses
-`holding_policy` and optionally `expiry_policy`, and derives proposal expiry
-server-side.
+Saved strategy templates contain legs, strike selection, order settings and risk controls. They do not contain an entry time, exit time or contract expiry. Each new scheduled run owns its resolved schedule and expiry. Older run snapshots keep their original definitions.
 
-| Policy | Required exit | Schedule |
-| --- | --- | --- |
-| saved | None | Preserve the template duration or expiry hold |
-| intraday | Aware ISO timestamp | Exit on the entry date in Asia/Kolkata |
-| overnight | Aware ISO timestamp | Exit on the following date in Asia/Kolkata |
-| positional | Aware ISO timestamp | Exit at the chosen time before the expiry buffer |
-| hold_to_expiry | None | Exit at contract expiry minus the saved buffer |
+Both the agent calculator and manual schedule preview use the server's exit resolver. The choices are intraday 7 or 11 hours, overnight 16 or 24 hours, positional 48 or 72 hours, a specific timezone-aware exit timestamp, or the first or second eligible listed contract expiry. A 17:30 IST boundary separates options sessions. Intraday stays inside one session; overnight crosses one boundary; positional crosses at least two. A preset that conflicts with its label is rejected.
 
-The supported expiry policies remain same_day, next_day, 7_day and 30_day. The
-resolver requires a listed contract satisfying the selected policy. Explicit
-timed exits past its safety buffer are rejected rather than silently shortened.
-Stops and profit targets can close the position earlier. The tool does not extend
-or modify an existing trade; its choices apply when scheduling a new run.
+The expiry exit choices skip any contract that would leave less than 90 minutes from entry to the saved expiry buffer. For every other choice, the resolver chooses the earliest listed expiry whose settlement time minus the buffer covers the full requested exit. It checks that all legs and strike rules can resolve at that expiry and uses one expiry across the strategy. It never truncates a requested hold to fit a contract. A specific-time choice may cross any number of sessions, but still needs an eligible listed contract.
 
-Timed overnight and positional holds use the existing `holdingMode=intraday`
-wire value for clock-based exits and `entry.strategyType=btst` or `positional`
-for the horizon. This preserves the existing UI and history schema. The stored
-exit timestamp controls the scheduler. These labels do not imply guaranteed
-holding until that time.
+The preview returns entry and exit in UTC and IST, elapsed minutes, options-session crossings, the chosen contract settlement, and the latest buffered exit. Selection recomputes the schedule against the current saved template version and market snapshot. A manual schedule carries the preview's exit and contract expiry; the server rejects it if either changed. At activation, the engine resolves the live chain and checks the selected products' actual settlement before any order is sent.
 
-Risk parameters, order types, strikes and sizing rules still come from the saved
-strategy. The agent explains its horizon in the existing reasoning summary. It
-must justify the entire hold using available market evidence, including event
-risk, liquidity, volatility and distance from short strikes.
+Stops and profit targets can close a strategy earlier than the scheduled exit. These choices do not extend or modify an active trade. The proposed future monitoring rules are recorded in [future active-trade monitoring](26-future-active-trade-monitoring.md).
 
-New built-in and builder defaults use a 50% take-profit target. Credit strategies
-target a buyback cost at 50% of entry credit; debit strategies target a sale value
-at 150% of entry debit. These are mark-based gross thresholds, before fees and
-execution slippage. Built-in entry legs use market orders. Engine exits already
-use reduce-only market orders. Custom manual limit orders remain supported.
-
-Use `python -m scripts.set_take_profit --apply` from `backend` to update the
-Convex-owned shared library with version checks. The command refuses to write
-while a strategy run is open and can be rerun safely.
-Existing scheduled, active and historical run snapshots are not rewritten.
-The agent tool and prompt changes require a backend deployment; Convex runtime
-users also require the updated materialized-definition validator.
+After building the matching writer and research images, run `python -m scripts.shared_library exit-templates` from `backend` to review the saved-library conversion. Run it again with `--apply` during the service handoff. The command refuses to convert while a future proposal awaits activation. It increments each changed template version once, leaves completed and open run snapshots alone, and retires the five duplicate next-day templates. Rerunning it makes no further changes.

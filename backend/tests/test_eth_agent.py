@@ -17,7 +17,7 @@ from news_analyzer.main import AutomationAnalysisRequest
 NOW = datetime(2026, 9, 27, 6, tzinfo=UTC)
 
 
-def test_eth_builtins_are_six_separate_atm_strategies():
+def test_eth_builtins_have_unique_atm_strategy_shapes():
     eth = eth_strategy_definitions(NOW)
 
     assert [item.name for item in eth] == [
@@ -25,16 +25,14 @@ def test_eth_builtins_are_six_separate_atm_strategies():
         "ETH Long put",
         "ETH Long ATM straddle",
         "ETH Short ATM straddle",
-        "ETH Long ATM straddle - next-day expiry",
-        "ETH Short ATM straddle - next-day expiry",
     ]
     assert all(item.instrument.index == "ETHUSD" and item.instrument.underlying == "ETH" for item in eth)
     assert all(leg.strikeMode == "atm" for item in eth for leg in item.legs)
     assert all("BTC" not in item.description for item in eth)
-    # The BTC catalog is untouched and the seed list carries both.
-    assert len(default_strategy_definitions(NOW)) == 15
+    # BTC and ETH catalogs each contain one template per strategy shape.
+    assert len(default_strategy_definitions(NOW)) == 12
     assert all(item.instrument.underlying == "BTC" for item in default_strategy_definitions(NOW))
-    assert len(builtin_strategy_definitions(NOW)) == 21
+    assert len(builtin_strategy_definitions(NOW)) == 16
 
 
 def test_asset_helpers_keep_legacy_btc_rows_and_prefix_other_assets():
@@ -85,9 +83,15 @@ def test_eth_market_tool_reads_the_eth_market_service_and_delta_eth_options(monk
         if request.url.path == "/v2/tickers":
             assert request.url.params["underlying_asset_symbols"] == "ETH"
             return httpx.Response(200, json={"result": []})
-        return httpx.Response(200, json={
-            "symbol": "ETHUSDT", "deltaContext": {"symbol": "ETHUSD"}, "candles": [], "analysis": {},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "symbol": "ETHUSDT",
+                "deltaContext": {"symbol": "ETHUSD"},
+                "candles": [],
+                "analysis": {},
+            },
+        )
 
     client = httpx.Client
     monkeypatch.setattr(
@@ -107,12 +111,15 @@ def test_eth_market_tool_reads_the_eth_market_service_and_delta_eth_options(monk
 @pytest.mark.parametrize("wrong_symbol,wrong_delta", [("BTCUSDT", "ETHUSD"), ("ETHUSDT", "BTCUSD")])
 def test_eth_market_tool_rejects_cross_asset_data(monkeypatch, wrong_symbol, wrong_delta):
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={
-            "symbol": wrong_symbol,
-            "deltaContext": {"symbol": wrong_delta},
-            "candles": [],
-            "analysis": {},
-        })
+        return httpx.Response(
+            200,
+            json={
+                "symbol": wrong_symbol,
+                "deltaContext": {"symbol": wrong_delta},
+                "candles": [],
+                "analysis": {},
+            },
+        )
 
     client = httpx.Client
     monkeypatch.setattr(
