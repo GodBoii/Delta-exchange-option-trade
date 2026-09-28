@@ -136,16 +136,23 @@ async def fetch_public_document(
     settings: NewsAgentSettings,
     *,
     client: httpx.AsyncClient | None = None,
+    accepted_types: frozenset[str] | None = None,
 ) -> FetchResult:
     """Fetch bounded public HTML; validate each redirect and cap decompressed bytes."""
     if client is None:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as owned:
-            return await fetch_public_document(url, settings, client=owned)
+            return await fetch_public_document(url, settings, client=owned, accepted_types=accepted_types)
     started = time.perf_counter()
     async with asyncio.timeout(30):
         current_url = await asyncio.to_thread(validate_public_url, url, settings.allowed_domains)
         requested_url = current_url
-        headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9"}
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/rss+xml,application/xml,"
+                "text/xml,application/json,text/calendar,text/plain;q=0.9"
+            ),
+        }
         visited: set[str] = set()
         for _ in range(6):
             if current_url in visited:
@@ -164,7 +171,8 @@ async def fetch_public_document(
                     continue
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                if content_type not in {"text/html", "application/xhtml+xml", "text/plain", ""}:
+                permitted = accepted_types or frozenset({"text/html", "application/xhtml+xml", "text/plain", ""})
+                if content_type not in permitted:
                     raise ValueError(f"Unsupported article content type: {content_type}")
                 body = bytearray()
                 async for chunk in response.aiter_bytes(chunk_size=65536):

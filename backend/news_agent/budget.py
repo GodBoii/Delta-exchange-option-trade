@@ -7,7 +7,7 @@ from collections import Counter
 class ResearchBudget:
     """One budget per analysis, shared by search and article tools, including nested reads."""
 
-    def __init__(self, seconds: float = 90, calls_per_tool: int = 10) -> None:
+    def __init__(self, seconds: float = 240, calls_per_tool: int = 10) -> None:
         self.seconds = seconds
         self.calls_per_tool = calls_per_tool
         self.deadline: float | None = None

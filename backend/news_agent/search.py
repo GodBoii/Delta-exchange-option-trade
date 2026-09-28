@@ -19,7 +19,7 @@ class WebSearchTools(AgnoWebSearchTools):
     def __init__(self, budget: ResearchBudget | None = None) -> None:
         self.budget = budget or ResearchBudget()
         self.cache: dict[tuple[str, str, int], str] = {}
-        super().__init__(timeout=10, fixed_max_results=10, timelimit="d")
+        super().__init__(timeout=10, fixed_max_results=10, timelimit=None)
 
     async def _search(self, name: str, query: str, max_results: int | None) -> str:
         started = time.perf_counter()
