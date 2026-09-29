@@ -1,5 +1,5 @@
 from scripts.model_replay import recorded_result
-from scripts.score_model_replay import price_outcome, proxy_correct, regime_label
+from scripts.score_model_replay import price_outcome, proxy_correct, regime_label, selection
 
 
 def test_replay_matches_arguments_and_preserves_empty_results():
@@ -39,3 +39,45 @@ def test_regime_parser_ignores_invalidation_and_missing_headings():
     assert regime_label("## Market regime\nBullish continuation.\n\n## Invalidation\nBearish below 100") == "bullish"
     assert regime_label("## Market regime\nBullish or bearish breakout possible") == "unscored"
     assert regime_label("Sideways market, but no explicit regime heading") == "unscored"
+    assert regime_label("## Market regime\n**Bullish continuation.** The sideways score is 90%.") == "bullish"
+
+
+def test_selection_keeps_only_the_matching_exit_preview():
+    import json
+
+    catalog = [
+        {
+            "tool_name": "show_available_strategy",
+            "result": json.dumps(
+                {
+                    "strategies": [
+                        {
+                            "strategyRef": "S01",
+                            "name": "Long call",
+                            "definition": {"legs": [{"position": "buy", "optionType": "call"}]},
+                        }
+                    ]
+                }
+            ),
+        }
+    ]
+    args = {
+        "strategy_ref": "S01",
+        "activation_time": "2026-09-29T05:45:00+05:30",
+        "exit_choice": {"kind": "intraday", "hours": 7},
+    }
+    preview = {
+        "tool_name": "calculate_exit_time",
+        "tool_args": args,
+        "result": '{"valid":true,"schedule":{"exitUtc":"2026-09-29T07:15:00Z"}}',
+    }
+    selected = selection([preview, {"tool_name": "select_strategy_and_time", "tool_args": args}], catalog)
+    assert selected["directional_bias"] == "bullish"
+    assert selected["planned_exit_utc"] == "2026-09-29T07:15:00Z"
+    changed = {**args, "exit_choice": {"kind": "intraday", "hours": 11}}
+    assert (
+        selection([preview, {"tool_name": "select_strategy_and_time", "tool_args": changed}], catalog)[
+            "planned_exit_utc"
+        ]
+        is None
+    )

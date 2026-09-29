@@ -74,6 +74,8 @@ def regime_label(report: str | None) -> str:
         return "unscored"
     # Restrict to the leading statement. Invalidation and scenario text are not predictions.
     lead = match.group(1).strip().split("\n\n", 1)[0][:240].lower()
+    declared = re.match(r"[-\s]*\*\*(.*?)\*\*", lead, flags=re.S)
+    lead = declared.group(1) if declared else re.split(r"\.\s|\n", lead, maxsplit=1)[0]
     if "sideways" in lead or "range-bound" in lead or "range bound" in lead:
         return "sideways"
     bullish = bool(re.search(r"bullish|uptrend|upside breakout", lead))
@@ -99,6 +101,23 @@ def selection(tools: list[dict], catalog_tools: list[dict]) -> dict:
     if isinstance(args, str):
         args = json.loads(args)
     strategy = catalog.get(args.get("strategy_ref"), {})
+    planned_exit = None
+    for preview in tools:
+        if (preview.get("tool_name") or preview.get("name")) != "calculate_exit_time":
+            continue
+        preview_args = preview.get("tool_args", preview.get("args")) or {}
+        if all(preview_args.get(key) == args.get(key) for key in ("strategy_ref", "activation_time", "exit_choice")):
+            value = preview.get("result")
+            schedule = json.loads(value) if isinstance(value, str) else value
+            if (schedule or {}).get("valid") is True:
+                planned_exit = schedule.get("schedule", {}).get("exitUtc")
+    legs = strategy.get("definition", {}).get("legs", [])
+    exposures = {(leg.get("optionType"), leg.get("position")) for leg in legs}
+    directional_bias = "unscored"
+    if exposures and exposures <= {("call", "buy"), ("put", "sell")}:
+        directional_bias = "bullish"
+    elif exposures and exposures <= {("put", "buy"), ("call", "sell")}:
+        directional_bias = "bearish"
     return {
         "strategy": strategy.get("name", args.get("strategy_ref", "unknown")),
         "activation_time": args.get("activation_time"),
@@ -107,6 +126,8 @@ def selection(tools: list[dict], catalog_tools: list[dict]) -> dict:
         "reasoning_summary": args.get("reasoning_summary"),
         "supporting_signals": args.get("supporting_signals"),
         "invalidation_signals": args.get("invalidation_signals"),
+        "planned_exit_utc": planned_exit,
+        "directional_bias": directional_bias,
     }
 
 
@@ -141,6 +162,25 @@ def compare(cases_document: dict, results: dict, market: dict) -> list[dict]:
                 "gpt_cost_usd": sum(u.get("cost", 0) or 0 for u in result.get("usage", [])),
             }
         )
+        for model_name in ("baseline", "gpt"):
+            choice = rows[-1][model_name + "_selection"]
+            activation = choice.get("activation_time")
+            if not activation:
+                rows[-1][model_name + "_entry_outcomes"] = {}
+                continue
+            entry = datetime.fromisoformat(activation.replace("Z", "+00:00"))
+            if entry.tzinfo is None:
+                rows[-1][model_name + "_entry_outcomes"] = {"error": "naive_activation_time"}
+                continue
+            # A minute-aligned proposal can enter at that minute's open.
+            entry_timestamp = int(entry.timestamp())
+            if entry_timestamp < as_of:
+                rows[-1][model_name + "_entry_outcomes"] = {"error": "activation_before_decision"}
+                continue
+            rows[-1][model_name + "_entry_outcomes"] = {
+                str(h): price_outcome(market[case["asset"]], entry_timestamp - 1, h, cutoff, THRESHOLDS[case["asset"]])
+                for h in HORIZONS
+            }
     return rows
 
 
@@ -221,6 +261,38 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
             "",
         ]
     )
+    selected_baselines = sum(r["baseline_selection"]["attempts"] > 0 for r in rows)
+    selected_gpt = sum(r["gpt_selection"]["attempts"] > 0 for r in completed)
+    lines.extend(
+        [
+            "",
+            f"Baseline selection calls: {selected_baselines}/{len(rows)} sessions. "
+            f"GPT selection calls: {selected_gpt}/{len(completed)} completed sessions.",
+            "",
+            "Selection coverage is not profitability. A no-trade decision abstains from a trade-return score. "
+            "A higher-timeframe bullish description also does not mean the model predicted an immediate rise.",
+            "",
+            "## Directional selections at their proposed entry times",
+            "",
+            "This narrower proxy includes only one-sided call/put exposures with a known proposed entry. "
+            "Two-sided volatility strategies and no-trade decisions are excluded. "
+            "Profitability still requires option prices.",
+            "",
+            "| Baseline | Horizon | Directional selections scored | Direction matches |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+    for model, subset in groups.items():
+        for h in HORIZONS:
+            scored = [
+                proxy_correct(
+                    r["baseline_selection"].get("directional_bias", "unscored"),
+                    r["baseline_entry_outcomes"].get(str(h), {"status": "unavailable"}),
+                )
+                for r in subset
+            ]
+            scored = [value for value in scored if value is not None]
+            lines.append(f"| {model} | {h}h | {len(scored)} | {sum(scored)} |")
     if completed:
         lines.append(
             f"Mean GPT duration: {mean(r['gpt_seconds'] for r in completed):.1f}s. "
@@ -260,6 +332,11 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
                 "",
                 f"Original intended entry: {row['baseline_selection']['activation_time']}. "
                 f"GPT intended entry: {row['gpt_selection']['activation_time']}.",
+                f"Original previewed exit: {row['baseline_selection'].get('planned_exit_utc')}. "
+                f"GPT previewed exit: {row['gpt_selection'].get('planned_exit_utc')}.",
+                "",
+                f"Original tools: {', '.join(t['tool_name'] for t in case['original']['tools'])}.",
+                f"GPT tool calls: {row['gpt_exact_calls']} exact, {row['gpt_unavailable_calls']} unavailable.",
                 "",
                 "Original written analysis:",
                 "",
