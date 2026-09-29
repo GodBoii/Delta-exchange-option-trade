@@ -131,6 +131,21 @@ export function signedDecimal(value: unknown, digits = 2) {
   return `${parsed > 0 ? "+" : parsed < 0 ? "-" : ""}${magnitude}`;
 }
 
+const dayMonth = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", timeZone: tradingTimeZone });
+const hourMinute = new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: tradingTimeZone });
+
+/** "30 Sept" in IST, for schedule rows that print the day and time separately. */
+export function formatDayMonth(value: string | number) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? EM_DASH : dayMonth.format(date);
+}
+
+/** "05:30 am" in IST. */
+export function formatHourMinute(value: string | number) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? EM_DASH : hourMinute.format(date);
+}
+
 export function formatClock(value: string | number) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? EM_DASH : clock.format(date);
