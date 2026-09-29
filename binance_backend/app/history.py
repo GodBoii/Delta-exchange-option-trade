@@ -9,6 +9,7 @@ from typing import Any
 from .analysis import annualized_historical_volatility, sideways_probability, vwap
 
 STEP_MS = 600_000
+RETENTION_MS = 90 * 24 * 3_600_000
 
 
 def observation(candles: list[dict[str, Any]], end: int) -> dict[str, Any] | None:
@@ -61,6 +62,14 @@ class MarketHistory:
                     row["volumeUsdt"],
                 ),
             )
+
+    def prune(self, now: int) -> int:
+        """Remove this symbol's observations older than 90 days, keeping the cutoff itself."""
+        with closing(sqlite3.connect(self.path)) as db, db:
+            return db.execute(
+                "DELETE FROM observations WHERE symbol = ? AND end < ?",
+                (self.symbol, now - RETENTION_MS),
+            ).rowcount
 
     def read(self, now: int) -> list[dict[str, Any]]:
         with closing(sqlite3.connect(self.path)) as db:

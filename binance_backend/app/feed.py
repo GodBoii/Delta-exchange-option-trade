@@ -86,6 +86,7 @@ class BinanceSpotFeed:
     async def _record_history(self) -> None:
         last_end = int(time.time() * 1000) // STEP_MS * STEP_MS
         initialized = False
+        last_prune_end: int | None = None
         while not self._stopping.is_set():
             try:
                 if not initialized:
@@ -93,6 +94,9 @@ class BinanceSpotFeed:
                     initialized = True
                 now = int(time.time() * 1000)
                 end = now // STEP_MS * STEP_MS
+                if last_prune_end != end:
+                    await asyncio.to_thread(self.history.prune, now)
+                    last_prune_end = end
                 if end > last_end and self.connected and now - self.last_event_at < 30_000:
                     row = observation(list(self.analysis_candles), end)
                     if row:

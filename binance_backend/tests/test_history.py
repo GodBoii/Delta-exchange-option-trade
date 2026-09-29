@@ -1,5 +1,7 @@
 import asyncio
+import sqlite3
 import time
+from contextlib import closing
 from unittest.mock import patch
 
 import httpx
@@ -7,7 +9,7 @@ import pytest
 
 from app.config import Settings
 from app.feed import BinanceSpotFeed
-from app.history import STEP_MS, MarketHistory, observation
+from app.history import RETENTION_MS, STEP_MS, MarketHistory, observation
 
 
 def candles(end: int) -> list[dict]:
@@ -65,6 +67,45 @@ def test_sqlite_restart_deduplication_and_symbol_isolation(tmp_path):
     assert MarketHistory(path, "ETHUSDT").read(end) == []
     assert history.read(end - 1) == []
     assert history.read(end + 51 * 3_600_000) == []
+
+
+@pytest.mark.parametrize("symbol", ["BTCUSDT", "ETHUSDT"])
+def test_retention_keeps_cutoff_and_does_not_delete_other_symbols(tmp_path, symbol):
+    path = str(tmp_path / "history.sqlite")
+    now = RETENTION_MS + 30 * STEP_MS
+    cutoff = now - RETENTION_MS
+    history = MarketHistory(path, symbol)
+    history.initialize()
+    for end in (cutoff - STEP_MS, cutoff, cutoff + STEP_MS, now):
+        history.save(observation(candles(end), end))
+    other_symbol = "ETHUSDT" if symbol == "BTCUSDT" else "BTCUSDT"
+    MarketHistory(path, other_symbol).save(observation(candles(cutoff - STEP_MS), cutoff - STEP_MS))
+
+    assert MarketHistory(path, symbol).prune(now) == 1
+    assert history.prune(now) == 0
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("SELECT symbol, end FROM observations ORDER BY symbol, end").fetchall() == sorted([
+            (symbol, cutoff), (symbol, cutoff + STEP_MS), (symbol, now), (other_symbol, cutoff - STEP_MS),
+        ])
+
+
+@pytest.mark.asyncio
+async def test_recorder_prunes_on_startup_even_when_disconnected(tmp_path):
+    now = RETENTION_MS + 30 * STEP_MS
+    feed = BinanceSpotFeed(Settings(market_history_path=str(tmp_path / "history.sqlite")), None)
+    feed.history.initialize()
+    feed.history.save(observation(candles(now - RETENTION_MS - STEP_MS), now - RETENTION_MS - STEP_MS))
+    original_prune = feed.history.prune
+
+    def prune(as_of):
+        deleted = original_prune(as_of)
+        feed._stopping.set()
+        return deleted
+
+    with patch("app.feed.time.time", return_value=now / 1000), patch.object(feed.history, "prune", side_effect=prune):
+        await asyncio.wait_for(feed._record_history(), timeout=3)
+    with closing(sqlite3.connect(feed.history.path)) as db:
+        assert db.execute("SELECT COUNT(*) FROM observations").fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
