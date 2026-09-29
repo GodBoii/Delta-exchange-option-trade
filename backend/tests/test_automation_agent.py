@@ -327,8 +327,11 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
                         "started_at": "2026-08-30T09:00:01Z",
                         "completed_at": "2026-08-30T09:01:00Z",
                         "model_id": "model",
+                        "agno_session_id": "session-1",
+                        "agno_run_id": "agno-1",
                         "report_markdown": "Decision",
                         "market_snapshot_id": "snapshot-1",
+                        "error": "OpenRouter 429: provider rate limit for model",
                     }
                 ]
 
@@ -354,6 +357,11 @@ async def test_automation_overview_separates_history_from_upcoming_runs() -> Non
         }
     ]
     assert [run["id"] for run in overview["upcomingRuns"]] == ["upcoming"]
+    # Model, agent session and raw provider errors stay on the server.
+    assert "model" not in overview["settings"]
+    assert not {"model", "sessionId", "runId"} & overview["runs"][0].keys()
+    assert overview["runs"][0]["error"] == "The analysis failed. No strategy was activated."
+    assert "model" not in json.dumps(overview)
     assert any(query.get("status") == "in.(running,completed,failed)" for query in database.run_queries)
     assert any(query.get("order") == "scheduled_for.asc" for query in database.run_queries)
 

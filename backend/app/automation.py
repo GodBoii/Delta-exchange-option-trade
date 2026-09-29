@@ -40,6 +40,32 @@ MAX_PARALLEL_RECHECK_RUNS = 8
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
+ANALYSIS_FAILED_MESSAGE = "The analysis failed. No strategy was activated."
+# Errors this module writes itself. Anything else in a run row came from an exception or
+# the analyzer and can carry provider, model or infrastructure detail.
+PUBLIC_RUN_ERRORS = frozenset({
+    ANALYSIS_FAILED_MESSAGE,
+    "Final report unavailable",
+    "Automation was turned off",
+    "The analysis run could not be claimed",
+    "Review interrupted by backend restart",
+    "Automation run exceeded its time limit",
+    "Scheduled review became stale",
+    "Automation service returned an invalid response",
+    "Analysis service disconnected before returning a result. "
+    "It may have restarted. The request was not retried automatically.",
+})
+PUBLIC_RUN_ERROR_PREFIXES = ("Automation analysis did not respond within ",)
+
+
+def public_run_error(error: object) -> str | None:
+    """The run error as shown to users: known messages pass, the rest become generic."""
+    if not isinstance(error, str) or not error.strip():
+        return None
+    if error in PUBLIC_RUN_ERRORS or error.startswith(PUBLIC_RUN_ERROR_PREFIXES):
+        return error
+    return ANALYSIS_FAILED_MESSAGE
+
 
 class AutomationSettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -336,7 +362,12 @@ async def execute_automation_run(
         if response.is_error:
             nested = payload.get("error") if isinstance(payload, dict) else None
             message = nested.get("message") if isinstance(nested, dict) else None
-            raise AppError(response.status_code, message or "Automation analysis failed", "automation_agent_failed")
+            # The analyzer's message can name the model provider or its limits, so it goes
+            # to the log and the run row only. Callers get the generic failure.
+            logger.warning(
+                "Automation analyzer failed run_id=%s status=%s message=%s", run_id, response.status_code, message
+            )
+            raise AppError(502, ANALYSIS_FAILED_MESSAGE, "automation_agent_failed")
         outcome = str(payload.get("outcome") or "no_trade_for_current_window")
         report = payload.get("report")
         if isinstance(report, str) and report.strip():
@@ -386,7 +417,7 @@ async def execute_automation_run(
         if recorded and recorded[0].get("outcome"):
             report = (
                 "## Decision\n\nThe terminal action was recorded, "
-                "but the model provider did not return the final report."
+                "but the analysis did not return its final report."
             )
             payload = {
                 "outcome": recorded[0]["outcome"],
@@ -428,8 +459,8 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             "automation_agent_runs",
             {
                 "select": (
-                    "id,user_id,trigger,status,outcome,scheduled_for,started_at,completed_at,model_id,"
-                    "agno_session_id,agno_run_id,market_snapshot_id,report_markdown,error,asset"
+                    "id,user_id,trigger,status,outcome,scheduled_for,started_at,completed_at,"
+                    "market_snapshot_id,report_markdown,error,asset"
                 ),
                 "user_id": history_filter(getattr(db, "settings", None), user_id),
                 "status": "in.(running,completed,failed)",
@@ -499,7 +530,6 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "success": True,
         "settings": {
             "enabled": settings["enabled"],
-            "model": settings["model_id"],
             "maximumConcurrentStrategies": percentage_concurrency_limit(capital_policy.allocation_mode),
         },
         "enabledStrategies": sum(bool(row["enabled_for_ai"]) for row in strategies),
@@ -509,18 +539,15 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
                 "id": row["id"],
                 "asset": run_asset(row),
                 "scope": "shared" if row["user_id"] == SHARED_USER_ID else "historical_account",
-                "sessionId": row.get("agno_session_id"),
-                "runId": row.get("agno_run_id"),
                 "trigger": row["trigger"],
                 "status": row["status"],
                 "outcome": row.get("outcome"),
                 "scheduledFor": row["scheduled_for"],
                 "startedAt": row.get("started_at"),
                 "completedAt": row.get("completed_at"),
-                "model": row["model_id"],
                 "report": row.get("report_markdown"),
                 "charts": charts_by_snapshot.get(str(row.get("market_snapshot_id") or ""), []),
-                "error": row.get("error"),
+                "error": public_run_error(row.get("error")),
             }
             for row in runs
         ],
