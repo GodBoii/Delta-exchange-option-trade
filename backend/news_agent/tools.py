@@ -511,7 +511,7 @@ class NewsResearchTools(Toolkit):
             return {"ok": False, "url": url, "error": str(exc)}
 
     async def read_news_article(self, url: str) -> str:
-        """Read one article, returning up to 8,000 characters plus dates and provenance. Ten reads per run."""
+        """Read one article, returning up to 8,000 characters plus dates and provenance."""
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as client:
             return json.dumps(await self._read(url, client), ensure_ascii=False, separators=(",", ":"))
 

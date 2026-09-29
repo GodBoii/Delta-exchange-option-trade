@@ -7,9 +7,15 @@ from collections import Counter
 class ResearchBudget:
     """One budget per analysis, shared by search and article tools, including nested reads."""
 
-    def __init__(self, seconds: float = 240, calls_per_tool: int = 10) -> None:
+    def __init__(
+        self,
+        seconds: float = 240,
+        calls_per_tool: int = 10,
+        limits: dict[str, int] | None = None,
+    ) -> None:
         self.seconds = seconds
         self.calls_per_tool = calls_per_tool
+        self.limits = limits or {}
         self.deadline: float | None = None
         self.calls: Counter[str] = Counter()
 
@@ -23,6 +29,7 @@ class ResearchBudget:
 
     def consume(self, tool: str) -> None:
         self.remaining(self.seconds)
-        if self.calls[tool] >= self.calls_per_tool:
-            raise ValueError(f"{tool} reached its {self.calls_per_tool}-call limit for this analysis")
+        limit = self.limits.get(tool, self.calls_per_tool)
+        if self.calls[tool] >= limit:
+            raise ValueError(f"{tool} reached its {limit}-call limit for this analysis")
         self.calls[tool] += 1

@@ -18,6 +18,14 @@ from .database import create_session_db
 
 logger = logging.getLogger(__name__)
 BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
+REPORT_HEADINGS = (
+    "## Summary",
+    "## Market impact",
+    "## Positive factors",
+    "## Risks",
+    "## What to watch next",
+    "## Sources",
+)
 
 
 def _tool_field(execution: Any, *names: str) -> Any:
@@ -53,7 +61,7 @@ def _trace_result(name: str, value: Any) -> dict[str, Any]:
             "items": [
                 {
                     key: (row.get(key)[:200] if key == "body" and isinstance(row.get(key), str) else row.get(key))
-                    for key in ("title", "url", "date", "source", "body")
+                    for key in ("title", "url", "date", "source", "publisher", "access", "body")
                     if row.get(key) is not None
                 }
                 for row in result[:10]
@@ -197,7 +205,7 @@ def run_news_pipeline(
             db=session_db,
             debug_mode=debug_mode,
             asset=asset,
-            research_budget=ResearchBudget(),
+            research_budget=ResearchBudget(limits={"web_search": 20, "read_news_article": 16}),
         )
         research_prompt = (
             f"{prompt}\n\nFocus query: {focus_query}. Gather current material from public sources and "
@@ -223,6 +231,15 @@ def run_news_pipeline(
             in {"provider returned error", "the operation was aborted", "request timed out", "request timed out."}
         ):
             raise RuntimeError("News synthesis returned no report")
+        report = report_response.content
+        start = report.find(REPORT_HEADINGS[0])
+        if start < 0:
+            raise RuntimeError("News synthesis returned no complete report")
+        report = report[start:].strip()
+        positions = [report.find(heading) for heading in REPORT_HEADINGS]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            raise RuntimeError("News synthesis returned no complete report")
+        report_response.content = report
         logger.info(
             "News pipeline completed run_id=%s elapsed_ms=%d tools=%s",
             report_response.run_id,

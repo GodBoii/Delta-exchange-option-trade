@@ -25,13 +25,20 @@ class FakeAgent:
         return self.responses[len(self.calls) - 1]
 
 
+COMPLETE_REPORT = (
+    "## Summary\n\nEvidence is mixed.\n\n## Market impact\n\nUncertain.\n\n"
+    "## Positive factors\n\nNone verified.\n\n## Risks\n\nCoverage is thin.\n\n"
+    "## What to watch next\n\nOfficial releases.\n\n## Sources\n\nNo cited source."
+)
+
+
 def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
     analyst = FakeAgent(
         [
             RunOutput(
                 session_id="btc-thread",
                 status=RunStatus.completed,
-                content="# BTC analysis\n\nEvidence is mixed.",
+                content="I will research now." + COMPLETE_REPORT,
                 tools=[{"tool_name": "search_news", "result": '[{"title":"BTC","url":"https://example.com/btc"}]'}],
             )
         ]
@@ -40,7 +47,7 @@ def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
 
     result = run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice", db=InMemoryDb())
 
-    assert result.markdown == "# BTC analysis\n\nEvidence is mixed."
+    assert result.markdown == COMPLETE_REPORT
     assert result.research_tools == ["search_news"]
     assert result.research_trace[0]["result"]["items"][0]["url"] == "https://example.com/btc"
     assert analyst.calls[0]["session_id"] == "btc-thread"
@@ -130,7 +137,7 @@ def test_real_agno_async_dispatch_executes_research_tool(monkeypatch) -> None:
                     }
                 ],
             )
-        return ModelResponse(role="assistant", content="## Summary\n\n[Fed](https://www.federalreserve.gov/)")
+        return ModelResponse(role="assistant", content=COMPLETE_REPORT)
 
     monkeypatch.setattr(PublicSourceTools, "curate_public_sources", curate)
     monkeypatch.setattr(OpenRouter, "ainvoke", invoke)
@@ -140,3 +147,10 @@ def test_real_agno_async_dispatch_executes_research_tool(monkeypatch) -> None:
     assert len(model_requests) == 2
     assert result.research_tools == ["curate_public_sources"]
     assert result.research_trace[0]["result"]["count"] == 1
+
+
+def test_pipeline_rejects_incomplete_markdown(monkeypatch) -> None:
+    analyst = FakeAgent([RunOutput(content="## Summary\n\nOnly a draft.", status=RunStatus.completed)])
+    monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
+    with pytest.raises(RuntimeError, match="complete report"):
+        run_news_pipeline("BTC news", db=InMemoryDb())

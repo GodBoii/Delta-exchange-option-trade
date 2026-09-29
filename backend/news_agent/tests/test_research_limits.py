@@ -85,6 +85,11 @@ async def test_search_limit_is_per_tool_and_cached(monkeypatch):
 
     monkeypatch.setattr(NativeSearch, "search_news", search)
     monkeypatch.setattr(NativeSearch, "web_search", search)
+
+    async def no_fallback(*_args):
+        return []
+
+    monkeypatch.setattr(WebSearchTools, "_google_news", no_fallback)
     tools = WebSearchTools()
     for _ in range(10):
         assert isinstance(json.loads(await tools.search_news("same query")), list)
@@ -94,6 +99,85 @@ async def test_search_limit_is_per_tool_and_cached(monkeypatch):
     assert len(calls) == 2
     fresh = WebSearchTools()
     assert isinstance(json.loads(await fresh.search_news("new run")), list)
+
+
+@pytest.mark.asyncio
+async def test_news_search_uses_recent_discovery_when_provider_has_no_results(monkeypatch):
+    from agno.tools.websearch import WebSearchTools as NativeSearch
+    from ddgs.exceptions import DDGSException
+
+    def unavailable(*_args, **_kwargs):
+        raise DDGSException("No results found.")
+
+    async def recent(*_args):
+        return [
+            {
+                "url": "https://news.google.com/rss/articles/recent",
+                "title": "Current Ethereum item",
+                "date": "2026-09-29T00:00:00+00:00",
+                "source": "Google News",
+                "access": "discovery_snippet",
+            }
+        ]
+
+    monkeypatch.setattr(NativeSearch, "search_news", unavailable)
+    monkeypatch.setattr(WebSearchTools, "_google_news", recent)
+    results = json.loads(await WebSearchTools().search_news("Ethereum ETF"))
+    assert len(results) == 1
+    assert results[0]["access"] == "discovery_snippet"
+
+
+@pytest.mark.asyncio
+async def test_news_search_keeps_provider_results_if_discovery_fails(monkeypatch):
+    from agno.tools.websearch import WebSearchTools as NativeSearch
+
+    monkeypatch.setattr(
+        NativeSearch,
+        "search_news",
+        lambda *_args, **_kwargs: json.dumps(
+            [{"url": "https://example.com/old", "title": "Older background", "date": "2025-09-01T00:00:00Z"}]
+        ),
+    )
+
+    async def unavailable(*_args):
+        raise TimeoutError("Discovery timed out")
+
+    monkeypatch.setattr(WebSearchTools, "_google_news", unavailable)
+    results = json.loads(await WebSearchTools().search_news("Bitcoin"))
+    assert results[0]["url"] == "https://example.com/old"
+
+
+@pytest.mark.asyncio
+async def test_news_search_keeps_recent_discovery_and_original_provider_urls(monkeypatch):
+    from agno.tools.websearch import WebSearchTools as NativeSearch
+
+    monkeypatch.setattr(
+        NativeSearch,
+        "search_news",
+        lambda *_args, **_kwargs: json.dumps(
+            [{"url": "https://publisher.example/story", "title": "Publisher story", "date": "2025-09-01T00:00:00Z"}]
+        ),
+    )
+
+    async def recent(*_args):
+        return [{"url": "https://news.google.com/rss/articles/recent", "title": "Recent lead"}]
+
+    monkeypatch.setattr(WebSearchTools, "_google_news", recent)
+    results = json.loads(await WebSearchTools().search_news("Ethereum", max_results=4))
+    assert [row["url"] for row in results] == [
+        "https://news.google.com/rss/articles/recent",
+        "https://publisher.example/story",
+    ]
+
+
+def test_research_budget_allows_independent_limits_for_nested_search() -> None:
+    budget = ResearchBudget(limits={"web_search": 3})
+    for _ in range(3):
+        budget.consume("web_search")
+    with pytest.raises(ValueError, match="3-call limit"):
+        budget.consume("web_search")
+    budget.consume("search_news")
+    assert budget.calls["search_news"] == 1
 
 
 @pytest.mark.asyncio
