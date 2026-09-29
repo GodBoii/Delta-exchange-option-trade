@@ -306,8 +306,30 @@ async def unhandled_error_handler(_: Request, error: Exception) -> JSONResponse:
     )
 
 
+PROXY_HEADERS = ("cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded")
+
+
+def is_local_probe(request: Request) -> bool:
+    """True only for a direct loopback call: container healthchecks and scripts/start-backend.ps1.
+
+    Tunnelled traffic can also arrive from loopback when cloudflared runs on the same host,
+    so any proxy header marks the request as public regardless of the socket address.
+    """
+    if any(request.headers.get(name) for name in PROXY_HEADERS):
+        return False
+    host = request.client.host if request.client else ""
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 @app.get("/health")
 async def health(request: Request) -> dict[str, Any]:
+    # The browser only needs to identify the service. Scheduler, database and stream
+    # state stay private to local probes.
+    if not is_local_probe(request):
+        return {"success": True, "service": "delta-strategy-api"}
     scheduler: Scheduler = request.app.state.scheduler
     feed: ChangeFeed = request.app.state.change_feed
     pool: AsyncConnectionPool = request.app.state.db.pool
