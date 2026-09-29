@@ -136,6 +136,8 @@ def compare(cases_document: dict, results: dict, market: dict) -> list[dict]:
     rows = []
     for case in cases_document["cases"]:
         result = results.get(case["id"], {"status": "missing"})
+        if result["status"] != "missing" and result.get("input_sha256") != case["input_sha256"]:
+            raise ValueError(f"Replay input digest mismatch for {case['id']}")
         original = case["original"]
         as_of = int(case["captured_at"] / 1000) if case.get("captured_at") else case["created_at"]
         truth = {
@@ -371,6 +373,7 @@ def main() -> None:
     rows = compare(document, results, market)
     for row in rows:
         row["gpt_report"] = results.get(row["case_id"], {}).get("report")
+        row["gpt_tool_trace"] = results.get(row["case_id"], {}).get("tools", [])
     (args.output / "comparison.json").write_text(json.dumps(rows), encoding="utf-8")
     with (args.output / "comparison.csv").open("w", newline="", encoding="utf-8") as file:
         columns = [
