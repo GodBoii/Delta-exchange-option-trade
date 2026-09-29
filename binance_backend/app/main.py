@@ -235,7 +235,7 @@ async def agent_summary(request: Request) -> dict:
     options = feed.evidence.overview if now - feed.evidence.options_at <= 90_000 else []
     return {"schemaVersion": 1, "asset": settings.base_asset, "asOf": now,
             "futures": futures, "options": options, "liquidity": current,
-            "previousLiquidityBucket": feed.liquidity}
+            "previousLiquidityBucket": feed.liquidity, "baselines": feed.baselines}
 
 
 @app.get(f"/api/market/{ROUTE}/option-catalogue")

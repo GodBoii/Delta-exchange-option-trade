@@ -30,9 +30,11 @@ class MarketIntelligenceTools(Toolkit):
         delta_url: str | None = None,
         session_trigger: str | None = None,
         asset: AssetProfile | None = None,
+        curated: bool = False,
         **kwargs: Any,
     ) -> None:
         self.asset = asset or PROFILES["BTC"]
+        self.curated = curated
         self.session_trigger = session_trigger
         self.binance_url = (binance_url or self.asset.market_base_url).rstrip("/")
         self.delta_url = (delta_url or os.getenv("DELTA_PUBLIC_BASE_URL") or "https://api.india.delta.exchange").rstrip(
@@ -43,7 +45,7 @@ class MarketIntelligenceTools(Toolkit):
         tool = self.get_eth_market_packet if self.asset.code == "ETH" else self.get_btc_market_packet
         super().__init__(
             name="market_intelligence_tools",
-            tools=[tool],
+            tools=[] if curated else [tool],
             instructions=(
                 f"Use Binance Spot data for {self.asset.code} direction, volume, volatility, and order-flow analysis."
             ),
@@ -149,10 +151,26 @@ class MarketIntelligenceTools(Toolkit):
                 for label, payload in loaded.items()
             },
         }
+        if self.curated:
+            with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
+                response = client.get(f"{route}/agent-summary")
+                response.raise_for_status()
+                summary = response.json()
+            if summary.get("asset") != self.asset.code or summary.get("schemaVersion") != 1:
+                raise ValueError("Invalid curated market summary")
+            packet["enrichment"] = summary
         self._packet_cache = packet
         return packet
 
     def collect_delta_option_context(self) -> dict[str, Any]:
+        if self.curated:
+            with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
+                response = client.get(f"{self.binance_url}/api/market/{self.asset.market_route}/option-catalogue")
+                response.raise_for_status()
+                context = response.json()
+            if context.get("underlying") != self.asset.code or not isinstance(context.get("options"), list):
+                raise ValueError("Invalid asset option catalogue")
+            return context
         with httpx.Client(timeout=httpx.Timeout(20, connect=5)) as client:
             response = client.get(
                 f"{self.delta_url}/v2/tickers",
@@ -322,5 +340,3 @@ def _pick(source: dict[str, Any], *keys: str) -> dict[str, Any]:
 def _expiry_code(symbol: str) -> str | None:
     match = re.search(r"-(\d{6})$", symbol)
     return match.group(1) if match else None
-
-

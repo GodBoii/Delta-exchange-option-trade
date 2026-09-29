@@ -71,6 +71,7 @@ class BinanceSpotFeed:
         self._evidence_tasks: list[asyncio.Task] = []
         self.liquidity: dict[str, Any] = {}
         self.evidence_error: str | None = None
+        self.baselines: dict = {}
 
     async def start(self) -> None:
         await asyncio.to_thread(self.evidence.store.initialize)
@@ -128,6 +129,7 @@ class BinanceSpotFeed:
                     await asyncio.to_thread(self.evidence.store.save, "futures_observations", current,
                                             list(futures.items()))
                     await asyncio.to_thread(self.evidence.store.prune, now)
+                    self.baselines = await asyncio.to_thread(self.evidence.store.baselines, now)
                     bucket, window = current, LiquidityWindow(current)
                 if self.connected and self.book_synced and now - self.last_depth_at <= 5000:
                     window.add(depth_summary(self.bids, self.asks))

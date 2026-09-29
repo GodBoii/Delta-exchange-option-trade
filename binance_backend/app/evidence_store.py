@@ -69,3 +69,20 @@ class EvidenceStore:
                 if removed < 1000:
                     break
         self.watch([], now)
+
+    def baselines(self, now: int) -> dict:
+        with closing(sqlite3.connect(self.path)) as db:
+            rows = db.execute(
+                "SELECT sidewaysScore, volatilityAnnualizedPercent, volumeBtc FROM observations "
+                "WHERE symbol=? AND end>? AND end<=? ORDER BY end",
+                (f"{self.asset}USDT", now - RETENTION_MS, now),
+            ).fetchall()
+        if len(rows) < 144:
+            return {}
+        result = {"lookbackDays": 90, "samples": len(rows)}
+        for index, key in enumerate(("sidewaysScore", "realizedVolatilityAnnualizedPercent", "tenMinuteVolumeBase")):
+            values = sorted(row[index] for row in rows)
+            latest = rows[-1][index]
+            result[key] = {"mean": sum(values) / len(values),
+                           "latestObservationPercentile": sum(v <= latest for v in values) / len(values) * 100}
+        return result

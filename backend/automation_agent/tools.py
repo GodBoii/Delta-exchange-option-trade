@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
+import httpx
 from agno.tools import Toolkit
 
 from app.assets import DEFAULT_ASSET, Asset
@@ -27,7 +28,9 @@ from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
 
+from .assets import PROFILES
 from .local_client import LocalResearchClient
+from .preview import build_preview, resolve_contracts
 from .report_data import ResearchData
 
 RECHECK_LEAD_TIME = timedelta(seconds=RECHECK_LEAD_SECONDS)
@@ -47,10 +50,13 @@ class AutomationStrategyTools(Toolkit):
         market_snapshot_id: str,
         news_analysis_id: str | None = None,
         asset: Asset = DEFAULT_ASSET,
+        curated: bool = False,
         **kwargs: Any,
     ) -> None:
         self.settings = settings
         self.asset = asset
+        self.curated = curated
+        self._previews: dict[tuple, tuple[dict, dict]] = {}
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
@@ -62,14 +68,27 @@ class AutomationStrategyTools(Toolkit):
         self.runtime_data = runtime_data(settings)
         super().__init__(
             name="automation_strategy_tools",
-            tools=[
-                self.show_available_strategy,
-                self.calculate_exit_time,
-                self.select_strategy_and_time,
-                self.scheduled_next_agent_run,
-            ],
+            tools=(
+                [
+                    self.preview_strategy,
+                    self.select_strategy_and_time,
+                    self.scheduled_next_agent_run,
+                ]
+                if curated
+                else [
+                    self.show_available_strategy,
+                    self.calculate_exit_time,
+                    self.select_strategy_and_time,
+                    self.scheduled_next_agent_run,
+                ]
+            ),
             instructions=(
-                "Call show_available_strategy before selecting. Use its short strategyRef in select_strategy_and_time. "
+                "Use the starting strategy catalogue. Call preview_strategy before selecting with identical "
+                "strategyRef, activation_time and exit_choice. Preview liquidity is advisory. "
+                "Once an action commits, do not schedule another action."
+                if curated
+                else "Call show_available_strategy before selecting. "
+                "Use its short strategyRef in select_strategy_and_time. "
                 "A committed result confirms only the action named in the result. A shared proposal requires a later "
                 "recheck and account allocation; no order is submitted inside the tool call. Retry rejected calls with "
                 "corrected inputs. Once either action is committed, do not call another scheduling tool in this run."
@@ -77,6 +96,127 @@ class AutomationStrategyTools(Toolkit):
             add_instructions=True,
             **kwargs,
         )
+        if curated:
+            self.functions["select_strategy_and_time"].description = (
+                "Commit one previously previewed starting strategyRef and time. Use the identical "
+                "activation_time and exit_choice from preview_strategy. No order is placed by this call."
+            )
+
+    def starting_catalogue(self) -> dict:
+        source = json.loads(self.show_available_strategy())
+        rows = []
+        for strategy in source["strategies"]:
+            definition = strategy.pop("definition")
+            rows.append(
+                {
+                    **strategy,
+                    "rules": {
+                        k: definition[k]
+                        for k in (
+                            "category",
+                            "marketOutlook",
+                            "riskMode",
+                            "riskBasis",
+                            "stopLossPercent",
+                            "takeProfitPercent",
+                            "sizePolicy",
+                            "exitMinutesBeforeExpiry",
+                        )
+                        if k in definition
+                    },
+                    "legs": [
+                        {
+                            k: leg[k]
+                            for k in (
+                                "position",
+                                "optionType",
+                                "strikeMode",
+                                "strikeSteps",
+                                "exactStrike",
+                                "lots",
+                                "orderType",
+                                "limitPrice",
+                                "targetProfit",
+                                "stopLoss",
+                                "trailStop",
+                            )
+                            if k in leg
+                        }
+                        for leg in definition.get("legs", [])
+                    ],
+                }
+            )
+        return {
+            **source,
+            "strategies": rows,
+            "holdingChoices": {
+                "intradayHours": [7, 11],
+                "overnightHours": [16, 24],
+                "positionalHours": [48, 72],
+                "other": ["specific_time", "expiry 1 or 2"],
+            },
+        }
+
+    def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: dict[str, Any]) -> str:
+        """Preview one saved strategy's exact schedule, legs, payoff and fresh advisory liquidity.
+
+        Use the starting strategyRef. This reads public data and never schedules or places an order.
+        The same strategy_ref, activation_time and exit_choice must be used when selecting.
+        """
+        try:
+            reference = strategy_ref.strip().upper()
+            selection = self.strategy_references.get(reference)
+            if selection is None:
+                raise ValueError("Unknown starting strategy reference")
+            activation = _aware_datetime(activation_time, "activation_time")
+            choice = ExitChoice.model_validate(exit_choice)
+            saved_id, version = selection
+            key = (saved_id, version, activation.isoformat(), choice.model_dump_json())
+            self._previews.pop(key, None)
+            rows, _ = self.application_data.selection_context(self.user_id, saved_id)
+            if not rows or not rows[0]["enabled_for_ai"] or rows[0]["version"] != version:
+                raise ValueError("Saved strategy is unavailable or changed")
+            profile = PROFILES[self.asset]
+            route = f"{profile.market_base_url}/api/market/{profile.market_route}"
+            with httpx.Client(timeout=httpx.Timeout(20, connect=3)) as client:
+                response = client.get(f"{route}/option-catalogue")
+                response.raise_for_status()
+                catalogue = response.json()
+                if catalogue.get("underlying") != self.asset:
+                    raise ValueError("Option asset mismatch")
+                options = catalogue.get("options") or []
+                definition, schedule = resolve_exit_schedule(
+                    rows[0]["definition_json"], entry_at=activation, choice=choice, options=options
+                )
+                resolved = resolve_contracts(definition, options)
+                response = client.post(
+                    f"{route}/selected-contracts", json={"symbols": [leg["productSymbol"] for leg in resolved]}
+                )
+                response.raise_for_status()
+                selected = response.json()
+                if selected.get("asset") != self.asset:
+                    raise ValueError("Selected option asset mismatch")
+                result = build_preview(
+                    definition, resolved, selected.get("contracts") or [], int(datetime.now(UTC).timestamp() * 1000)
+                )
+                if self.settings.analysis_service_secret:
+                    watch = client.post(
+                        f"{route}/watch-expiries",
+                        json={"expiries": [schedule["contractExpiryUtc"]]},
+                        headers={"X-Analysis-Secret": self.settings.analysis_service_secret},
+                    )
+                    watch.raise_for_status()
+            self._previews[key] = (definition, schedule)
+            return json.dumps({"valid": True, "schedule": schedule, **result}, separators=(",", ":"), allow_nan=False)
+        except (ValueError, AppError, httpx.HTTPError) as error:
+            return json.dumps(
+                {
+                    "valid": False,
+                    "reason": str(error)
+                    if not isinstance(error, httpx.HTTPError)
+                    else "Selected public option evidence is unavailable",
+                }
+            )
 
     def show_available_strategy(self) -> str:
         """Return enabled strategies with descriptions, run-local references, and complete definitions."""
@@ -302,9 +442,17 @@ class AutomationStrategyTools(Toolkit):
         if not reasoning_summary.strip():
             raise ValueError("reasoning_summary is required")
 
-        live_definition, schedule = self._resolve_selection(
-            saved_id, saved_strategy_version, activation, ExitChoice.model_validate(exit_choice)
-        )
+        choice = ExitChoice.model_validate(exit_choice)
+        if self.curated:
+            key = (saved_id, saved_strategy_version, activation.isoformat(), choice.model_dump_json())
+            if key not in self._previews:
+                raise ValueError("Call preview_strategy with these exact selection arguments first")
+            rows, _ = self.application_data.selection_context(self.user_id, saved_id)
+            if not rows or not rows[0]["enabled_for_ai"] or rows[0]["version"] != saved_strategy_version:
+                raise ValueError("Saved strategy is unavailable or changed")
+            live_definition, schedule = deepcopy(self._previews[key])
+        else:
+            live_definition, schedule = self._resolve_selection(saved_id, saved_strategy_version, activation, choice)
         exit_at = datetime.fromisoformat(schedule["exitUtc"])
         if self.user_id == SHARED_USER_ID:
             return json.dumps(

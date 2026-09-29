@@ -712,6 +712,8 @@ class AutomationScheduler:
         self.last_fixed_sync = 0.0
         self.last_chart_prune = 0.0
         self.recovered = False
+        self.last_market_watch_sync = 0.0
+        self.market_watch_client: httpx.AsyncClient | None = None
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="automation-agent-scheduler")
@@ -724,6 +726,8 @@ class AutomationScheduler:
         if self.running_tasks:
             with suppress(TimeoutError):
                 await asyncio.wait_for(asyncio.gather(*self.running_tasks), timeout=5)
+        if self.market_watch_client:
+            await self.market_watch_client.aclose()
 
     async def run(self) -> None:
         logger.info("Automation scheduler started; polling every %.1f seconds", self.poll_seconds)
@@ -747,6 +751,16 @@ class AutomationScheduler:
                         )
                     self.recovered = True
                 monotonic_now = time.monotonic()
+                if monotonic_now - self.last_market_watch_sync >= 60:
+                    self.last_market_watch_sync = monotonic_now
+                    if getattr(getattr(self.db, "settings", None), "analysis_service_secret", None):
+                        from .market_watch import publish_watchlists
+                        if self.market_watch_client is None:
+                            self.market_watch_client = httpx.AsyncClient(timeout=httpx.Timeout(5, connect=2))
+                        try:
+                            await publish_watchlists(self.db, self.market_watch_client)
+                        except Exception:
+                            logger.exception("Aggregate market expiry watchlist synchronization failed")
                 if monotonic_now - self.last_fixed_sync >= FIXED_RUN_SYNC_SECONDS:
                     await self._enqueue_session_reviews()
                     self.last_fixed_sync = monotonic_now

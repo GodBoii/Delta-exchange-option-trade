@@ -3,16 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.media import Image
 from agno.models.openrouter import OpenRouter
 from agno.run.agent import RunOutput
+from agno.tools.calculator import CalculatorTools
 
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
@@ -25,7 +28,9 @@ from .charts import (
     render_volatility_chart,
     render_volume_chart,
 )
+from .curated import chart_notes, dumps, enabled, market_input
 from .market import MarketIntelligenceTools
+from .preview import build_preview, resolve_contracts
 from .storage import ChartArtifact, ChartStorage
 from .tools import AutomationStrategyTools, DropStrategyTools, read_parent_run_context, save_market_snapshot
 
@@ -59,7 +64,8 @@ def run_automation_team(
     previous_run = read_parent_run_context(settings, user_id=user_id, agent_run_id=agent_run_id)
     if previous_run:
         account_context = {**account_context, "previousRun": previous_run}
-    market_tools = MarketIntelligenceTools(session_trigger=trigger, asset=asset)
+    curated = enabled()
+    market_tools = MarketIntelligenceTools(session_trigger=trigger, asset=asset, curated=curated)
     # News and market I/O are independent. Only one news synthesis is performed per decision.
     with ThreadPoolExecutor(max_workers=2) as executor:
         news_future = executor.submit(
@@ -77,8 +83,12 @@ def run_automation_team(
         market_packet = market_tools.collect_market_packet()
         option_context = option_future.result()
         news_result = news_future.result()
-    chart_artifacts = _chart_artifacts(market_packet, code)
+    chart_artifacts = (
+        _chart_artifacts(market_packet, code, price_only=True) if curated else _chart_artifacts(market_packet, code)
+    )
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
+    if curated:
+        chart_context = chart_notes(chart_context)
     stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
@@ -103,7 +113,9 @@ def run_automation_team(
         agent_run_id=agent_run_id,
         market_snapshot_id=market_snapshot_id,
         asset=code,
+        curated=curated,
     )
+    catalogue = strategy_tools.starting_catalogue() if curated else None
 
     team_db = create_session_db(settings, session_table=settings.automation_session_table)
     try:
@@ -125,7 +137,7 @@ def run_automation_team(
                 "then schedules the saved strategy most likely to profit."
             ),
             model=model,
-            tools=[market_tools, strategy_tools],
+            tools=[strategy_tools, calculator()] if curated else [market_tools, strategy_tools],
             description=(
                 f"Analyze {pair}, compare the supplied option strategy catalog, and select one strategy and trade time."
             ),
@@ -263,6 +275,12 @@ def run_automation_team(
             debug_mode=False,
             telemetry=False,
         )
+        if curated:
+            team.instructions = curated_instructions(team.instructions)
+            team.additional_context += (
+                f" Starting market evidence: {dumps(market_input(market_packet, code))}. "
+                f"Starting strategy catalogue: {dumps(catalogue)}"
+            )
 
         images = [
             Image(
@@ -335,10 +353,28 @@ def run_activation_recheck(
     asset: AssetProfile = PROFILES["BTC"],
 ) -> AutomationTeamResult:
     code = asset.code
-    market_tools = MarketIntelligenceTools(asset=asset)
+    curated = enabled()
+    market_tools = MarketIntelligenceTools(asset=asset, curated=curated)
     market_packet = market_tools.collect_market_packet()
     chart_artifacts = _recheck_chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
+    if curated:
+        chart_context = chart_notes(chart_context)
+        selected_definition = recheck_context["selectedStrategy"]["definition"]
+        options = market_tools.collect_delta_option_context()["options"]
+        resolved = resolve_contracts(selected_definition, options)
+        with httpx.Client(timeout=httpx.Timeout(20, connect=3)) as client:
+            response = client.post(
+                f"{asset.market_base_url}/api/market/{asset.market_route}/selected-contracts",
+                json={"symbols": [leg["productSymbol"] for leg in resolved]},
+            )
+            response.raise_for_status()
+            selected = response.json()
+        if selected.get("asset") != code:
+            raise ValueError("Recheck option asset mismatch")
+        market_packet["selectedOptionEvidence"] = build_preview(
+            selected_definition, resolved, selected["contracts"], int(time.time() * 1000)
+        )
     stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
@@ -377,7 +413,7 @@ def run_activation_recheck(
         name=f"{code} Strategy Activation Recheck",
         role=f"Recheck one already-selected {code} options strategy immediately before its scheduled activation.",
         model=model,
-        tools=[drop_tools],
+        tools=[drop_tools, calculator()] if curated else [drop_tools],
         instructions=[
             "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
             "Assess the selected strategy's actual entry, exit and expiry timestamps. Its explicit holding policy "
@@ -401,11 +437,13 @@ def run_activation_recheck(
             f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
             "Chart reading instructions and exact values are keyed by the attached image IDs: "
             f"{json.dumps(chart_context, ensure_ascii=False)}. "
-            f"Fresh Binance Spot packet: {market_tools.market_packet_json()}"
+            "Fresh market evidence: "
+            + (dumps(market_input(market_packet, code)) if curated else market_tools.market_packet_json())
+            + (f" Fresh assigned option evidence: {dumps(market_packet['selectedOptionEvidence'])}" if curated else "")
         ),
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
-        tool_call_limit=1,
+        tool_call_limit=8 if curated else 1,
         store_events=True,
         debug_mode=False,
         telemetry=False,
@@ -450,7 +488,39 @@ def run_activation_recheck(
     )
 
 
-def _chart_artifacts(market_packet: dict[str, Any], base: str = "BTC") -> list[ChartArtifact]:
+def calculator() -> CalculatorTools:
+    return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide", "exponentiate", "square_root"])
+
+
+def curated_instructions(instructions: list[str]) -> list[str]:
+    result = []
+    for instruction in instructions:
+        if instruction.startswith("Call show_available_strategy"):
+            result.append(
+                "Use the starting strategy catalogue and its strategyRef values. "
+                "The stored strategy rules are authoritative; do not change legs, risk or sizing."
+            )
+        elif instruction.startswith("Inspect every attached chart"):
+            result.append(
+                "Inspect the attached 1-minute, 15-minute and daily price charts. "
+                "Use the numerical starting input for volume, realized volatility and liquidity."
+            )
+        else:
+            result.append(instruction.replace("calculate_exit_time", "preview_strategy"))
+    result.append(
+        "Use the calculator for additional arithmetic. Preview expiry payoff is exact and gross; "
+        "pre-expiry Greek scenarios are local estimates, not predictions. "
+        "Futures are separate venue measurements. Do not infer zero from absent values."
+    )
+    return result
+
+
+def _chart_artifacts(
+    market_packet: dict[str, Any],
+    base: str = "BTC",
+    *,
+    price_only: bool = False,
+) -> list[ChartArtifact]:
     charts: list[ChartArtifact] = []
 
     def add(renderer: Callable[..., bytes], args: tuple, image_id: str, label: str, alt_text: str) -> None:
@@ -476,6 +546,8 @@ def _chart_artifacts(market_packet: dict[str, Any], base: str = "BTC") -> list[C
             f"{spot} {label} price",
             f"{spot} {label} candlestick chart from Binance Spot",
         )
+    if price_only:
+        return charts
     fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
     candles = fifteen_minute.get("candles") or []
     add(
