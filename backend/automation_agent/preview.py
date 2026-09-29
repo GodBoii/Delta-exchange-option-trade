@@ -119,6 +119,8 @@ def build_preview(definition: dict, resolved: list[dict], quotes: list[dict], no
             raise ValueError("Selected contract metadata mismatch")
         weight = quantity * multiplier * (1 if leg["position"] == "buy" else -1)
         price = ask if leg["position"] == "buy" else bid
+        if price <= 0:
+            raise ValueError("Selected contract has no positive executable quote")
         credit -= weight * price
         terms.append((strike, weight, leg["optionType"]))
         spot = number(row.get("spot"))

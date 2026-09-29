@@ -29,6 +29,7 @@ from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
 
 from .assets import PROFILES
+from .curated import dumps
 from .local_client import LocalResearchClient
 from .preview import build_preview, resolve_contracts
 from .report_data import ResearchData
@@ -207,7 +208,7 @@ class AutomationStrategyTools(Toolkit):
                     )
                     watch.raise_for_status()
             self._previews[key] = (definition, schedule)
-            return json.dumps({"valid": True, "schedule": schedule, **result}, separators=(",", ":"), allow_nan=False)
+            return dumps({"valid": True, "schedule": schedule, **result})
         except (ValueError, AppError, httpx.HTTPError) as error:
             return json.dumps(
                 {

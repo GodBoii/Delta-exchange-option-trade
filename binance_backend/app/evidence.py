@@ -72,7 +72,10 @@ def normalize_option(raw: dict[str, Any], product: dict[str, Any], asset: str, n
     return result
 
 
-def depth_summary(bids: dict[float, float], asks: dict[float, float]) -> dict[str, Any]:
+def depth_summary(
+    bids: dict[float, float], asks: dict[float, float],
+    known_bid_floor: float | None = None, known_ask_ceiling: float | None = None,
+) -> dict[str, Any]:
     if not bids or not asks:
         return {}
     best_bid, best_ask = max(bids), min(asks)
@@ -82,7 +85,8 @@ def depth_summary(bids: dict[float, float], asks: dict[float, float]) -> dict[st
     bands = {}
     for percent in (0.1, 0.5, 1.0):
         lower, upper = mid * (1 - percent / 100), mid * (1 + percent / 100)
-        complete = min(bids) <= lower and max(asks) >= upper
+        complete = (known_bid_floor if known_bid_floor is not None else min(bids)) <= lower and (
+            known_ask_ceiling if known_ask_ceiling is not None else max(asks)) >= upper
         bid = sum(q for p, q in bids.items() if p >= lower)
         ask = sum(q for p, q in asks.items() if p <= upper)
         bands[str(percent)] = {
@@ -124,11 +128,15 @@ def option_overview(options: list[dict[str, Any]], now: int, extra_expiries: set
             "expiry": chain[0]["expiry"], "daysRemaining": round((expiry - now) / 86_400_000, 3),
             "atmIvPercent": sum(ivs) / len(ivs) * 100 if ivs else None,
             "putMinusCallIvPoints": (put["impliedVolatility"] - call["impliedVolatility"]) * 100
-            if put.get("impliedVolatility") is not None and call.get("impliedVolatility") is not None else None,
+            if put.get("impliedVolatility") is not None and call.get("impliedVolatility") is not None
+            and put.get("strike") == call.get("strike") else None,
             "oiBase": total_oi if oi else None, "oiCoverage": len(oi) / len(chain),
             "largestOiStrike": peak["strike"] if peak else None,
             "largestOiSharePercent": peak["openInterest"] / total_oi * 100 if peak and total_oi else None,
             "atmSpreadPercent": sum(spreads) / len(spreads) if spreads else None,
+            "atmMaximumSpreadPercent": max(spreads) if spreads else None,
+            "volume24hBase": sum(o["volume"] for o in chain if o.get("volume") is not None)
+            if all(o.get("volume") is not None for o in chain) else None,
             "quotedContracts": len(chain), "atmSymbols": [o["symbol"] for o in atm.values()],
             "observedAt": min(o["observedAt"] for o in chain),
         })

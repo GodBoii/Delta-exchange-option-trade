@@ -231,7 +231,8 @@ async def agent_summary(request: Request) -> dict:
     feed = request.app.state.feed
     now = int(time.time() * 1000)
     futures = await asyncio.to_thread(feed.evidence.futures_summary, feed.delta_context, now)
-    current = depth_summary(feed.bids, feed.asks) if feed.book_synced and now - feed.last_depth_at <= 5000 else {}
+    current = depth_summary(feed.bids, feed.asks, feed.known_bid_floor, feed.known_ask_ceiling) \
+        if feed.book_synced and now - feed.last_depth_at <= 5000 else {}
     options = feed.evidence.overview if now - feed.evidence.options_at <= 90_000 else []
     return {"schemaVersion": 1, "asset": settings.base_asset, "asOf": now,
             "futures": futures, "options": options, "liquidity": current,

@@ -13,7 +13,16 @@ def enabled() -> bool:
 
 
 def dumps(value: Any) -> str:
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str)
+    def display(item):
+        if isinstance(item, float):
+            return float(f"{item:.8g}")
+        if isinstance(item, dict):
+            return {key: display(value) for key, value in item.items()}
+        if isinstance(item, list):
+            return [display(value) for value in item]
+        return item
+
+    return json.dumps(display(value), separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str)
 
 
 def market_input(packet: dict, asset: str) -> dict:

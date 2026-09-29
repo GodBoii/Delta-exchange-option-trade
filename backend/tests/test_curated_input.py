@@ -104,6 +104,77 @@ def test_native_calculator_can_be_followed_by_cancellation():
     assert "drop_strategy" in DropStrategyTools.__dict__
 
 
+def test_calculation_then_drop_uses_only_the_assigned_proposal(monkeypatch):
+    from uuid import uuid4
+
+    from automation_agent.tools import DropStrategyTools
+
+    calls = []
+
+    class Data:
+        def request_sync(self, path, args, **kwargs):
+            calls.append((path, args))
+            return {"outcome": "strategy_dropped", "success": True}
+
+    monkeypatch.setattr("automation_agent.tools.runtime_data", lambda _: Data())
+    proposal = str(uuid4())
+    drop = DropStrategyTools(SimpleNamespace(), user_id="global", agent_run_id=str(uuid4()), proposal_id=proposal)
+    assert json.loads(calculator().subtract(12, 10))["result"] == 2
+    result = json.loads(drop.drop_strategy("Assigned strategy", datetime.now(UTC).isoformat(), "Thesis invalidated"))
+    assert result["success"] is True
+    assert calls[0][1]["proposalId"] == proposal
+    assert calls[0][1]["drop"] is True
+
+
+def test_curated_tools_require_matching_preview_without_scheduling(monkeypatch):
+    from uuid import uuid4
+
+    from automation_agent.tools import AutomationStrategyTools
+
+    monkeypatch.setattr("automation_agent.tools.runtime_data", lambda _: object())
+    toolkit = AutomationStrategyTools(
+        SimpleNamespace(trade_backend_internal_url="http://writer.test", analysis_service_secret="secret"),
+        user_id="global",
+        agent_run_id=str(uuid4()),
+        market_snapshot_id=str(uuid4()),
+        curated=True,
+    )
+    assert set(toolkit.functions) == {"preview_strategy", "select_strategy_and_time", "scheduled_next_agent_run"}
+    activation = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
+    with pytest.raises(ValueError, match="preview_strategy"):
+        toolkit._select_strategy_and_time(
+            saved_id=str(uuid4()),
+            saved_strategy_version=1,
+            activation_time=activation,
+            ai_confidence=0.5,
+            reasoning_summary="test",
+            supporting_signals=[],
+            invalidation_signals=[],
+            exit_choice={"kind": "specific_time", "exit_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()},
+        )
+
+
+def test_paired_dry_run_constructs_inputs_without_provider_or_actions(monkeypatch):
+    from scripts.agent_input_dry_run import catalogue, run_case
+
+    raw, _, _ = fixture()
+    case = {
+        "asset": "BTC",
+        "options": [raw],
+        "catalogue": catalogue("BTC"),
+        "market": {"source": "Binance Spot", "timeframes": {}},
+    }
+    for curated in (False, True):
+        for recheck in (False, True):
+            result = run_case(case, "Same existing news summary", curated=curated, recheck=recheck, offline=True)
+            assert result["simulatedActions"] == []
+            if curated:
+                assert "get_btc_market_packet" not in result["registeredTools"]
+                assert "show_available_strategy" not in result["registeredTools"]
+                assert "multiply" in result["registeredTools"]
+                assert ("drop_strategy" in result["registeredTools"]) is recheck
+
+
 @pytest.mark.asyncio
 async def test_watchlist_contains_only_expiries_not_accounts():
     from app.market_watch import publish_watchlists

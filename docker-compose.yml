@@ -154,6 +154,8 @@ services:
       context: ./binance_backend
       dockerfile: Dockerfile
     environment:
+      ANALYSIS_SERVICE_SECRET: ${ANALYSIS_SERVICE_SECRET:-}
+      BINANCE_FUTURES_BASE_URL: ${BINANCE_FUTURES_BASE_URL:-https://fapi.binance.com}
       BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
       BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://stream.binance.com:9443/stream}
       BINANCE_SYMBOL: ${BINANCE_SYMBOL:-BTCUSDT}
@@ -187,6 +189,8 @@ services:
       context: ./binance_backend
       dockerfile: Dockerfile
     environment:
+      ANALYSIS_SERVICE_SECRET: ${ANALYSIS_SERVICE_SECRET:-}
+      BINANCE_FUTURES_BASE_URL: ${BINANCE_FUTURES_BASE_URL:-https://fapi.binance.com}
       BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
       BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://stream.binance.com:9443/stream}
       BINANCE_SYMBOL: ETHUSDT

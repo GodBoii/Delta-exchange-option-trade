@@ -148,7 +148,7 @@ class PublicEvidence:
     async def selected(self, symbols: list[str]) -> list[dict]:
         if len(symbols) > 16 or len(set(symbols)) != len(symbols):
             raise ValueError("Invalid selected contract count")
-        if not self.products:
+        if not self.products or time.monotonic() - self.metadata_at > 300:
             await self.refresh_products()
 
         async def load(symbol: str) -> dict:
@@ -167,7 +167,14 @@ class PublicEvidence:
             result["depth"] = raw_book
             return result
 
-        return list(await asyncio.gather(*(load(symbol) for symbol in symbols)))
+        tasks = [asyncio.create_task(load(symbol)) for symbol in symbols]
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     def futures_summary(self, delta: dict, now: int) -> dict:
         candidates = {"Binance": self.futures}

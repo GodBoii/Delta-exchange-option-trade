@@ -40,6 +40,8 @@ def test_depth_distances_coverage_and_window_extremes():
     assert sample["bands"]["0.1"]["complete"] is True
     partial = depth_summary({99.95: 2}, {100.05: 3})
     assert partial["bands"]["0.1"]["complete"] is False
+    touched_outer = depth_summary({90: 1, 99.95: 2}, {100.05: 3, 110: 1}, 99.95, 100.05)
+    assert touched_outer["bands"]["1.0"]["complete"] is False
     assert depth_summary({101: 1}, {100: 1}) == {}
     window = LiquidityWindow(0)
     window.add(sample)

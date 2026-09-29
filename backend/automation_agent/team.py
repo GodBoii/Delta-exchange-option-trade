@@ -310,6 +310,8 @@ def run_automation_team(
         )
         if not isinstance(response, RunOutput):
             raise RuntimeError("Automation team returned an unexpected streaming response")
+        if curated and str(getattr(response.status, "value", response.status)).upper() == "ERROR":
+            raise RuntimeError("Market analysis model failed")
         report = (
             response.content.strip() if isinstance(response.content, str) else json.dumps(response.content, default=str)
         )

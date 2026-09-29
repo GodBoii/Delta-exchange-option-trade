@@ -50,6 +50,8 @@ class BinanceSpotFeed:
         self.bids: dict[float, float] = {}
         self.asks: dict[float, float] = {}
         self.book_update_id = 0
+        self.known_bid_floor: float | None = None
+        self.known_ask_ceiling: float | None = None
         self.trade_deltas: deque[tuple[int, float]] = deque()
         self.recent_trades: deque[dict[str, Any]] = deque(maxlen=60)
         self.delta = delta
@@ -72,6 +74,8 @@ class BinanceSpotFeed:
         self.liquidity: dict[str, Any] = {}
         self.evidence_error: str | None = None
         self.baselines: dict = {}
+        self._flow_buckets: dict[int, dict] = {}
+        self._flow_trade_id = 0
 
     async def start(self) -> None:
         await asyncio.to_thread(self.evidence.store.initialize)
@@ -119,6 +123,8 @@ class BinanceSpotFeed:
                 current = now // STEP_MS * STEP_MS
                 if current > bucket:
                     self.liquidity = window.summary(current)
+                    self.liquidity["flow"] = self._flow_buckets.pop(bucket, {})
+                    self._flow_buckets = {k: v for k, v in self._flow_buckets.items() if k >= current}
                     if window.count:
                         await asyncio.to_thread(self.evidence.store.save, "liquidity_summaries", current,
                                                 [(self.settings.binance_symbol, self.liquidity)])
@@ -132,7 +138,7 @@ class BinanceSpotFeed:
                     self.baselines = await asyncio.to_thread(self.evidence.store.baselines, now)
                     bucket, window = current, LiquidityWindow(current)
                 if self.connected and self.book_synced and now - self.last_depth_at <= 5000:
-                    window.add(depth_summary(self.bids, self.asks))
+                    window.add(depth_summary(self.bids, self.asks, self.known_bid_floor, self.known_ask_ceiling))
                 completed = [c for c in self.analysis_candles if c.get("closed") is True
                              and last_minute <= c["openTime"] < now // 60_000 * 60_000]
                 for candle in completed:
@@ -306,6 +312,8 @@ class BinanceSpotFeed:
 
         self.bids = {float(price): float(quantity) for price, quantity in snapshot["bids"] if quantity > 0}
         self.asks = {float(price): float(quantity) for price, quantity in snapshot["asks"] if quantity > 0}
+        self.known_bid_floor = min(self.bids) if self.bids else None
+        self.known_ask_ceiling = max(self.asks) if self.asks else None
         self.book_update_id = last_update_id
         for event in applicable[start_index:]:
             self._apply_depth(event)
@@ -342,6 +350,15 @@ class BinanceSpotFeed:
         quantity = number(data.get("q"))
         trade_time = int(data.get("T") or data.get("E") or int(time.time() * 1000))
         signed_quantity = -quantity if data.get("m") else quantity
+        trade_id = int(data.get("t") or 0)
+        if trade_id > self._flow_trade_id and price > 0 and quantity > 0:
+            bucket = trade_time // STEP_MS * STEP_MS
+            stats = self._flow_buckets.setdefault(bucket, {"buyBase": 0.0, "sellBase": 0.0, "trades": 0,
+                                                         "firstTradeAt": trade_time, "lastTradeAt": trade_time})
+            stats["sellBase" if data.get("m") else "buyBase"] += quantity
+            stats["trades"] += 1
+            stats["lastTradeAt"] = trade_time
+            self._flow_trade_id = trade_id
         self.trade_deltas.append((trade_time, signed_quantity))
         self.recent_trades.appendleft(
             {
