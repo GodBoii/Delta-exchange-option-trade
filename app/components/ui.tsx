@@ -555,7 +555,21 @@ const ROW_MENU_ITEM_HEIGHT = 46;
  * and an absolutely positioned child would be clipped by that container. Any
  * scroll or resize dismisses it instead of leaving a detached panel behind.
  */
-export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {
+/**
+ * A visible trigger replaces the default "more" icon when the menu is a primary
+ * command rather than a row overflow. `label` still names the menu itself.
+ */
+export type RowMenuTrigger = {
+  content: ReactNode;
+  className?: string;
+  disabled?: boolean;
+};
+
+export function RowMenu({ label, items, trigger: customTrigger }: {
+  label: string;
+  items: RowMenuItem[];
+  trigger?: RowMenuTrigger;
+}) {
   const [anchor, setAnchor] = useState<{ top: number; left: number; placement: "below" | "above" } | null>(null);
   const [phase, setPhase] = useState<"pre" | "open" | "closing">("pre");
   const trigger = useRef<HTMLButtonElement>(null);
@@ -646,15 +660,17 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
     <>
       <button
         type="button"
-        className={open ? "row-menu-trigger open" : "row-menu-trigger"}
+        className={`${customTrigger?.className ?? "row-menu-trigger"}${open ? " open" : ""}`}
         ref={trigger}
-        aria-label={label}
+        // A text trigger names itself; only the icon-only default needs a label.
+        aria-label={customTrigger ? undefined : label}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
+        disabled={customTrigger?.disabled}
         onClick={() => (open ? close() : openMenu())}
       >
-        <MoreHorizontal aria-hidden="true" />
+        {customTrigger ? customTrigger.content : <MoreHorizontal aria-hidden="true" />}
       </button>
 
       {anchor !== null && createPortal(
