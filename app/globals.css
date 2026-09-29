@@ -6385,9 +6385,6 @@ time,
    18. Automation and agent output
    -------------------------------------------------------------------------- */
 
-.automation-page { display: grid; gap: var(--s-4); }
-.automation-page > .section-heading { margin-bottom: 0; }
-.automation-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
 /* Capital policy.
 
    One rule, four figures and a proportion bar, laid on a single three-column
@@ -6452,60 +6449,390 @@ time,
 }
 .capital-facts dt { color: var(--text-3); font-size: var(--t-xs); }
 .capital-facts dd { color: var(--text-1); font-size: var(--t-sm); text-align: right; }
-.automation-facts { display: grid; gap: var(--s-2); margin-top: var(--s-5); }
-.automation-facts > div {
+/* Automation page.
+
+   The heading row carries every control: the account's own switch, a refresh
+   icon, and (for the owner) one run command with the asset choice in a menu.
+   Below it a single strip of figures, then the decision beside a short
+   schedule, then the two lists. Sections rise in on a short stagger; the fill
+   mode is `backwards` so no transform lingers and creates a stacking context
+   that would trap the tooltips. */
+
+.automation-page { display: grid; gap: var(--s-5); }
+.automation-page > .section-heading { margin-bottom: 0; }
+
+.automation-page > * { animation: automation-rise var(--duration-slow) var(--ease-smooth-out) backwards; }
+.automation-page > :nth-child(2) { animation-delay: 40ms; }
+.automation-page > :nth-child(3) { animation-delay: 80ms; }
+.automation-page > :nth-child(4) { animation-delay: 120ms; }
+.automation-page > :nth-child(5) { animation-delay: 160ms; }
+.automation-page > :nth-child(n + 6) { animation-delay: 200ms; }
+
+@keyframes automation-rise {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* Controls */
+
+.automation-controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-  padding-block: var(--s-2);
-  border-bottom: 1px solid var(--line);
+  gap: var(--s-2);
 }
-.automation-facts dt { color: var(--text-3); font-size: var(--t-xs); }
-.automation-facts dd { color: var(--text-1); font-size: var(--t-sm); text-align: right; }
-.automation-sessions { display: grid; gap: var(--s-2); list-style: none; }
-.automation-sessions li {
+
+.automation-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-h-sm);
+  padding: 0 var(--s-3) 0 var(--s-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    transform var(--duration-quick) var(--ease);
+}
+
+.automation-switch > i {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--surface-4);
+  transition: background-color var(--dur) ease;
+}
+
+.automation-switch .t-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  transition: background-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+
+.automation-switch-text { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.automation-switch-text > .t-text-swap { color: var(--text-1); font-weight: 600; }
+
+.automation-switch.on { border-color: rgb(212 162 68 / 40%); background: var(--accent-soft); }
+.automation-switch.on > i { background: rgb(212 162 68 / 22%); }
+.automation-switch.on .t-toggle-thumb { background: var(--accent); box-shadow: 0 0 0 3px rgb(212 162 68 / 18%); }
+.automation-switch.on .automation-switch-text > .t-text-swap { color: var(--accent-strong); }
+.automation-switch:disabled { opacity: 0.6; cursor: not-allowed; }
+.automation-switch[aria-busy="true"] { cursor: progress; }
+.automation-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.automation-switch:active:not(:disabled) { transform: scale(0.97); }
+
+@media (hover: hover) {
+  .automation-switch:hover:not(:disabled) { border-color: var(--text-3); }
+  .automation-switch.on:hover:not(:disabled) { border-color: rgb(212 162 68 / 60%); }
+}
+
+.automation-run-trigger { gap: var(--s-2); }
+.automation-run-trigger .automation-run-caret { transition: transform var(--duration-fast) var(--ease-smooth-out); }
+.automation-run-trigger.open .automation-run-caret { transform: rotate(180deg); }
+.automation-run-trigger:active:not(:disabled) { transform: scale(0.97); }
+
+/* Figures strip */
+
+.automation-stats {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: repeat(3, minmax(0, max-content)) minmax(0, 1fr);
+  border-block: 1px solid var(--line);
+}
+
+.automation-stats > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--s-3) var(--s-6) var(--s-3) 0;
+}
+
+.automation-stats > div + div { padding-left: var(--s-6); border-left: 1px solid var(--line); }
+.automation-stats dt { color: var(--text-3); font-size: var(--t-xs); }
+
+.automation-stats dd {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-1);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.automation-stats dd small { color: var(--text-3); font-size: var(--t-xs); font-weight: 500; }
+
+.automation-stat-model dd {
+  display: block;
+  overflow: hidden;
+  font-family: var(--font-mono-stack);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Decision beside schedule */
+
+.automation-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+
+.automation-decision-tags { display: inline-flex; align-items: center; gap: var(--s-2); }
+
+.automation-slots { display: grid; list-style: none; }
+
+.automation-slot {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--s-3);
-  padding: var(--s-3) 0;
+  padding: var(--s-3) var(--s-3);
   border-bottom: 1px solid var(--line);
 }
-.automation-sessions span,
-.automation-sessions small { color: var(--text-3); font-size: var(--t-xs); }
-.automation-sessions strong { color: var(--text-1); font-size: var(--t-sm); }
-.automation-report { padding: var(--s-3) 0; }
-.automation-page .data-table th small { display: block; margin-top: 2px; color: var(--text-3); font-weight: 500; }
-.automation-run-list { display: grid; }
-.automation-run-item { border-bottom: 1px solid var(--line); }
-.automation-run-item summary {
+
+.automation-slot-time { display: grid; gap: 1px; }
+.automation-slot-time strong { color: var(--text-1); font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.automation-slot-time small { color: var(--text-3); font-size: 11px; }
+.automation-slot-name { display: grid; gap: 2px; min-width: 0; }
+.automation-slot-name strong { color: var(--text-1); font-size: var(--t-sm); font-weight: 500; }
+.automation-slot-name small { color: var(--accent-strong); font-size: 11px; font-weight: 600; }
+.automation-slot-assets { display: inline-flex; gap: 4px; }
+
+.automation-slot.is-next {
+  border-bottom-color: transparent;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgb(212 162 68 / 22%);
+}
+
+.asset-mark {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-family: var(--font-mono-stack);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* "Show more" rows and inline expanders */
+
+.automation-more {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s-4);
-  min-height: 64px;
-  padding-block: var(--s-3);
-  cursor: pointer;
-  list-style: none;
+  justify-content: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 40px;
+  margin-top: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    transform var(--duration-quick) var(--ease);
 }
-.automation-run-item summary::-webkit-details-marker { display: none; }
-.automation-run-item summary > span { display: grid; gap: 2px; }
-.automation-run-item summary strong { color: var(--text-1); font-size: var(--t-sm); }
-.automation-run-item summary small { color: var(--text-3); font-size: var(--t-xs); }
-.automation-run-body { display: grid; gap: var(--s-4); padding: var(--s-4) 0 var(--s-6); }
-.automation-run-output { display: grid; gap: var(--s-5); }
+
+.automation-more svg { width: 14px; height: 14px; }
+.automation-more:active { transform: scale(0.98); }
+.automation-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (hover: hover) {
+  .automation-more:hover { border-color: var(--line-strong); background: var(--surface-2); color: var(--text-1); }
+}
+
+.automation-inline-toggle {
+  justify-self: start;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+.automation-inline-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs); }
+
+@media (hover: hover) {
+  .automation-inline-toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
+}
+
+/* Report: clamped until asked for, with a fade so the cut reads as deliberate. */
+
+.automation-report-wrap { display: grid; gap: var(--s-2); }
+.automation-report { max-height: 22rem; overflow: hidden; }
+.automation-report-wrap[data-overflowing="true"] .automation-report {
+  mask-image: linear-gradient(to bottom, #000 72%, transparent);
+}
+.automation-report-wrap[data-expanded="true"] .automation-report { max-height: none; mask-image: none; }
+
+.automation-run-output { display: grid; gap: var(--s-4); }
 .automation-chart-section { display: grid; gap: var(--s-3); }
 .automation-chart-section > header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); }
 .automation-chart-section > header strong { color: var(--text-1); font-size: var(--t-sm); }
 .automation-chart-section > header small { color: var(--text-3); font-size: var(--t-xs); }
 .automation-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
-.automation-chart-grid figure { overflow: hidden; border: 0; border-radius: 0; background: transparent; }
+
+.automation-chart-grid figure {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+}
+
 .automation-chart-grid img { display: block; width: 100%; height: auto; object-fit: contain; }
 .automation-chart-grid figcaption { padding: var(--s-2) var(--s-3); color: var(--text-2); font-size: var(--t-xs); }
+
+/* Filters sit under the panel header and size to their tabs. */
+.automation-filter { width: fit-content; max-width: 100%; }
+
+/* Agent runs */
+
+.agent-run-list { display: grid; list-style: none; }
+.agent-run { border-bottom: 1px solid var(--line); animation: automation-rise var(--duration-fast) var(--ease-smooth-out) backwards; }
+.agent-run:nth-child(2) { animation-delay: 30ms; }
+.agent-run:nth-child(3) { animation-delay: 60ms; }
+.agent-run:nth-child(n + 4) { animation-delay: 90ms; }
+
+.agent-run-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 60px;
+  padding: var(--s-3) var(--s-2);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  transition: background-color var(--dur) var(--ease);
+}
+
+.agent-run-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.agent-run-title { display: grid; gap: 2px; min-width: 0; }
+.agent-run-title strong { color: var(--text-1); font-size: var(--t-sm); font-weight: 500; }
+.agent-run-title small { color: var(--text-3); font-size: var(--t-xs); }
+.agent-run-summary .t-acc-chevron { color: var(--text-3); }
+.agent-run-summary .t-acc-chevron svg { width: 16px; height: 16px; }
+.agent-run[data-open="true"] .agent-run-summary { background: var(--surface-2); }
+
+@media (hover: hover) {
+  .agent-run-summary:hover { background: var(--surface-2); }
+}
+
+.agent-run-body { display: grid; gap: var(--s-4); padding: var(--s-4) var(--s-2) var(--s-5); }
+.agent-run-pending { color: var(--text-3); font-size: var(--t-sm); }
 .automation-run-ids { display: grid; gap: var(--s-2); color: var(--text-3); font-size: var(--t-xs); }
 .automation-run-ids > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--s-2); }
-.automation-run-ids dd { overflow-wrap: anywhere; color: var(--text-2); }
+.automation-run-ids dd { overflow-wrap: anywhere; color: var(--text-2); font-family: var(--font-mono-stack); }
+
+/* Strategy proposals */
+
+.proposal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: var(--s-3);
+  list-style: none;
+}
+
+.proposal-card {
+  display: grid;
+  align-content: start;
+  gap: var(--s-3);
+  min-width: 0;
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-1);
+  animation: automation-rise var(--duration-fast) var(--ease-smooth-out) backwards;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.proposal-card:nth-child(2) { animation-delay: 30ms; }
+.proposal-card:nth-child(n + 3) { animation-delay: 60ms; }
+
+@media (hover: hover) {
+  .proposal-card:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+}
+
+.proposal-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.proposal-card-name { color: var(--text-1); font-size: var(--t-sm); font-weight: 600; overflow-wrap: anywhere; }
+
+.proposal-card-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-3);
+  padding-block: var(--s-3);
+  border-block: 1px solid var(--line);
+}
+
+.proposal-card-facts > div { display: grid; gap: 4px; min-width: 0; }
+.proposal-card-facts dt { color: var(--text-3); font-size: 11px; }
+.proposal-card-facts dd { color: var(--text-1); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
+
+.proposal-confidence {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.proposal-card-reason {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: var(--lh-body);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.proposal-card-reason.is-expanded { display: block; -webkit-line-clamp: unset; line-clamp: unset; }
+
+@media (prefers-reduced-motion: reduce) {
+  .automation-page > *,
+  .agent-run,
+  .proposal-card { animation: none !important; }
+  .automation-switch,
+  .automation-more,
+  .proposal-card,
+  .automation-run-trigger .automation-run-caret { transition: none !important; }
+}
 
 /* Agent Markdown output. Long-form prose gets a measure and rhythm of its own. */
 
@@ -7155,7 +7482,9 @@ kbd {
 }
 
 @media (max-width: 960px) {
-  .automation-summary { grid-template-columns: minmax(0, 1fr); }
+  /* The schedule is short now, so on one column it goes above the long report. */
+  .automation-main { grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
+  .automation-schedule { order: -1; }
 
   /* The rule and its consequences stack before the figures do, so the control
      the operator came to change stays at the top of the panel. */
@@ -7171,10 +7500,44 @@ kbd {
 @media (max-width: 720px) {
   .capital-body { grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
   .capital-allocations { grid-column: auto; }
-  .automation-chart-grid { grid-template-columns: minmax(0, 1fr); }
-  .automation-chart-section > header { align-items: flex-start; flex-direction: column; }
-  .automation-sessions li { grid-template-columns: 64px minmax(0, 1fr); }
-  .automation-sessions li small { grid-column: 2; }
+  /* Charts become a swipeable strip instead of a tall stack of images. */
+  .automation-chart-grid {
+    grid-template-columns: none;
+    grid-auto-columns: 86%;
+    grid-auto-flow: column;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .automation-chart-grid::-webkit-scrollbar { display: none; }
+  .automation-chart-grid figure { scroll-snap-align: start; }
+  .automation-chart-section > header { align-items: flex-start; flex-direction: column; gap: 2px; }
+
+  /* Heading controls: switch on the left, refresh and run on the right, one row. */
+  .automation-controls { width: 100%; }
+  .automation-controls > .t-tt-wrap { margin-left: auto; }
+
+  .automation-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .automation-stats > div { padding: var(--s-3) var(--s-3) var(--s-3) 0; }
+  .automation-stats > div + div { padding-left: var(--s-3); }
+  .automation-stats > div.automation-stat-model {
+    grid-column: 1 / -1;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .automation-slot { grid-template-columns: 64px minmax(0, 1fr) auto; padding-inline: var(--s-2); }
+
+  /* The status chip drops under the title so long session names keep one line. */
+  .agent-run-summary { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 6px; padding-inline: 4px; }
+  .agent-run-summary .status-chip { grid-column: 2; grid-row: 2; justify-self: start; }
+  .agent-run-summary .t-acc-chevron { grid-column: 3; grid-row: 1 / span 2; }
+
+  .proposal-card { padding: var(--s-3); }
+  .automation-inline-toggle { min-height: 44px; }
+  .automation-more { min-height: 44px; }
   :root {
     --control-h: 44px;
     --control-h-sm: 44px;
