@@ -353,7 +353,7 @@ function LatestDecision({ run, running, loading }: { run?: AutomationRun; runnin
         actions={run ? (
           <span className="automation-decision-tags">
             <AssetMark asset={assetOf(run)} />
-            <StatusChip tone={runTone(run.status)}>{titleCase(run.outcome ?? run.status)}</StatusChip>
+            <StatusChip tone={runTone(run)}>{titleCase(run.outcome ?? run.status)}</StatusChip>
           </span>
         ) : undefined}
       />
@@ -407,7 +407,7 @@ function AgentRuns({ runs, loading }: { runs: AutomationRun[]; loading: boolean 
           </ul>
           {visible.length > limit && (
             <button type="button" className="automation-more" onClick={() => setLimit(value => value + HISTORY_PAGE)}>
-              Show {Math.min(HISTORY_PAGE, visible.length - limit)} more of {visible.length - limit}
+              {moreLabel(visible.length - limit, HISTORY_PAGE)}
             </button>
           )}
         </>
@@ -444,7 +444,7 @@ function AgentRunItem({ run }: { run: AutomationRun }) {
           <strong>{titleCase(run.trigger)}</strong>
           <small>{formatDateTime(run.scheduledFor)}{run.scope === "historical_account" ? " · Earlier account run" : ""}</small>
         </span>
-        <StatusChip tone={runTone(run.status)}>{titleCase(run.outcome ?? run.status)}</StatusChip>
+        <StatusChip tone={runTone(run)}>{titleCase(run.outcome ?? run.status)}</StatusChip>
         <span className="t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
       </button>
       <div className="t-acc-panel" id={bodyId} aria-hidden={!open}>
@@ -498,7 +498,7 @@ function ProposalList({ proposals, loading }: { proposals: StrategyProposal[]; l
           </ul>
           {visible.length > limit && (
             <button type="button" className="automation-more" onClick={() => setLimit(value => value + PROPOSAL_PAGE)}>
-              Show {Math.min(PROPOSAL_PAGE, visible.length - limit)} more of {visible.length - limit}
+              {moreLabel(visible.length - limit, PROPOSAL_PAGE)}
             </button>
           )}
         </>
@@ -646,10 +646,15 @@ function RunCharts({ charts }: { charts: AutomationRun["charts"] }) {
   );
 }
 
-function runTone(status: string): StatusTone {
-  if (status === "failed") return "negative";
-  if (status === "completed") return "positive";
-  return "active";
+/** Colour follows what the run decided, not only whether it finished: a finished "no trade" is neutral. */
+function runTone(run: Pick<AutomationRun, "status" | "outcome">): StatusTone {
+  if (run.status === "failed") return "negative";
+  if (run.status !== "completed") return "active";
+  return run.outcome === "activated" ? "positive" : "neutral";
+}
+
+function moreLabel(remaining: number, page: number) {
+  return remaining <= page ? `Show ${remaining} more` : `Show ${page} more · ${remaining} left`;
 }
 
 /** Current time, re-read on an interval so relative labels ("in 4h") stay true. */
