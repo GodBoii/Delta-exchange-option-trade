@@ -638,7 +638,11 @@ Each observation contains the existing 60-close sideways score, the existing ann
 including its up-to-240-minute VWAP reference. Observations require 240 contiguous completed minute bars.
 Incomplete bars, gaps, invalid numbers, and a disconnected or stale feed prevent recording. Collection
 starts at the next boundary after startup; downtime is not backfilled or represented as zero activity.
-The latest 50 hours are available through `GET /api/market/btcusd/history`; older observations remain local.
+The latest 50 hours are available through `GET /api/market/btcusd/history` and the corresponding
+`/api/market/ethusd/history` endpoint. Local observations are retained for 90 days. The background
+recorder deletes rows older than 90 days on startup and once per ten-minute boundary, even when
+the feed is disconnected. Cleanup is scoped to the instance's symbol; a row exactly at the cutoff
+is retained. SQLite reuses the freed pages, so pruning does not immediately shrink the database file.
 
 The automation service reuses `fixed_runs_between` to group observations into intervals from one scheduled
 session opening to the next. Asia uses 09:00 Tokyo, London 08:00 London, pre-expiry uses 15:30 IST,
