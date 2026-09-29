@@ -31,10 +31,12 @@ class MarketIntelligenceTools(Toolkit):
         session_trigger: str | None = None,
         asset: AssetProfile | None = None,
         curated: bool = False,
+        assigned_expiries: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         self.asset = asset or PROFILES["BTC"]
         self.curated = curated
+        self.assigned_expiries = assigned_expiries or []
         self.session_trigger = session_trigger
         self.binance_url = (binance_url or self.asset.market_base_url).rstrip("/")
         self.delta_url = (delta_url or os.getenv("DELTA_PUBLIC_BASE_URL") or "https://api.india.delta.exchange").rstrip(
@@ -153,7 +155,7 @@ class MarketIntelligenceTools(Toolkit):
         }
         if self.curated:
             with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
-                response = client.get(f"{route}/agent-summary")
+                response = client.get(f"{route}/agent-summary", params={"expiryDates": self.assigned_expiries})
                 response.raise_for_status()
                 summary = response.json()
             if summary.get("asset") != self.asset.code or summary.get("schemaVersion") != 1:

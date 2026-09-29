@@ -114,6 +114,7 @@ def run_automation_team(
         market_snapshot_id=market_snapshot_id,
         asset=code,
         curated=curated,
+        option_context=option_context,
     )
     catalogue = strategy_tools.starting_catalogue() if curated else None
 
@@ -356,7 +357,13 @@ def run_activation_recheck(
 ) -> AutomationTeamResult:
     code = asset.code
     curated = enabled()
-    market_tools = MarketIntelligenceTools(asset=asset, curated=curated)
+    market_tools = MarketIntelligenceTools(
+        asset=asset,
+        curated=curated,
+        assigned_expiries=[
+            leg["expiry"] for leg in recheck_context["selectedStrategy"].get("definition", {}).get("legs", [])
+        ],
+    )
     market_packet = market_tools.collect_market_packet()
     chart_artifacts = _recheck_chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
@@ -474,6 +481,8 @@ def run_activation_recheck(
     )
     if not isinstance(response, RunOutput):
         raise RuntimeError("Activation recheck returned an unexpected streaming response")
+    if curated and str(getattr(response.status, "value", response.status)).upper() == "ERROR":
+        raise RuntimeError("Activation recheck model failed")
     report = response.content.strip() if isinstance(response.content, str) else ""
     if not report:
         raise RuntimeError("Activation recheck returned an empty report")
@@ -513,6 +522,12 @@ def curated_instructions(instructions: list[str]) -> list[str]:
         "Use the calculator for additional arithmetic. Preview expiry payoff is exact and gross; "
         "pre-expiry Greek scenarios are local estimates, not predictions. "
         "Futures are separate venue measurements. Do not infer zero from absent values."
+    )
+    result.append(
+        "Rank strategies using the starting comparisons and option overview first. "
+        "Preview only the chosen candidate and holding period. Re-preview when its arguments change "
+        "or the preview is invalid; do not scan the catalogue or holding presets with repeated previews. "
+        "Use supplied scenario values rather than recalculating the standard estimates."
     )
     return result
 

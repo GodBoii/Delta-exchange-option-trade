@@ -13,9 +13,9 @@ from app.history import RETENTION_MS
 def option(now, asset="BTC", days=1):
     from datetime import UTC, datetime
     symbol = f"C-{asset}-100-010130"
-    product = {"symbol": symbol, "settlement_time": datetime.fromtimestamp(
+    product = {"id": 1, "symbol": symbol, "settlement_time": datetime.fromtimestamp(
         (now + days * 86_400_000) / 1000, UTC).isoformat(), "contract_value": "0.001"}
-    raw = {"symbol": symbol, "strike_price": 100, "spot_price": 100, "mark_vol": "0.4",
+    raw = {"product_id": 1, "symbol": symbol, "strike_price": 100, "spot_price": 100, "mark_vol": "0.4",
            "timestamp": now * 1000, "quotes": {"best_bid": 2, "best_ask": 3, "bid_size": 10, "ask_size": 10}}
     return normalize_option(raw, product, asset, now)
 

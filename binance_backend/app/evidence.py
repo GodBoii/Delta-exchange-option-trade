@@ -47,8 +47,12 @@ def normalize_option(raw: dict[str, Any], product: dict[str, Any], asset: str, n
     observed = timestamp_ms(raw.get("timestamp"), now)
     if expiry is None or expiry <= now or strike is None or multiplier is None or observed is None:
         raise ValueError("Option metadata or timestamp is invalid")
-    quotes = raw.get("quotes") or {}
-    greeks = raw.get("greeks") or {}
+    quotes = raw.get("quotes") if isinstance(raw.get("quotes"), dict) else {}
+    greeks = raw.get("greeks") if isinstance(raw.get("greeks"), dict) else {}
+    product_id = finite(product.get("id"), positive=True)
+    ticker_id = finite(raw.get("product_id"), positive=True)
+    if product_id is None or ticker_id != product_id or not product_id.is_integer():
+        raise ValueError("Option product ID is invalid or mismatched")
     iv = finite(raw.get("mark_vol"))
     if iv is not None and not 0 <= iv <= 10:
         iv = None
@@ -61,10 +65,15 @@ def normalize_option(raw: dict[str, Any], product: dict[str, Any], asset: str, n
         "impliedVolatility": iv, "openInterest": finite(raw.get("oi")),
         "volume": finite(raw.get("volume")), "contractValue": multiplier,
         "observedAt": observed, "receivedAt": now,
-        "productId": raw.get("product_id"),
+        "productId": int(product_id),
         "takerFeeRate": finite(product.get("taker_commission_rate")),
     }
     result.update({key: finite(greeks.get(key)) for key in ("delta", "gamma", "theta", "vega")})
+    for key in ("mark", "bestBid", "bestAsk", "bidSize", "askSize", "openInterest", "volume", "takerFeeRate", "gamma"):
+        if result[key] is not None and result[key] < 0:
+            result[key] = None
+    if result["delta"] is not None and not -1 <= result["delta"] <= 1:
+        result["delta"] = None
     # Delta mark_vol and quote IVs are fractions, not percentages.
     for side in ("bid", "ask"):
         value = finite(quotes.get(f"{side}_iv"))
@@ -127,6 +136,8 @@ def option_overview(options: list[dict[str, Any]], now: int, extra_expiries: set
         rows.append({
             "expiry": chain[0]["expiry"], "daysRemaining": round((expiry - now) / 86_400_000, 3),
             "atmIvPercent": sum(ivs) / len(ivs) * 100 if ivs else None,
+            "ivScaledMoveToExpiryPercent": sum(ivs) / len(ivs) * math.sqrt(
+                (expiry - now) / (365 * 86_400_000)) * 100 if ivs else None,
             "putMinusCallIvPoints": (put["impliedVolatility"] - call["impliedVolatility"]) * 100
             if put.get("impliedVolatility") is not None and call.get("impliedVolatility") is not None
             and put.get("strike") == call.get("strike") else None,

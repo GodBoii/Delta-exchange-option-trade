@@ -160,8 +160,12 @@ def run_case(case: dict, news: str, *, curated: bool, recheck: bool, offline: bo
                 )
             )
 
-        def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: dict) -> str:
-            """Preview frozen public evidence with the production payoff and expiry calculations."""
+        def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
+            """Preview one saved strategy with frozen evidence and the production expiry/payoff calculations.
+
+            exit_choice uses kind: intraday|overnight|positional with hours, specific_time with exit_at,
+            or expiry with expiry_number 1 or 2. Choose using starting comparisons before previewing.
+            """
             try:
                 saved_id, version = self.strategy_references[strategy_ref.strip().upper()]
                 saved = next(r for r in rows if r["id"] == saved_id)
@@ -359,6 +363,7 @@ def main() -> None:
     run.add_argument("--offline", action="store_true")
     run.add_argument("--asset", choices=["BTC", "ETH"])
     run.add_argument("--stage", choices=["main", "recheck"])
+    run.add_argument("--path", choices=["legacy", "curated"])
     args = parser.parse_args()
     if args.command == "capture":
         cases = [
@@ -382,6 +387,8 @@ def main() -> None:
                 if args.stage and args.stage != ("recheck" if recheck else "main"):
                     continue
                 for curated in (False, True):
+                    if args.path and args.path != ("curated" if curated else "legacy"):
+                        continue
                     name = f"{case['asset']}-{'recheck' if recheck else 'main'}-{'curated' if curated else 'legacy'}"
                     started = time.perf_counter()
                     try:

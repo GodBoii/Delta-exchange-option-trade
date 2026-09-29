@@ -140,6 +140,9 @@ def test_curated_tools_require_matching_preview_without_scheduling(monkeypatch):
         curated=True,
     )
     assert set(toolkit.functions) == {"preview_strategy", "select_strategy_and_time", "scheduled_next_agent_run"}
+    toolkit.functions["preview_strategy"].process_entrypoint()
+    schema = toolkit.functions["preview_strategy"].parameters["properties"]["exit_choice"]
+    assert "kind" in str(schema)
     activation = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
     with pytest.raises(ValueError, match="preview_strategy"):
         toolkit._select_strategy_and_time(

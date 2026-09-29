@@ -52,12 +52,14 @@ class AutomationStrategyTools(Toolkit):
         news_analysis_id: str | None = None,
         asset: Asset = DEFAULT_ASSET,
         curated: bool = False,
+        option_context: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         self.settings = settings
         self.asset = asset
         self.curated = curated
         self._previews: dict[tuple, tuple[dict, dict]] = {}
+        self._initial_options = (option_context or {}).get("options") or []
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
@@ -108,9 +110,11 @@ class AutomationStrategyTools(Toolkit):
         rows = []
         for strategy in source["strategies"]:
             definition = strategy.pop("definition")
+            comparison = self.indicative_comparison(definition)
             rows.append(
                 {
                     **strategy,
+                    "comparison": comparison,
                     "rules": {
                         k: definition[k]
                         for k in (
@@ -156,13 +160,59 @@ class AutomationStrategyTools(Toolkit):
                 "positionalHours": [48, 72],
                 "other": ["specific_time", "expiry 1 or 2"],
             },
+            "comparisonBasis": "Indicative normalized leg ratio at the first expiry covering the next hour; "
+            "use this for ranking, then preview the chosen holding period once.",
         }
 
-    def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: dict[str, Any]) -> str:
+    def indicative_comparison(self, template: dict) -> dict:
+        from functools import reduce
+        from math import gcd
+
+        from .preview import number
+
+        try:
+            now = datetime.now(UTC)
+            definition, schedule = resolve_exit_schedule(
+                template,
+                entry_at=now + timedelta(minutes=8),
+                choice=ExitChoice(kind="specific_time", exit_at=now + timedelta(hours=1)),
+                options=self._initial_options,
+            )
+            legs = resolve_contracts(definition, self._initial_options)
+            divisor = reduce(gcd, (leg["lots"] for leg in legs))
+            quotes = {o["symbol"]: o for o in self._initial_options}
+            credit, distances, spreads = 0.0, [], []
+            for leg in legs:
+                row = quotes[leg["productSymbol"]]
+                bid, ask = number(row.get("bestBid")), number(row.get("bestAsk"))
+                multiplier = number(row.get("contractValue"))
+                if not 0 <= bid <= ask or multiplier <= 0:
+                    raise ValueError("Unavailable indicative quote")
+                price = ask if leg["position"] == "buy" else bid
+                if price <= 0:
+                    raise ValueError("Unavailable indicative price")
+                credit += float(price * multiplier) * (leg["lots"] // divisor) * (-1 if leg["position"] == "buy" else 1)
+                if ask + bid:
+                    spreads.append(float((ask - bid) / ((ask + bid) / 2) * 100))
+                if leg["position"] == "sell":
+                    spot, strike = number(row.get("spot")), number(row["strike"])
+                    distances.append(float((strike - spot) / spot * 100) * (1 if leg["optionType"] == "call" else -1))
+            return {
+                "expiry": schedule["contractExpiryUtc"],
+                "netCreditUsd": credit,
+                "nearestShortDistancePercent": min(distances) if distances else None,
+                "maximumQuoteSpreadPercent": max(spreads) if spreads else None,
+            }
+        except (ValueError, AppError, KeyError, ZeroDivisionError):
+            return {}
+
+    def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
         """Preview one saved strategy's exact schedule, legs, payoff and fresh advisory liquidity.
 
         Use the starting strategyRef. This reads public data and never schedules or places an order.
         The same strategy_ref, activation_time and exit_choice must be used when selecting.
+        exit_choice uses kind, not type: {kind: intraday|overnight|positional, hours: allowed preset},
+        {kind: specific_time, exit_at: aware ISO timestamp}, or {kind: expiry, expiry_number: 1|2}.
         """
         try:
             reference = strategy_ref.strip().upper()
@@ -451,6 +501,11 @@ class AutomationStrategyTools(Toolkit):
             rows, _ = self.application_data.selection_context(self.user_id, saved_id)
             if not rows or not rows[0]["enabled_for_ai"] or rows[0]["version"] != saved_strategy_version:
                 raise ValueError("Saved strategy is unavailable or changed")
+            context = self.runtime_data.request_sync(
+                "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
+            )
+            if not context.get("snapshot") or context["snapshot"]["id"] != self.market_snapshot_id:
+                raise ValueError("Current market snapshot is unavailable")
             live_definition, schedule = deepcopy(self._previews[key])
         else:
             live_definition, schedule = self._resolve_selection(saved_id, saved_strategy_version, activation, choice)

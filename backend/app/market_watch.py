@@ -37,11 +37,11 @@ async def publish_watchlists(db, client: httpx.AsyncClient) -> None:
         catalogue = response.json()
         if catalogue.get("underlying") != asset:
             raise ValueError("Watchlist asset mismatch")
+        listed = catalogue.get("listedExpiries") or [o["expiry"] for o in catalogue.get("options") or []]
         expiries = {
-            o["expiry"]
-            for o in catalogue.get("options") or []
-            if datetime.fromisoformat(o["expiry"].replace("Z", "+00:00")).astimezone(IST).date().isoformat()
-            in dates[asset]
+            expiry
+            for expiry in listed
+            if datetime.fromisoformat(expiry.replace("Z", "+00:00")).astimezone(IST).date().isoformat() in dates[asset]
         }
         response = await client.post(
             f"{route}/watch-expiries", json={"expiries": sorted(expiries)}, headers={"X-Analysis-Secret": secret}

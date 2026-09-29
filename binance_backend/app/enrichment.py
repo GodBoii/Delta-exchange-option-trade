@@ -100,13 +100,14 @@ class PublicEvidence:
             self.overview = await asyncio.to_thread(self.summarize_options, now)
 
     def summarize_options(self, now: int, extra: set[int] | None = None) -> list[dict]:
-        rows = option_overview(self.options, now, extra)
+        options = self.options
+        rows = option_overview(options, now, extra)
         for row in rows:
             changes = []
             for symbol in row.pop("atmSymbols"):
                 history = self.store.read("option_observations", now - 80 * 60_000, now - 50 * 60_000, symbol)
                 if history and history[-1].get("impliedVolatility") is not None:
-                    current = next(o for o in self.options if o["symbol"] == symbol)
+                    current = next(o for o in options if o["symbol"] == symbol)
                     if current.get("impliedVolatility") is not None:
                         changes.append((current["impliedVolatility"] - history[-1]["impliedVolatility"]) * 100)
             row["sameAtmContractsIvChange1hPoints"] = sum(changes) / len(changes) if len(changes) == 2 else None
@@ -179,12 +180,13 @@ class PublicEvidence:
     def futures_summary(self, delta: dict, now: int) -> dict:
         candidates = {"Binance": self.futures}
         if delta.get("receivedAt") and now - delta["receivedAt"] <= 30_000:
+            metrics = delta.get("agentMetrics") or {}
             candidates["Delta"] = {
                 "symbol": self.settings.delta_symbol, "observedAt": delta.get("exchangeTimestamp"),
                 "receivedAt": delta["receivedAt"], "quoteUnit": "USD",
-                "oiBase": delta.get("openInterestBtc"), "oiQuote": delta.get("openInterestUsd"),
-                "basisPercent": delta.get("markBasisPercent"), "fundingPercent": delta.get("fundingRatePercent"),
-                "fundingIntervalHours": (delta.get("product") or {}).get("fundingIntervalHours"),
+                "oiBase": metrics.get("oiBase"), "oiQuote": metrics.get("oiQuote"),
+                "basisPercent": metrics.get("basisPercent"), "fundingPercent": metrics.get("fundingPercent"),
+                "fundingIntervalHours": finite((delta.get("product") or {}).get("fundingIntervalHours"), positive=True),
             }
         result = {}
         for venue, row in candidates.items():

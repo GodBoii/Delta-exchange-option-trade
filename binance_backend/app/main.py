@@ -5,7 +5,9 @@ import re
 import sqlite3
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -227,13 +229,20 @@ async def selected_contracts(request: Request, body: SelectedContracts) -> dict:
 
 
 @app.get(f"/api/market/{ROUTE}/agent-summary")
-async def agent_summary(request: Request) -> dict:
+async def agent_summary(request: Request, expiryDates: Annotated[list[str] | None, Query()] = None) -> dict:
     feed = request.app.state.feed
     now = int(time.time() * 1000)
     futures = await asyncio.to_thread(feed.evidence.futures_summary, feed.delta_context, now)
     current = depth_summary(feed.bids, feed.asks, feed.known_bid_floor, feed.known_ask_ceiling) \
         if feed.book_synced and now - feed.last_depth_at <= 5000 else {}
     options = feed.evidence.overview if now - feed.evidence.options_at <= 90_000 else []
+    if expiryDates:
+        if len(expiryDates) > 16:
+            raise HTTPException(422, "Too many assigned expiries")
+        extra = {o["expiryMs"] for o in feed.evidence.options if
+                 datetime.fromisoformat(o["expiry"].replace("Z", "+00:00")).astimezone(ZoneInfo("Asia/Kolkata"))
+                 .date().isoformat() in expiryDates}
+        options = await asyncio.to_thread(feed.evidence.summarize_options, now, extra)
     return {"schemaVersion": 1, "asset": settings.base_asset, "asOf": now,
             "futures": futures, "options": options, "liquidity": current,
             "previousLiquidityBucket": feed.liquidity, "baselines": feed.baselines}
@@ -245,7 +254,9 @@ async def option_catalogue(request: Request) -> dict:
     evidence = request.app.state.feed.evidence
     now = int(time.time() * 1000)
     return {"source": "Delta Exchange", "underlying": settings.base_asset, "receivedAt": evidence.options_at,
-            "options": [o for o in evidence.options if 0 <= now - o["observedAt"] <= 90_000]}
+            "options": [o for o in evidence.options if 0 <= now - o["observedAt"] <= 90_000],
+            "listedExpiries": sorted({p["settlement_time"] for p in evidence.products.values()
+                                      if instant(p.get("settlement_time")) and instant(p["settlement_time"]) > now})}
 
 
 @app.websocket(f"/ws/market/{ROUTE}")

@@ -8,7 +8,7 @@ from typing import Any
 
 from app.automation_schedule import IST
 from app.models import StrategyDefinition
-from app.strategy import resolve_leg
+from app.strategy import resolve_leg, validate_entry_policy
 
 
 def number(value: Any) -> Decimal:
@@ -42,10 +42,17 @@ def resolve_contracts(definition: dict, options: list[dict]) -> list[dict]:
             if datetime.fromisoformat(str(o["expiry"]).replace("Z", "+00:00")).astimezone(IST).date() == leg.expiry
         ]
         result.append(resolve_leg(leg, chain))
+    validate_entry_policy(parsed, result)
     return result
 
 
-def fill_estimate(book: dict, side: str, quantity: Decimal, reference: Decimal) -> dict:
+def fill_estimate(
+    book: dict,
+    side: str,
+    quantity: Decimal,
+    reference: Decimal,
+    limit_price: Decimal | None = None,
+) -> dict:
     levels = []
     for row in book.get("sell" if side == "buy" else "buy") or []:
         try:
@@ -53,6 +60,10 @@ def fill_estimate(book: dict, side: str, quantity: Decimal, reference: Decimal) 
         except ValueError:
             continue
         if price >= 0 and size > 0:
+            if limit_price is not None and (
+                (side == "buy" and price > limit_price) or (side == "sell" and price < limit_price)
+            ):
+                continue
             levels.append((price, size))
     levels.sort(reverse=side == "sell")
     remaining, cost = quantity, Decimal(0)
@@ -141,6 +152,8 @@ def build_preview(definition: dict, resolved: list[dict], quotes: list[dict], no
             {
                 "symbol": row["symbol"],
                 "position": leg["position"],
+                "orderType": leg["orderType"],
+                **({"limitPrice": leg["limitPrice"]} if leg.get("limitPrice") else {}),
                 "contracts": int(quantity),
                 "strike": float(strike),
                 "premium": float(price),
@@ -152,7 +165,13 @@ def build_preview(definition: dict, resolved: list[dict], quotes: list[dict], no
                 "bidSizeContracts": row.get("bidSize"),
                 "askSizeContracts": row.get("askSize"),
                 "observedAt": row["observedAt"],
-                "fill": fill_estimate(row.get("depth") or {}, leg["position"], quantity, price),
+                "fill": fill_estimate(
+                    row.get("depth") or {},
+                    leg["position"],
+                    quantity,
+                    price,
+                    number(leg["limitPrice"]) if leg.get("limitPrice") else None,
+                ),
             }
         )
 
