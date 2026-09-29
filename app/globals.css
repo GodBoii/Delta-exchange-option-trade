@@ -6557,6 +6557,12 @@ time,
 
 .automation-stats > div + div { padding-left: var(--s-6); border-left: 1px solid var(--line); }
 .automation-stats dt { color: var(--text-3); font-size: var(--t-xs); }
+.automation-stats dd,
+.proposal-card-facts dd,
+.automation-run-ids dd { margin: 0; }
+
+/* The report's first heading must not add a second rule under the panel header. */
+.automation-report > :first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 
 .automation-stats dd {
   display: flex;
@@ -7515,7 +7521,7 @@ kbd {
   .automation-chart-section > header { align-items: flex-start; flex-direction: column; gap: 2px; }
 
   /* Heading controls: switch on the left, refresh and run on the right, one row. */
-  .automation-controls { width: 100%; }
+  .automation-controls { flex-wrap: wrap; width: 100%; }
   .automation-controls > .t-tt-wrap { margin-left: auto; }
 
   .automation-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -7536,6 +7542,11 @@ kbd {
   .agent-run-summary .t-acc-chevron { grid-column: 3; grid-row: 1 / span 2; }
 
   .proposal-card { padding: var(--s-3); }
+
+  /* Narrow phones: the switch keeps only its state word so all three controls share one row. */
+  @media (max-width: 420px) {
+    .automation-switch-text > span:first-child { display: none; }
+  }
   .automation-inline-toggle { min-height: 44px; }
   .automation-more { min-height: 44px; }
   :root {
