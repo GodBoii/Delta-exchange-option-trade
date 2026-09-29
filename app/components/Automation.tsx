@@ -271,10 +271,6 @@ function AutomationStats({ overview, nextSlot }: { overview: AutomationOverviewD
             : <small>By balance</small>}
         </dd>
       </div>
-      <div className="automation-stat-model">
-        <dt>Model</dt>
-        <dd title={overview.settings.model}>{overview.settings.model}</dd>
-      </div>
     </dl>
   );
 }
@@ -461,12 +457,6 @@ function AgentRunItem({ run }: { run: AutomationRun }) {
               ) : (
                 <p className="agent-run-pending">This run has not produced a report yet.</p>
               )}
-              {(run.sessionId || run.runId) && (
-                <dl className="automation-run-ids">
-                  {run.sessionId && <div><dt>Session</dt><dd>{run.sessionId}</dd></div>}
-                  {run.runId && <div><dt>Run</dt><dd>{run.runId}</dd></div>}
-                </dl>
-              )}
             </div>
           )}
         </div>
@@ -632,7 +622,7 @@ function RunCharts({ charts }: { charts: AutomationRun["charts"] }) {
     <section className="automation-chart-section" aria-label="Charts supplied to this agent run">
       <header>
         <strong>Agent chart inputs</strong>
-        <small>{charts.length} signed images from this run</small>
+        <small>{charts.length} {charts.length === 1 ? "chart" : "charts"} from this run</small>
       </header>
       <div className="automation-chart-grid">
         {charts.map(chart => (

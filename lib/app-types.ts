@@ -193,15 +193,12 @@ export type AutomationRun = {
   scope?: "shared" | "historical_account";
   asset?: AgentAsset;
   id: string;
-  sessionId?: string | null;
-  runId?: string | null;
   trigger: string;
   status: string;
   outcome?: string | null;
   scheduledFor: string;
   startedAt?: string | null;
   completedAt?: string | null;
-  model: string;
   report?: string | null;
   charts: { id: string; label: string; altText: string; url: string }[];
   error?: string | null;
@@ -223,7 +220,6 @@ export type AutomationOverview = {
   success: boolean;
   settings: {
     enabled: boolean;
-    model: string;
     maximumConcurrentStrategies?: number | null;
   };
   enabledStrategies: number;
