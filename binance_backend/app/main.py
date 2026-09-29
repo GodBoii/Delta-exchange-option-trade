@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import re
 import sqlite3
@@ -6,13 +7,16 @@ import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from .client import INTERVALS, BinanceMarketClient, BinanceMarketError
 from .config import get_settings
 from .delta_context import DeltaMarketContextClient
+from .evidence import depth_summary, instant
 from .feed import BinanceSpotFeed, replace_latest_candle
 
 settings = get_settings()
@@ -189,6 +193,58 @@ async def btcusd_delta_context(request: Request) -> dict[str, Any]:
         "source": "Delta Exchange",
         "deltaContext": live["deltaContext"],
     }
+
+
+class SelectedContracts(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=16)
+
+
+class ExpiryWatchlist(BaseModel):
+    expiries: list[str] = Field(max_length=100)
+
+
+@app.post(f"/api/market/{ROUTE}/watch-expiries")
+async def watch_expiries(request: Request, body: ExpiryWatchlist) -> dict:
+    if not settings.analysis_service_secret or not hmac.compare_digest(
+        request.headers.get("X-Analysis-Secret", ""), settings.analysis_service_secret
+    ):
+        raise HTTPException(401, "Service authentication required")
+    expiries = [instant(value) for value in body.expiries]
+    if any(value is None for value in expiries):
+        raise HTTPException(422, "Expiry requires an aware ISO timestamp")
+    await asyncio.to_thread(request.app.state.feed.evidence.store.watch, expiries, int(time.time() * 1000))
+    return {"success": True}
+
+
+@app.post(f"/api/market/{ROUTE}/selected-contracts")
+async def selected_contracts(request: Request, body: SelectedContracts) -> dict:
+    # Read-only operation. POST keeps the bounded symbol list out of URL logs.
+    try:
+        rows = await request.app.state.feed.evidence.selected(body.symbols)
+    except (ValueError, httpx.HTTPError) as error:
+        raise HTTPException(503, "Selected option evidence is unavailable") from error
+    return {"source": "Delta Exchange", "asset": settings.base_asset, "contracts": rows}
+
+
+@app.get(f"/api/market/{ROUTE}/agent-summary")
+async def agent_summary(request: Request) -> dict:
+    feed = request.app.state.feed
+    now = int(time.time() * 1000)
+    futures = await asyncio.to_thread(feed.evidence.futures_summary, feed.delta_context, now)
+    current = depth_summary(feed.bids, feed.asks) if feed.book_synced and now - feed.last_depth_at <= 5000 else {}
+    options = feed.evidence.overview if now - feed.evidence.options_at <= 90_000 else []
+    return {"schemaVersion": 1, "asset": settings.base_asset, "asOf": now,
+            "futures": futures, "options": options, "liquidity": current,
+            "previousLiquidityBucket": feed.liquidity}
+
+
+@app.get(f"/api/market/{ROUTE}/option-catalogue")
+async def option_catalogue(request: Request) -> dict:
+    # Internal numerical catalogue used to resolve saved strikes, never returned to the LLM.
+    evidence = request.app.state.feed.evidence
+    now = int(time.time() * 1000)
+    return {"source": "Delta Exchange", "underlying": settings.base_asset, "receivedAt": evidence.options_at,
+            "options": [o for o in evidence.options if 0 <= now - o["observedAt"] <= 90_000]}
 
 
 @app.websocket(f"/ws/market/{ROUTE}")

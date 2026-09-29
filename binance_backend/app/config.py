@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     frontend_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
     log_level: str = "INFO"
     market_history_path: str = "data/market-history.sqlite"
+    binance_futures_base_url: str = "https://fapi.binance.com"
+    analysis_service_secret: str = ""
 
     @field_validator("binance_base_url", "binance_ws_url", "delta_public_base_url")
     @classmethod

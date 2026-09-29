@@ -12,6 +12,8 @@ from .analysis import calculate_analysis
 from .client import BinanceMarketClient, normalize_stream_candle, normalize_ticker, number
 from .config import Settings
 from .delta_context import DeltaMarketContextClient
+from .enrichment import PublicEvidence
+from .evidence import LiquidityWindow, depth_summary
 from .history import STEP_MS, MarketHistory, observation
 
 logger = logging.getLogger(__name__)
@@ -65,23 +67,83 @@ class BinanceSpotFeed:
         self.history = MarketHistory(settings.market_history_path, settings.binance_symbol)
         self.history_error: str | None = None
         self._history_runner: asyncio.Task[None] | None = None
+        self.evidence = PublicEvidence(settings)
+        self._evidence_tasks: list[asyncio.Task] = []
+        self.liquidity: dict[str, Any] = {}
+        self.evidence_error: str | None = None
 
     async def start(self) -> None:
+        await asyncio.to_thread(self.evidence.store.initialize)
+        await asyncio.to_thread(self.evidence.store.prune, int(time.time() * 1000))
         await self._seed()
         self._history_runner = asyncio.create_task(self._record_history(), name="market-history")
         self._runner = asyncio.create_task(self._run_forever(), name="binance-spot-stream")
         self._publisher = asyncio.create_task(self._publish_forever(), name="binance-market-publisher")
         if self.delta:
             self._delta_runner = asyncio.create_task(self._refresh_delta_forever(), name="delta-public-context")
+        self._evidence_tasks = [
+            asyncio.create_task(self._collect_public(self.evidence.refresh_options, 30), name="option-evidence"),
+            asyncio.create_task(self._collect_public(self.evidence.refresh_futures, 60), name="futures-evidence"),
+            asyncio.create_task(self._record_evidence(), name="evidence-history"),
+        ]
 
     async def stop(self) -> None:
         self._stopping.set()
         tasks = [task for task in (self._runner, self._publisher, self._delta_runner, self._history_runner) if task]
+        tasks.extend(self._evidence_tasks)
         for task in tasks:
             task.cancel()
         for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
+        await self.evidence.close()
+
+    async def _collect_public(self, refresh, interval: int) -> None:
+        while not self._stopping.is_set():
+            try:
+                await refresh()
+            except Exception:
+                logger.exception("Public evidence collector failed: %s", refresh.__name__)
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=interval)
+
+    async def _record_evidence(self) -> None:
+        start = int(time.time() * 1000)
+        bucket = start // STEP_MS * STEP_MS
+        window = LiquidityWindow(start)
+        last_minute = start // 60_000 * 60_000
+        while not self._stopping.is_set():
+            now = int(time.time() * 1000)
+            try:
+                current = now // STEP_MS * STEP_MS
+                if current > bucket:
+                    self.liquidity = window.summary(current)
+                    if window.count:
+                        await asyncio.to_thread(self.evidence.store.save, "liquidity_summaries", current,
+                                                [(self.settings.binance_symbol, self.liquidity)])
+                    options = await asyncio.to_thread(self.evidence.retained_options, now)
+                    await asyncio.to_thread(self.evidence.store.save, "option_observations", current,
+                                            [(o["symbol"], o) for o in options])
+                    futures = await asyncio.to_thread(self.evidence.futures_summary, self.delta_context, now)
+                    await asyncio.to_thread(self.evidence.store.save, "futures_observations", current,
+                                            list(futures.items()))
+                    await asyncio.to_thread(self.evidence.store.prune, now)
+                    bucket, window = current, LiquidityWindow(current)
+                if self.connected and self.book_synced and now - self.last_depth_at <= 5000:
+                    window.add(depth_summary(self.bids, self.asks))
+                completed = [c for c in self.analysis_candles if c.get("closed") is True
+                             and last_minute <= c["openTime"] < now // 60_000 * 60_000]
+                for candle in completed:
+                    await asyncio.to_thread(self.evidence.store.save, "minute_candles", candle["openTime"] + 60_000,
+                                            [(self.settings.binance_symbol, candle)])
+                if completed:
+                    last_minute = max(c["openTime"] for c in completed) + 60_000
+                self.evidence_error = None
+            except Exception as error:
+                self.evidence_error = str(error)
+                logger.exception("Evidence recording failed")
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=1)
 
     async def _record_history(self) -> None:
         last_end = int(time.time() * 1000) // STEP_MS * STEP_MS

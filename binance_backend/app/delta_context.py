@@ -6,6 +6,7 @@ import httpx
 
 from .client import number
 from .config import Settings
+from .evidence import finite
 
 
 class DeltaContextError(RuntimeError):
@@ -111,14 +112,14 @@ def normalize_delta_ticker(raw: dict[str, Any]) -> dict[str, Any]:
         "markChange24hPercent": number(raw.get("mark_change_24h")),
         "markBasisPercent": number(raw.get("mark_basis")) * 100,
         "indexPrice": number(raw.get("spot_price")),
-        "openInterestBtc": number(raw.get("oi")),
-        "openInterestContracts": number(raw.get("oi_contracts")),
-        "openInterestUsd": number(raw.get("oi_value_usd")),
-        "openInterestChange6hUsd": number(raw.get("oi_change_usd_6h")),
+        "openInterestBtc": finite(raw.get("oi")),
+        "openInterestContracts": finite(raw.get("oi_contracts")),
+        "openInterestUsd": finite(raw.get("oi_value_usd")),
+        "openInterestChange6hUsd": finite(raw.get("oi_change_usd_6h")),
         "volume24hBtc": number(raw.get("volume")),
         "volume24hContracts": number(raw.get("size")),
         "turnover24hUsd": number(raw.get("turnover_usd")),
-        "fundingRatePercent": number(raw.get("funding_rate")),
+        "fundingRatePercent": finite(raw.get("funding_rate")),
         "leverage": number(raw.get("leverage")),
         "tickSize": number(raw.get("tick_size")),
         "contractValueBtc": number(raw.get("contract_value")),
