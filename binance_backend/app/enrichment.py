@@ -59,10 +59,16 @@ class PublicEvidence:
         cursor = None
         seen = set()
         while True:
-            payload = await self.get(base, "/v2/products", {
-                "contract_types": "call_options,put_options", "states": "live", "page_size": 100,
-                **({"after": cursor} if cursor else {}),
-            })
+            payload = await self.get(
+                base,
+                "/v2/products",
+                {
+                    "contract_types": "call_options,put_options",
+                    "states": "live",
+                    "page_size": 100,
+                    **({"after": cursor} if cursor else {}),
+                },
+            )
             if not isinstance(payload.get("result"), list):
                 raise ValueError("Invalid product catalogue")
             for row in payload["result"]:
@@ -81,9 +87,14 @@ class PublicEvidence:
         async with self._options_lock:
             if not self.products or time.monotonic() - self.metadata_at > 300:
                 await self.refresh_products()
-            payload = await self.get(self.settings.delta_public_base_url, "/v2/tickers", {
-                "contract_types": "call_options,put_options", "underlying_asset_symbols": self.asset,
-            })
+            payload = await self.get(
+                self.settings.delta_public_base_url,
+                "/v2/tickers",
+                {
+                    "contract_types": "call_options,put_options",
+                    "underlying_asset_symbols": self.asset,
+                },
+            )
             if not isinstance(payload.get("result"), list):
                 raise ValueError("Invalid option chain")
             now = int(time.time() * 1000)
@@ -121,8 +132,11 @@ class PublicEvidence:
             info = await self.get(base, "/fapi/v1/fundingInfo")
             if not isinstance(info, list):
                 raise ValueError("Invalid funding intervals")
-            self.funding_info = {r["symbol"]: finite(r.get("fundingIntervalHours"), positive=True)
-                                 for r in info if isinstance(r, dict) and "symbol" in r}
+            self.funding_info = {
+                r["symbol"]: finite(r.get("fundingIntervalHours"), positive=True)
+                for r in info
+                if isinstance(r, dict) and "symbol" in r
+            }
             self.funding_info_at = time.monotonic()
         oi, mark = await asyncio.gather(
             self.get(base, "/fapi/v1/openInterest", {"symbol": symbol}),
@@ -135,17 +149,30 @@ class PublicEvidence:
         oi_at = timestamp_ms(oi.get("time"), now)
         index, price = finite(mark.get("indexPrice"), positive=True), finite(mark.get("markPrice"), positive=True)
         interest, rate = finite(oi.get("openInterest")), finite(mark.get("lastFundingRate"))
-        if (observed is None or oi_at is None or index is None or price is None or interest is None
-                or interest < 0 or not 0 <= now - min(observed, oi_at) <= 120_000):
+        if (
+            observed is None
+            or oi_at is None
+            or index is None
+            or price is None
+            or interest is None
+            or interest < 0
+            or not 0 <= now - min(observed, oi_at) <= 120_000
+        ):
             raise ValueError("Invalid futures values")
         self.futures = {
-            "symbol": symbol, "observedAt": min(observed, oi_at), "receivedAt": now,
-            "oiBase": interest, "oiQuote": interest * price, "quoteUnit": "USDT",
+            "symbol": symbol,
+            "observedAt": min(observed, oi_at),
+            "receivedAt": now,
+            "oiBase": interest,
+            "oiQuote": interest * price,
+            "quoteUnit": "USDT",
             "basisPercent": (price / index - 1) * 100,
             "fundingPercent": rate * 100 if rate is not None else None,
             # fundingInfo lists interval exceptions; Binance's documented default is eight hours.
             "fundingIntervalHours": self.funding_info.get(symbol, 8),
-            "nextFundingAt": int(mark["nextFundingTime"]) if finite(mark.get("nextFundingTime"), positive=True) else None,
+            "nextFundingAt": int(mark["nextFundingTime"])
+            if finite(mark.get("nextFundingTime"), positive=True)
+            else None,
         }
 
     async def selected(self, symbols: list[str]) -> list[dict]:
@@ -159,7 +186,8 @@ class PublicEvidence:
                 raise ValueError("Contract does not match asset or catalogue")
             base = self.settings.delta_public_base_url
             ticker, book = await asyncio.gather(
-                self.get(base, f"/v2/tickers/{symbol}"), self.get(base, f"/v2/l2orderbook/{symbol}", {"depth": 100}),
+                self.get(base, f"/v2/tickers/{symbol}"),
+                self.get(base, f"/v2/l2orderbook/{symbol}", {"depth": 100}),
                 return_exceptions=True,
             )
             if isinstance(ticker, BaseException):
@@ -187,10 +215,14 @@ class PublicEvidence:
         if delta.get("receivedAt") and now - delta["receivedAt"] <= 30_000:
             metrics = delta.get("agentMetrics") or {}
             candidates["Delta"] = {
-                "symbol": self.settings.delta_symbol, "observedAt": delta.get("exchangeTimestamp"),
-                "receivedAt": delta["receivedAt"], "quoteUnit": "USD",
-                "oiBase": metrics.get("oiBase"), "oiQuote": metrics.get("oiQuote"),
-                "basisPercent": metrics.get("basisPercent"), "fundingPercent": metrics.get("fundingPercent"),
+                "symbol": self.settings.delta_symbol,
+                "observedAt": delta.get("exchangeTimestamp"),
+                "receivedAt": delta["receivedAt"],
+                "quoteUnit": "USD",
+                "oiBase": metrics.get("oiBase"),
+                "oiQuote": metrics.get("oiQuote"),
+                "basisPercent": metrics.get("basisPercent"),
+                "fundingPercent": metrics.get("fundingPercent"),
                 "fundingIntervalHours": finite((delta.get("product") or {}).get("fundingIntervalHours"), positive=True),
             }
         result = {}
@@ -209,5 +241,9 @@ class PublicEvidence:
 
     def retained_options(self, now: int) -> list[dict]:
         watched = self.store.watched(now)
-        return [row for row in self.options if (row["expiryMs"] <= now + 30 * 86_400_000 or
-                row["expiryMs"] in watched) and 0 <= now - row["observedAt"] <= 90_000]
+        return [
+            row
+            for row in self.options
+            if (row["expiryMs"] <= now + 30 * 86_400_000 or row["expiryMs"] in watched)
+            and 0 <= now - row["observedAt"] <= 90_000
+        ]

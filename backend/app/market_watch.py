@@ -1,12 +1,13 @@
 """Publish only aggregate expiry dates to public market collectors, never account data."""
 
 import asyncio
+import os
 from datetime import datetime
 
 import httpx
 
 from app.automation_schedule import IST
-from automation_agent.assets import PROFILES
+from app.assets import ASSETS
 
 
 async def publish_watchlists(db, client: httpx.AsyncClient) -> None:
@@ -20,7 +21,7 @@ async def publish_watchlists(db, client: httpx.AsyncClient) -> None:
             "status": "in.(scheduled,executing_entry,active,executing_exit,attention)",
         },
     )
-    dates = {asset: set() for asset in PROFILES}
+    dates = {asset: set() for asset in ASSETS}
     for row in rows:
         definition = row.get("definition_json") or {}
         asset = (definition.get("instrument") or {}).get("underlying")
@@ -30,8 +31,11 @@ async def publish_watchlists(db, client: httpx.AsyncClient) -> None:
     async def publish(asset: str) -> None:
         if not dates[asset]:
             return
-        profile = PROFILES[asset]
-        route = f"{profile.market_base_url}/api/market/{profile.market_route}"
+        # The trading image has no Agno/automation_agent package. Use its existing market-service env names.
+        env_name = "BINANCE_INTERNAL_URL" if asset == "BTC" else "BINANCE_ETH_INTERNAL_URL"
+        default_url = "http://binace:8001" if asset == "BTC" else "http://binace-eth:8001"
+        base_url = (os.getenv(env_name) or default_url).rstrip("/")
+        route = f"{base_url}/api/market/{asset.lower()}usd"
         response = await client.get(f"{route}/option-catalogue")
         response.raise_for_status()
         catalogue = response.json()

@@ -99,6 +99,9 @@ freezes existing market-service evidence and an existing news summary. It does n
 `python -m scripts.agent_input_dry_run run cases.json results --offline` checks input construction;
 omit --offline to invoke the configured models. Optional --asset, --stage, and --path filters
 allow independent cases to run in separate processes.
+Use `--model stealth/space-bunny-alpha` for interim development checks while its pricing is free.
+Omit --model for final verification with the configured DeepSeek model. This override only clones
+dry-run settings and never changes the live strategy or news-agent models.
 
 Both paths use the same frozen evidence, a frozen simulation clock, news, strategy universe,
 model, and reasoning setting. Charts use the production renderers. Sessions and action clients
