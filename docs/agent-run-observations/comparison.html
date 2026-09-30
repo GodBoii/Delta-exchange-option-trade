@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BTC agent run comparison · Trade Cognition</title>
+  <link rel="stylesheet" href="comparison.css">
+  <script src="comparison-data.js" defer></script>
+  <script src="comparison.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to comparison</a>
+  <header class="topbar"><a class="brand" href="comparison.html"><span class="brandmark">TC</span>Trade Cognition<span class="divider"></span><span class="muted">Agent observatory</span></a><span class="snapshot">Saved production evidence <span class="dot"></span> BTC</span></header>
+  <div class="shell">
+    <aside>
+      <p class="eyebrow">Run comparison</p>
+      <h1>What changed?</h1>
+      <p class="side-copy">One BTC analysis before the update. One after.</p>
+      <nav aria-label="Comparison sections" id="navigation">
+        <button data-view="overview" aria-current="page"><span>01</span>Overview</button>
+        <button data-view="inputs"><span>02</span>Starting inputs</button>
+        <button data-view="tools"><span>03</span>Tool calls</button>
+        <button data-view="news"><span>04</span>News analysis</button>
+        <button data-view="decision"><span>05</span>Final decisions</button>
+        <button data-view="charts"><span>06</span>Charts</button>
+        <button data-view="transcript"><span>07</span>Full transcript</button>
+      </nav>
+      <div class="side-note"><span class="eyebrow">Reading the numbers</span><p>Total input counts every model request, including repeated context. It is not one prompt’s size.</p></div>
+      <a class="source-link" href="latest-agent-runs.md">Latest Markdown export ↗</a>
+      <a class="source-link" href="older-agent-runs.md">Older Markdown export ↗</a>
+    </aside>
+    <main id="content" tabindex="-1">
+      <div class="heading"><div><p class="eyebrow">BTC · actual completed runs</p><h2 id="view-title">Overview</h2></div><span class="pill">DeepSeek v4.1 Flash · both runs</span></div>
+      <div class="run-strip"><div><span class="run-tag old">Older</span><strong>Sep 30, 12:30 PM</strong><span>Legacy input + market tools</span></div><span class="arrow" aria-hidden="true">→</span><div><span class="run-tag new">Latest</span><strong>Oct 1, 12:30 AM</strong><span>Curated input + strategy preview</span></div><span class="timezone">IST</span></div>
+      <div id="view"></div>
+      <footer>Different sessions and market conditions. A comparison of behavior, not a controlled performance test. Private reasoning is excluded.</footer>
+    </main>
+  </div>
+  <noscript><p>This comparison needs JavaScript. The complete records remain available in the two Markdown exports.</p></noscript>
+</body>
+</html>
