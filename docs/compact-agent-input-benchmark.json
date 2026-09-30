@@ -1,0 +1,160 @@
+{
+  "method": "frozen BTC/ETH market evidence and existing news, simulated actions, configured DeepSeek models and reasoning",
+  "cases": [
+    {
+      "asset": "BTC",
+      "stage": "main",
+      "path": "legacy",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 11099,
+      "totalInputTokens": 103204,
+      "outputTokens": 18926,
+      "reasoningTokens": 16249,
+      "costUsd": 0.029286863999999996,
+      "durationSeconds": 97.03647544200066,
+      "images": 6,
+      "collectionSeconds": 3.5627419000011287,
+      "tools": [
+        "show_available_strategy",
+        "get_btc_market_packet",
+        "calculate_exit_time",
+        "select_strategy_and_time"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "BTC",
+      "stage": "main",
+      "path": "curated",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 13945,
+      "totalInputTokens": 110156,
+      "outputTokens": 37674,
+      "reasoningTokens": 34980,
+      "costUsd": 0.050370288,
+      "durationSeconds": 133.13345956394915,
+      "images": 3,
+      "collectionSeconds": 3.5627419000011287,
+      "tools": [
+        "preview_strategy",
+        "select_strategy_and_time"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "BTC",
+      "stage": "recheck",
+      "path": "legacy",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 6247,
+      "totalInputTokens": 13250,
+      "outputTokens": 1061,
+      "reasoningTokens": 123,
+      "costUsd": 0.003216072,
+      "durationSeconds": 9.57905559509527,
+      "images": 2,
+      "collectionSeconds": 3.5627419000011287,
+      "tools": [
+        "drop_strategy"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "BTC",
+      "stage": "recheck",
+      "path": "curated",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 7123,
+      "totalInputTokens": 15316,
+      "outputTokens": 1347,
+      "reasoningTokens": 675,
+      "costUsd": 0.0037651200000000003,
+      "durationSeconds": 14.040738482959569,
+      "images": 2,
+      "collectionSeconds": 3.5627419000011287,
+      "tools": [
+        "drop_strategy"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "ETH",
+      "stage": "main",
+      "path": "legacy",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 11199,
+      "totalInputTokens": 91367,
+      "outputTokens": 19609,
+      "reasoningTokens": 16189,
+      "costUsd": 0.029076707999999996,
+      "durationSeconds": 99.53286552394275,
+      "images": 6,
+      "collectionSeconds": 3.1848591000016313,
+      "tools": [
+        "get_eth_market_packet",
+        "show_available_strategy",
+        "calculate_exit_time",
+        "calculate_exit_time",
+        "calculate_exit_time",
+        "calculate_exit_time",
+        "select_strategy_and_time"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "ETH",
+      "stage": "main",
+      "path": "curated",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 11863,
+      "totalInputTokens": 101102,
+      "outputTokens": 36057,
+      "reasoningTokens": 33075,
+      "costUsd": 0.047745816,
+      "durationSeconds": 124.60551400203258,
+      "images": 3,
+      "collectionSeconds": 3.1848591000016313,
+      "tools": [
+        "preview_strategy",
+        "select_strategy_and_time"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "ETH",
+      "stage": "recheck",
+      "path": "legacy",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 6329,
+      "totalInputTokens": 13817,
+      "outputTokens": 1479,
+      "reasoningTokens": 379,
+      "costUsd": 0.003737244,
+      "durationSeconds": 19.63422901404556,
+      "images": 2,
+      "collectionSeconds": 3.1848591000016313,
+      "tools": [
+        "drop_strategy"
+      ],
+      "simulatedActions": 1
+    },
+    {
+      "asset": "ETH",
+      "stage": "recheck",
+      "path": "curated",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "initialInputTokens": 7213,
+      "totalInputTokens": 15383,
+      "outputTokens": 1283,
+      "reasoningTokens": 532,
+      "costUsd": 0.003670788,
+      "durationSeconds": 7.577799166087061,
+      "images": 2,
+      "collectionSeconds": 3.1848591000016313,
+      "tools": [
+        "drop_strategy"
+      ],
+      "simulatedActions": 1
+    }
+  ]
+}

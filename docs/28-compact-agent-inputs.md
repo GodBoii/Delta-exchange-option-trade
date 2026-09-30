@@ -115,3 +115,25 @@ Results include initial/total input tokens, output/reasoning tokens, provider co
 tool names/arguments/result bytes/duration, image count, collection latency, and total duration.
 Provider failures are marked failed, not counted as successful model comparisons. Compare
 complete runs, because repeated tool rounds and image costs are not captured by text byte counts.
+
+## Measured validation
+
+The final paired DeepSeek checks used frozen public market evidence and the same existing news
+summary. All actions were simulated. The numerical results are in
+[compact-agent-input-benchmark.json](compact-agent-input-benchmark.json).
+
+| Main run | Initial input tokens, legacy → compact | Total input tokens, legacy → compact | Tools, legacy → compact | Cost USD, legacy → compact |
+| --- | --- | --- | --- | --- |
+| BTC | 11,099 → 13,945 | 103,204 → 110,156 | 4 → 2 | 0.0293 → 0.0504 |
+| ETH | 11,199 → 11,863 | 91,367 → 101,102 | 7 → 2 | 0.0291 → 0.0477 |
+
+Both final compact main runs used only preview_strategy and select_strategy_and_time. Images
+dropped from six to three. Capture took approximately 3.6 seconds for BTC and 3.2 seconds for
+ETH, including selected-contract evidence. Total main input grew approximately 7% and 11%.
+At unchanged max reasoning, output/reasoning tokens and cost increased, and complete runs took
+approximately 133/125 seconds versus 97/100 seconds. These are individual paired observations,
+not a latency guarantee or evidence of trading profitability. There is no hard token cap.
+
+Space Bunny was used only for interim development checks. Its recheck runs completed, while
+main runs returned upstream SSE/empty-response errors; those were recorded as failures rather
+than successful benchmarks. Live strategy and news models remain unchanged.
