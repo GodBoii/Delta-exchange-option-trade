@@ -20,7 +20,8 @@ Verified: **2026-08-08**. Exchange capabilities, product listings, limits, and d
 12. [Change watch and migration notes](12-change-watch.md)
 13. [Research questions and verified answers](questions-and-answers.md)
 14. [Automated strategy system](14-automated-strategy-system.md)
-15. [Trading state migration and execution corrections](15-trading-state-migration.md)
+15. [Compact market inputs and focused tools](28-compact-agent-inputs.md)
+16. [Trading state migration and execution corrections](15-trading-state-migration.md)
 
 ## Source hierarchy
 

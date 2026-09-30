@@ -145,7 +145,7 @@ class PublicEvidence:
             "fundingPercent": rate * 100 if rate is not None else None,
             # fundingInfo lists interval exceptions; Binance's documented default is eight hours.
             "fundingIntervalHours": self.funding_info.get(symbol, 8),
-            "nextFundingAt": finite(mark.get("nextFundingTime")),
+            "nextFundingAt": int(mark["nextFundingTime"]) if finite(mark.get("nextFundingTime"), positive=True) else None,
         }
 
     async def selected(self, symbols: list[str]) -> list[dict]:

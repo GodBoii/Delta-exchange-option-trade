@@ -579,6 +579,11 @@ leg role, such as short_call or protective_put
 
 ## 8. AI market packet
 
+The legacy tool-based path below remains available while `CURATED_AGENT_INPUT_ENABLED=false`.
+The compact starting-input, calculator and strategy-preview protocol is documented in
+[Compact market inputs and focused tools](28-compact-agent-inputs.md). It leaves news analysis
+and execution policies unchanged.
+
 The AI receives analysis data and saved strategies. It does not receive authority to edit risk parameters or lots.
 
 ### BTC market context
@@ -728,7 +733,7 @@ Server behavior:
 5. Materialize entry and exit timestamps without changing the saved risk rules.
 6. Create the same `scheduled` strategy record used by manual Strategy Builder scheduling.
 7. Store the AI decision and evidence for audit.
-8. In the same transaction, schedule an activation recheck five minutes before entry.
+8. In the same transaction, schedule an activation recheck seven minutes before entry.
 9. Leave order submission to the existing strategy scheduler at the activation time.
 
 ### 9.3 `scheduled_next_agent_run`
@@ -770,7 +775,7 @@ The recheck receives only its assigned strategy, activation time, the selecting 
 
 If the setup is still valid, it returns a report without calling a tool. The service records `strategy_reconfirmed`. Otherwise it calls `drop_strategy` with the assigned name, activation time, and reason. The tool validates those fields against the bound proposal ID and atomically cancels that proposal and its still-scheduled strategy. A failed drop cannot become a reconfirmation.
 
-Rechecks are separate from optional follow-ups and do not consume their quota. New selections must leave more than five minutes before activation. The backend request timeout is 120 seconds. Entry waits for a completed reconfirmation within the existing entry-lateness window; a failed, cancelled, or overdue recheck prevents entry. Manual and older schedules without a linked recheck keep their existing behavior. Turning off automation still cancels pending work.
+Rechecks are separate from optional follow-ups and do not consume their quota. New selections must leave more than seven minutes before activation. Entry waits for a completed reconfirmation within the existing entry-lateness window; a failed, cancelled, or overdue recheck prevents entry. Manual and older schedules without a linked recheck keep their existing behavior. Turning off automation still cancels pending work.
 
 Full automation reviews allow 45 minutes for the analysis service to respond. The scheduler's stale-running cutoff is derived from that timeout plus five minutes for account-context collection and result persistence, giving a 50-minute cutoff. This accommodates news research and long model responses without the former 15-minute HTTP timeout or 20-minute scheduler cutoff prematurely failing the review. Read timeouts save an explicit error message. The analysis service still uses synchronous Agno execution; this is a longer timeout, not background execution or run-status polling. Agno documents that alternative at https://docs.agno.com/background-execution/overview.
 
@@ -844,7 +849,7 @@ and activation time      and schedule next run
 Proposal saved with evidence and expiry
           |
           v
-Five-minute recheck evaluates fresh Binance charts
+Seven-minute recheck evaluates fresh market evidence
           |
           v
 Activation time arrives; recheck outcome verified
@@ -870,7 +875,7 @@ Execute and monitor
 - The strategy-level controller monitors combined credit and combined debit take profit and stop loss.
 - The thirteen approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
 - The main vision team receives Binance Spot price, volume, volatility, and order-book charts plus one news sub-agent. Delta market data is excluded from model input.
-- Every AI-selected strategy receives a separate Binance-only activation recheck five minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy.
+- Every AI-selected strategy receives a separate activation recheck seven minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy. The compact path also supplies fresh selected-option evidence and the calculator.
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
 - Asia, London, and New York triggers use their local timezones, so daylight-saving changes convert correctly.
 - The daily `pre_expiry` review runs at 15:30 Asia/Kolkata, two hours before the 17:30 IST options expiry, including weekends. It shares the existing automation switch, per-user run lock, ten-minute lateness limit, and fixed-review follow-up boundaries. This is one daily review per enabled user, regardless of the number of positions or expiries held.
