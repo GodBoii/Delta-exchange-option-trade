@@ -529,6 +529,11 @@ def curated_instructions(instructions: list[str]) -> list[str]:
         "or the preview is invalid; do not scan the catalogue or holding presets with repeated previews. "
         "Use supplied scenario values rather than recalculating the standard estimates."
     )
+    result.append(
+        "Complete any additional arithmetic before committing an action. After a scheduling or "
+        "follow-up tool confirms status=committed, return the final report immediately without "
+        "calling any more tools. Use the already supplied numerical evidence in the report."
+    )
     return result
 
 

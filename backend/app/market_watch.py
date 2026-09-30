@@ -6,8 +6,8 @@ from datetime import datetime
 
 import httpx
 
-from app.automation_schedule import IST
 from app.assets import ASSETS
+from app.automation_schedule import IST
 
 
 async def publish_watchlists(db, client: httpx.AsyncClient) -> None:

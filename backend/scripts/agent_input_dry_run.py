@@ -86,7 +86,16 @@ async def capture_asset(asset: str, url: str) -> dict:
     }
 
 
-def run_case(case: dict, news: str, *, curated: bool, recheck: bool, offline: bool, model: str | None = None) -> dict:
+def run_case(
+    case: dict,
+    news: str,
+    *,
+    curated: bool,
+    recheck: bool,
+    offline: bool,
+    model: str | None = None,
+    reasoning: str | None = None,
+) -> dict:
     asset, profile = case["asset"], PROFILES[case["asset"]]
     snapshot_id, run_id = str(uuid4()), str(uuid4())
     frozen = deepcopy(case["market"])
@@ -164,6 +173,8 @@ def run_case(case: dict, news: str, *, curated: bool, recheck: bool, offline: bo
 
     class RecordingAgent(Agent):
         def __init__(self, **kwargs):
+            if reasoning and not recheck:
+                kwargs["model"].reasoning_effort = reasoning
             kwargs["add_datetime_to_context"] = False
             kwargs["additional_context"] += f" Frozen simulation clock: {simulation_now.isoformat()}."
             record["startingTextBytes"] = len(
@@ -344,6 +355,9 @@ def main() -> None:
     run.add_argument("--stage", choices=["main", "recheck"])
     run.add_argument("--path", choices=["legacy", "curated"])
     run.add_argument("--model", help="Dry-run model override; never changes live or news-agent settings")
+    run.add_argument(
+        "--reasoning", choices=["low", "medium", "high", "max"], help="Main-agent dry-run override; recheck stays low"
+    )
     args = parser.parse_args()
     if args.command == "capture":
         cases = [
@@ -379,6 +393,7 @@ def main() -> None:
                             recheck=recheck,
                             offline=args.offline,
                             model=args.model,
+                            reasoning=args.reasoning,
                         )
                     except Exception as error:
                         result = {
