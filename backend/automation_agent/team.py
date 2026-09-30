@@ -530,6 +530,11 @@ def curated_instructions(instructions: list[str]) -> list[str]:
         "Use supplied scenario values rather than recalculating the standard estimates."
     )
     result.append(
+        "The starting holdingMoveScales already supplies volatility-scaled moves for all six holding "
+        "presets. Compare those percentages directly with the supplied short-strike distances and "
+        "preview breakevens. Do not use the calculator to redo these scales or the preview scenarios."
+    )
+    result.append(
         "Complete any additional arithmetic before committing an action. After a scheduling or "
         "follow-up tool confirms status=committed, return the final report immediately without "
         "calling any more tools. Use the already supplied numerical evidence in the report."

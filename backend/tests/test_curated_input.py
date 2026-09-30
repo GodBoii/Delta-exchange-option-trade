@@ -68,6 +68,23 @@ def test_curated_input_owns_numbers_and_has_no_market_arrays():
     assert chart_notes({"a": {"values": {"price": 100}, "readingNotes": ["read"]}}) == {"a": {"readingNotes": ["read"]}}
 
 
+def test_holding_scales_use_only_expiries_covering_the_hold():
+    packet = {
+        "analysis": {"historicalVolatility": {"annualizedPercent": 40}},
+        "enrichment": {
+            "options": [
+                {"expiry": "near", "daysRemaining": 0.5, "atmIvPercent": 50},
+                {"expiry": "later", "daysRemaining": 2, "atmIvPercent": 60},
+            ]
+        },
+    }
+    rows = market_input(packet, "BTC")["holdingMoveScales"]["rows"]
+    assert rows[0]["referenceExpiry"] == "near"
+    assert rows[2]["referenceExpiry"] == "later"
+    assert rows[-1]["impliedScaledMovePercent"] is None
+    assert rows[0]["realizedScaledMovePercent"] == pytest.approx(1.1307, rel=0.001)
+
+
 def test_exact_call_payoff_units_greeks_and_advisory_fill():
     raw, definition, _ = fixture()
     resolved = resolve_contracts(definition, [raw])

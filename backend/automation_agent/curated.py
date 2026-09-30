@@ -1,6 +1,7 @@
 """One numerical starting input, without market arrays or repeated chart statistics."""
 
 import json
+import math
 import os
 from copy import deepcopy
 from typing import Any
@@ -35,6 +36,24 @@ def market_input(packet: dict, asset: str) -> dict:
     vwap = analysis.pop("vwap", None)
     volatility = analysis.pop("historicalVolatility", {})
     enrichment = packet.get("enrichment") or {}
+    holding_scales = []
+    for hours in (7, 11, 16, 24, 48, 72):
+        factor = math.sqrt(hours / (365 * 24))
+        expiries = [
+            row
+            for row in enrichment.get("options", [])
+            if row.get("daysRemaining", 0) * 24 >= hours and row.get("atmIvPercent") is not None
+        ]
+        reference = min(expiries, key=lambda row: row["daysRemaining"]) if expiries else None
+        rv = volatility.get("annualizedPercent")
+        holding_scales.append(
+            {
+                "hours": hours,
+                "realizedScaledMovePercent": rv * factor if rv is not None else None,
+                "impliedScaledMovePercent": reference["atmIvPercent"] * factor if reference else None,
+                "referenceExpiry": reference["expiry"] if reference else None,
+            }
+        )
     trade_times = [r["time"] for r in packet.get("recentTrades") or [] if isinstance(r.get("time"), (int, float))]
     realtime = packet.get("realtime") or {}
     spot = {
@@ -93,6 +112,10 @@ def market_input(packet: dict, asset: str) -> dict:
         "liquidity": {"current": liquidity, "lastBucket": enrichment.get("previousLiquidityBucket", {})},
         "futures": enrichment.get("futures", {}),
         "options": enrichment.get("options", []),
+        "holdingMoveScales": {
+            "basis": "annualized volatility times sqrt(hours/8760), not forecasts or probabilities",
+            "rows": holding_scales,
+        },
     }
 
 

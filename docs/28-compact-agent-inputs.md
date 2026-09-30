@@ -17,6 +17,9 @@ The catalogue supplies run-local references and decision-relevant saved rules. I
 cost/spread/short-distance comparisons use one normalized saved-leg ratio and the first eligible
 expiry covering the next hour. They help rank strategies before requesting a final preview.
 Account trade size is still calculated by the trading engine at entry.
+The starting input also supplies six standard holding-period volatility scales. It uses the
+nearest quoted expiry covering each hold and keeps unavailable IV scales unknown. These simple
+scales avoid repeated calculator calls and are explicitly labelled as estimates, not forecasts.
 
 `preview_strategy(strategy_ref, activation_time, exit_choice)` replaces the catalogue and exit
 lookup tools on the compact path. `exit_choice` is an Agno/Pydantic schema whose discriminator
