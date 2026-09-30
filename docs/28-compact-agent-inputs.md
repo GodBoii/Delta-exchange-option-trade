@@ -145,3 +145,9 @@ The completed-response, non-empty text, and provider-error checks remain. News i
 still ask for relevant sections and linked evidence, with flexible section names and order.
 Tool-call limits are 50 for news, 48 for main analysis, and 16 for compact rechecks.
 The legacy recheck keeps its one-call limit. Per-tool research budgets and deadlines are unchanged.
+
+Main and recheck agents share five interpretation instructions: distinguish quoted premium from
+contract/strategy-unit cost; separate expiry payoff from early-exit valuation; treat realized/IV
+comparisons as evidence rather than guaranteed edge; reserve mandatory-gate language for enforced
+rules; and qualify catalyst statements by the supplied news coverage. These change interpretation
+and reporting, not strategy definitions, tool calculations, sizing, or execution policy.

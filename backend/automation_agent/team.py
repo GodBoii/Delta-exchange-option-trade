@@ -148,6 +148,7 @@ def run_automation_team(
                     "bullish, bearish, breaking out, or expanding in volatility."
                 ),
                 *_asset_specific_instructions(code),
+                *evidence_interpretation_instructions(),
                 (
                     "Call show_available_strategy to receive short strategyRef values and every available complete "
                     "definition and description, including category, index, price source, holding type, risk, "
@@ -429,6 +430,7 @@ def run_activation_recheck(
             "overrides a historical seven-hour default in its description. Do not change the schedule during recheck.",
             f"Use the fresh Binance Spot packet and charts to judge whether {code} direction or structure changed.",
             *_asset_specific_instructions(code),
+            *evidence_interpretation_instructions(),
             "Compare the supplied dated sessionHistory and recent averages; do not treat missing observations as zero.",
             "The earlier agent's complete report is evidence from selection time, not a current market reading.",
             (
@@ -501,6 +503,27 @@ def run_activation_recheck(
 
 def calculator() -> CalculatorTools:
     return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide", "exponentiate", "square_root"])
+
+
+def evidence_interpretation_instructions() -> list[str]:
+    """Shared interpretation rules for main analysis and its assigned recheck."""
+    return [
+        "Distinguish option premium quoted in USD per BTC/ETH from USD cost per contract or normalized strategy unit. "
+        "Use supplied contract multipliers and label the unit; copy preview cost fields without rescaling them. "
+        "A premium of 689 USD per BTC with a 0.001 BTC multiplier costs 0.689 USD per contract, before fees.",
+        "Expiry payoff and breakevens apply at contract expiry, not at an earlier planned exit. For an early exit, "
+        "assess remaining time value, IV, Greeks and executable exit prices. Local Greek scenarios are approximate "
+        "changes in value, not guaranteed P&L or early-exit breakevens.",
+        "Recent realized volatility above or below IV is evidence, not proof of a profitable options trade. "
+        "Identify their different measurement horizons and explain why movement might persist or fade over the "
+        "chosen hold. Include premium, decay and costs when assessing the thesis.",
+        "Call a condition a mandatory gate only when the saved strategy or backend explicitly enforces it. "
+        "Volatility-scaled moves, strike-distance comparisons and advisory liquidity are analytical considerations; "
+        "do not present them as new execution rules.",
+        "When discussing catalysts, say the supplied news report identifies no scheduled catalyst during the hold "
+        "if that is what the evidence supports. Do not claim a complete event calendar or treat absent coverage as "
+        "proof that no event can occur. In rechecks, earlier news remains dated evidence, not a fresh news search.",
+    ]
 
 
 def curated_instructions(instructions: list[str]) -> list[str]:
