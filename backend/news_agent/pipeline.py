@@ -18,14 +18,6 @@ from .database import create_session_db
 
 logger = logging.getLogger(__name__)
 BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
-REPORT_HEADINGS = (
-    "## Summary",
-    "## Market impact",
-    "## Positive factors",
-    "## Risks",
-    "## What to watch next",
-    "## Sources",
-)
 
 
 def _tool_field(execution: Any, *names: str) -> Any:
@@ -212,7 +204,7 @@ def run_news_pipeline(
             "search the web yourself. Investigate related global developments, scheduled meetings, "
             "crypto announcements, and public discussion. Open useful source pages before citing them. "
             "Continue with available evidence when a source fails; explain material gaps. Return the completed "
-            "Markdown report using the required headings."
+            "Markdown report with linked evidence and clear market implications."
         )
         report_response = asyncio.run(
             analyst.arun(
@@ -224,22 +216,13 @@ def run_news_pipeline(
         if (
             not isinstance(report_response, RunOutput)
             or report_response.status != RunStatus.completed
-            or "<｜DSML｜" in str(report_response.content)
             or not isinstance(report_response.content, str)
             or not report_response.content.strip()
             or report_response.content.strip().casefold()
             in {"provider returned error", "the operation was aborted", "request timed out", "request timed out."}
         ):
             raise RuntimeError("News synthesis returned no report")
-        report = report_response.content
-        start = report.find(REPORT_HEADINGS[0])
-        if start < 0:
-            raise RuntimeError("News synthesis returned no complete report")
-        report = report[start:].strip()
-        positions = [report.find(heading) for heading in REPORT_HEADINGS]
-        if any(position < 0 for position in positions) or positions != sorted(positions):
-            raise RuntimeError("News synthesis returned no complete report")
-        report_response.content = report
+        report_response.content = report_response.content.strip()
         logger.info(
             "News pipeline completed run_id=%s elapsed_ms=%d tools=%s",
             report_response.run_id,

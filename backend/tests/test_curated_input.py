@@ -242,6 +242,8 @@ def test_paired_dry_run_constructs_inputs_without_provider_or_actions(monkeypatc
         for recheck in (False, True):
             result = run_case(case, "Same existing news summary", curated=curated, recheck=recheck, offline=True)
             assert result["simulatedActions"] == []
+            expected_limit = (16 if curated else 1) if recheck else 48
+            assert result["toolCallLimit"] == expected_limit
             if curated:
                 assert "get_btc_market_packet" not in result["registeredTools"]
                 assert "show_available_strategy" not in result["registeredTools"]

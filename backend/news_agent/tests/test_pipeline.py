@@ -47,7 +47,7 @@ def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
 
     result = run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice", db=InMemoryDb())
 
-    assert result.markdown == COMPLETE_REPORT
+    assert result.markdown == "I will research now." + COMPLETE_REPORT
     assert result.research_tools == ["search_news"]
     assert result.research_trace[0]["result"]["items"][0]["url"] == "https://example.com/btc"
     assert analyst.calls[0]["session_id"] == "btc-thread"
@@ -97,13 +97,13 @@ def test_pipeline_rejects_provider_error_content(monkeypatch) -> None:
         run_news_pipeline("ETH news", db=InMemoryDb(), asset="ETH")
 
 
-def test_pipeline_rejects_tool_syntax_masquerading_as_report(monkeypatch) -> None:
+def test_pipeline_does_not_reject_completed_content_for_tool_markup(monkeypatch) -> None:
     analyst = FakeAgent(
         [RunOutput(content="<｜DSML｜ calls>curate_public_sources</｜DSML｜ calls>", status=RunStatus.completed)]
     )
     monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
-    with pytest.raises(RuntimeError, match="no report"):
-        run_news_pipeline("ETH news", db=InMemoryDb(), asset="ETH")
+    result = run_news_pipeline("ETH news", db=InMemoryDb(), asset="ETH")
+    assert result.markdown == analyst.responses[0].content
 
 
 def test_real_agno_async_dispatch_executes_research_tool(monkeypatch) -> None:
@@ -149,8 +149,16 @@ def test_real_agno_async_dispatch_executes_research_tool(monkeypatch) -> None:
     assert result.research_trace[0]["result"]["count"] == 1
 
 
-def test_pipeline_rejects_incomplete_markdown(monkeypatch) -> None:
-    analyst = FakeAgent([RunOutput(content="## Summary\n\nOnly a draft.", status=RunStatus.completed)])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "## Summary\n\nEvidence is mixed.",
+        "## Risks\n\nUncertain.\n\n## Overview\n\nNews summary.",
+        "Plain news summary without headings.",
+    ],
+)
+def test_pipeline_accepts_completed_markdown_without_exact_sections(monkeypatch, content) -> None:
+    analyst = FakeAgent([RunOutput(content=content, status=RunStatus.completed)])
     monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
-    with pytest.raises(RuntimeError, match="complete report"):
-        run_news_pipeline("BTC news", db=InMemoryDb())
+    result = run_news_pipeline("BTC news", db=InMemoryDb())
+    assert result.markdown == content

@@ -115,8 +115,8 @@ def create_news_agent(
             ),
             "Write for an individual investor. Use plain language, short paragraphs, and define specialized terms.",
             (
-                "Use exactly these Markdown headings in this order: ## Summary, ## Market impact, "
-                "## Positive factors, ## Risks, ## What to watch next, ## Sources."
+                "Organize the report with useful Markdown headings. Cover the summary, market impact, "
+                "positive factors, risks, what to watch next, and cited sources with flexible section names and order."
             ),
             (
                 "Do not add a separate report title, date heading, executive-summary label, methodology note, "
@@ -138,7 +138,7 @@ def create_news_agent(
         ),
         instructions=instructions,
         expected_output=(
-            "A customer-facing Markdown market report with fixed headings, linked evidence, and explicit uncertainty."
+            "A customer-facing Markdown market report with linked evidence and explicit uncertainty."
         ),
         db=session_db,
         add_history_to_context=True,
@@ -146,7 +146,7 @@ def create_news_agent(
         max_tool_calls_from_history=0,
         store_events=True,
         tools=tools,
-        tool_call_limit=40,
+        tool_call_limit=50,
         add_datetime_to_context=True,
         timezone_identifier="UTC",
         debug_mode=debug_mode,

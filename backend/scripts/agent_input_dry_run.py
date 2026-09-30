@@ -185,6 +185,7 @@ def run_case(
             )
             record["registeredTools"] = [name for toolkit in kwargs.get("tools", []) for name in toolkit.functions]
             record["reasoningEffort"] = kwargs["model"].reasoning_effort
+            record["toolCallLimit"] = kwargs["tool_call_limit"]
             super().__init__(**kwargs)
 
         def capture(self, result):

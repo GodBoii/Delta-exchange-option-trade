@@ -26,7 +26,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     assert agent.num_history_runs == settings.history_runs
     assert agent.num_history_runs == 2
     assert agent.max_tool_calls_from_history == 0
-    assert agent.tool_call_limit == 40
+    assert agent.tool_call_limit == 50
     assert agent.store_events is True
     assert agent.send_media_to_model is True
     assert any("Inspect images attached to the run" in instruction for instruction in agent.instructions)

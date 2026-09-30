@@ -37,7 +37,7 @@ IV-scaled movement in the expiry overview is `IV × sqrt(days / 365)`, not a cal
 
 The remaining action tools are `select_strategy_and_time`, `scheduled_next_agent_run`, and
 `drop_strategy` for the assigned recheck only. Agno CalculatorTools exposes add, subtract,
-multiply, divide, exponentiate, and square_root. Rechecks permit eight calls so calculation can
+multiply, divide, exponentiate, and square_root. Rechecks permit sixteen calls so calculation can
 precede cancellation; they cannot choose or schedule another strategy. Their lead time remains
 seven minutes. Provider-error responses fail the compact path rather than becoming a valid review.
 
@@ -137,3 +137,11 @@ not a latency guarantee or evidence of trading profitability. There is no hard t
 Space Bunny was used only for interim development checks. Its recheck runs completed, while
 main runs returned upstream SSE/empty-response errors; those were recorded as failures rather
 than successful benchmarks. Live strategy and news models remain unchanged.
+
+## Updated guardrails
+
+News responses no longer require six exact headings or reject content containing DSML markup.
+The completed-response, non-empty text, and provider-error checks remain. News instructions
+still ask for relevant sections and linked evidence, with flexible section names and order.
+Tool-call limits are 50 for news, 48 for main analysis, and 16 for compact rechecks.
+The legacy recheck keeps its one-call limit. Per-tool research budgets and deadlines are unchanged.

@@ -272,7 +272,7 @@ def run_automation_team(
             store_events=True,
             # Charts live in ai.chart_images; sessions keep text, not base64 image copies.
             store_media=False,
-            tool_call_limit=24,
+            tool_call_limit=48,
             debug_mode=False,
             telemetry=False,
         )
@@ -452,7 +452,7 @@ def run_activation_recheck(
         ),
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
-        tool_call_limit=8 if curated else 1,
+        tool_call_limit=16 if curated else 1,
         store_events=True,
         debug_mode=False,
         telemetry=False,
