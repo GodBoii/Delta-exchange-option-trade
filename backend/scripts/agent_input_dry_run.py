@@ -7,6 +7,7 @@ import os
 import time
 from contextlib import suppress
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,72 +46,47 @@ def catalogue(asset: str) -> list[dict]:
 
 
 async def capture_asset(asset: str, url: str) -> dict:
-    # Public clients only. Namespace import keeps the two services' app packages separate.
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from tempfile import TemporaryDirectory
-
-    from binance_backend.app.config import Settings
-    from binance_backend.app.enrichment import PublicEvidence
-
     profile = PROFILES[asset]
     started = time.perf_counter()
-    with TemporaryDirectory() as directory:
-        settings = Settings(
-            binance_symbol=profile.spot_symbol,
-            delta_symbol=profile.delta_index,
-            market_history_path=str(Path(directory) / "evidence.sqlite"),
-        )
-        evidence = PublicEvidence(settings)
-        evidence.store.initialize()
-        try:
-            await evidence.refresh_options()
-            with suppress(httpx.HTTPError, ValueError):
-                await evidence.refresh_futures()
-            packet = await asyncio.to_thread(
-                MarketIntelligenceTools(binance_url=url, asset=profile).collect_market_packet
+    market = MarketIntelligenceTools(binance_url=url, asset=profile, curated=True)
+    packet, context = await asyncio.gather(
+        asyncio.to_thread(market.collect_market_packet), asyncio.to_thread(market.collect_delta_option_context)
+    )
+    options, rows, symbols = context["options"], catalogue(asset), set()
+    for saved in rows:
+        with suppress(ValueError):
+            definition, _ = resolve_exit_schedule(
+                saved["definition_json"],
+                entry_at=datetime.now(UTC) + timedelta(minutes=10),
+                choice=ExitChoice(kind="specific_time", exit_at=datetime.now(UTC) + timedelta(hours=1)),
+                options=options,
             )
-            rows = catalogue(asset)
-            symbols = set()
-            for saved in rows:
-                try:
-                    definition, _ = resolve_exit_schedule(
-                        saved["definition_json"],
-                        entry_at=datetime.now(UTC) + timedelta(minutes=10),
-                        choice=ExitChoice(kind="specific_time", exit_at=datetime.now(UTC) + timedelta(hours=1)),
-                        options=evidence.options,
-                    )
-                    symbols.update(leg["productSymbol"] for leg in resolve_contracts(definition, evidence.options))
-                except ValueError:
-                    continue
-            selected = []
-            for symbol in sorted(symbols):
-                with suppress(httpx.HTTPError, ValueError):
-                    selected.extend(await evidence.selected([symbol]))
-            # Other expiries retain only their top-of-book quantities; no invented full depth.
-            by_symbol = {q["symbol"]: q for q in selected}
-            options = [by_symbol.get(o["symbol"], o) for o in evidence.options]
-            now = int(time.time() * 1000)
-            packet["capturedAt"] = now
-            packet["enrichment"] = {
-                "schemaVersion": 1,
-                "asset": asset,
-                "options": evidence.overview,
-                "futures": evidence.futures_summary({}, now),
-            }
-            return {
-                "asset": asset,
-                "market": packet,
-                "options": options,
-                "catalogue": rows,
-                "collectionSeconds": time.perf_counter() - started,
-            }
-        finally:
-            await evidence.close()
+            symbols.update(leg["productSymbol"] for leg in resolve_contracts(definition, options))
+    async with httpx.AsyncClient(timeout=20) as client:
+
+        async def selected(symbol):
+            response = await client.post(
+                f"{url}/api/market/{profile.market_route}/selected-contracts", json={"symbols": [symbol]}
+            )
+            response.raise_for_status()
+            result = response.json()
+            if result.get("asset") != asset:
+                raise ValueError("Selected evidence asset mismatch")
+            return result["contracts"]
+
+        responses = await asyncio.gather(*(selected(symbol) for symbol in sorted(symbols)), return_exceptions=True)
+    refreshed = {o["symbol"]: o for response in responses if isinstance(response, list) for o in response}
+    return {
+        "asset": asset,
+        "market": packet,
+        "options": [refreshed.get(o["symbol"], o) for o in options],
+        "catalogue": rows,
+        "collectionSeconds": time.perf_counter() - started,
+        "selectedContractSnapshots": len(refreshed),
+    }
 
 
-def run_case(case: dict, news: str, *, curated: bool, recheck: bool, offline: bool) -> dict:
+def run_case(case: dict, news: str, *, curated: bool, recheck: bool, offline: bool, model: str | None = None) -> dict:
     asset, profile = case["asset"], PROFILES[case["asset"]]
     snapshot_id, run_id = str(uuid4()), str(uuid4())
     frozen = deepcopy(case["market"])
@@ -253,6 +229,9 @@ def run_case(case: dict, news: str, *, curated: bool, recheck: bool, offline: bo
     market.collect_delta_option_context = lambda: {"underlying": asset, "options": deepcopy(options)}
     market._packet_cache = frozen
     settings = NewsAgentSettings.load()
+    if model:
+        settings = replace(settings, automation_model_id=model)
+    record["model"] = settings.automation_model_id
     if not offline:
         settings.require_api_key()
     selected_row = next(r for r in rows if "Long call" in r["name"])
@@ -364,6 +343,7 @@ def main() -> None:
     run.add_argument("--asset", choices=["BTC", "ETH"])
     run.add_argument("--stage", choices=["main", "recheck"])
     run.add_argument("--path", choices=["legacy", "curated"])
+    run.add_argument("--model", help="Dry-run model override; never changes live or news-agent settings")
     args = parser.parse_args()
     if args.command == "capture":
         cases = [
@@ -392,7 +372,14 @@ def main() -> None:
                     name = f"{case['asset']}-{'recheck' if recheck else 'main'}-{'curated' if curated else 'legacy'}"
                     started = time.perf_counter()
                     try:
-                        result = run_case(case, bundle["news"], curated=curated, recheck=recheck, offline=args.offline)
+                        result = run_case(
+                            case,
+                            bundle["news"],
+                            curated=curated,
+                            recheck=recheck,
+                            offline=args.offline,
+                            model=args.model,
+                        )
                     except Exception as error:
                         result = {
                             "status": "failed",

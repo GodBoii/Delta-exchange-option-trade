@@ -43,6 +43,8 @@ def normalize_option(raw: dict[str, Any], product: dict[str, Any], asset: str, n
         raise ValueError("Option metadata does not match symbol")
     expiry = instant(product.get("settlement_time"))
     strike = finite(raw.get("strike_price"), positive=True)
+    if finite(parts[2], positive=True) != strike or len(parts[3]) != 6 or not parts[3].isdigit():
+        raise ValueError("Invalid option symbol strike or expiry code")
     multiplier = finite(product.get("contract_value"), positive=True)
     observed = timestamp_ms(raw.get("timestamp"), now)
     if expiry is None or expiry <= now or strike is None or multiplier is None or observed is None:

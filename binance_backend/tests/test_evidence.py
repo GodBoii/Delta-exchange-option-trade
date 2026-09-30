@@ -90,6 +90,29 @@ async def test_source_cooldown_and_optional_futures_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_optional_depth_failure_does_not_hide_fresh_quotes(tmp_path):
+    from datetime import UTC, datetime, timedelta
+    now = int(time.time() * 1000)
+    symbol = "C-BTC-100-010130"
+    def handler(request):
+        if "l2orderbook" in request.url.path:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"success": True, "result": {
+            "symbol": symbol, "product_id": 1, "strike_price": 100, "spot_price": 100,
+            "timestamp": now * 1000, "quotes": {"best_bid": 9, "best_ask": 10}}})
+    client = PublicEvidence(Settings(market_history_path=str(tmp_path / "e.sqlite")), httpx.MockTransport(handler))
+    client.products = {symbol: {"id": 1, "symbol": symbol, "contract_value": "0.001",
+                                "settlement_time": (datetime.now(UTC) + timedelta(days=1)).isoformat()}}
+    client.metadata_at = time.monotonic()
+    try:
+        rows = await client.selected([symbol])
+        assert rows[0]["bestAsk"] == 10
+        assert rows[0]["depth"] == {}
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_watchlist_authenticated_and_asset_scoped(tmp_path, monkeypatch):
     from datetime import UTC, datetime, timedelta
     from types import SimpleNamespace

@@ -39,6 +39,8 @@ class PublicEvidence:
         if time.monotonic() < self.blocked_until.get(base, 0):
             raise ValueError("Public source cooldown")
         async with self.limit:
+            if time.monotonic() < self.blocked_until.get(base, 0):
+                raise ValueError("Public source cooldown")
             response = await self.http.get(base + path, params=params)
             if response.status_code in {418, 429}:
                 retry = finite(response.headers.get("Retry-After"))
@@ -115,7 +117,7 @@ class PublicEvidence:
 
     async def refresh_futures(self) -> None:
         base, symbol = self.settings.binance_futures_base_url, self.settings.binance_symbol
-        if not self.funding_info or time.monotonic() - self.funding_info_at > 300:
+        if not self.funding_info_at or time.monotonic() - self.funding_info_at > 300:
             info = await self.get(base, "/fapi/v1/fundingInfo")
             if not isinstance(info, list):
                 raise ValueError("Invalid funding intervals")
@@ -158,10 +160,13 @@ class PublicEvidence:
             base = self.settings.delta_public_base_url
             ticker, book = await asyncio.gather(
                 self.get(base, f"/v2/tickers/{symbol}"), self.get(base, f"/v2/l2orderbook/{symbol}", {"depth": 100}),
+                return_exceptions=True,
             )
-            raw_book = book["result"]
-            if raw_book.get("symbol") != symbol:
-                raise ValueError("Depth contract mismatch")
+            if isinstance(ticker, BaseException):
+                raise ticker
+            raw_book = book.get("result", {}) if isinstance(book, dict) else {}
+            if not isinstance(raw_book, dict) or raw_book.get("symbol") != symbol:
+                raw_book = {}
             result = normalize_option(ticker["result"], self.products[symbol], self.asset, int(time.time() * 1000))
             if not 0 <= result["receivedAt"] - result["observedAt"] <= 30_000:
                 raise ValueError("Selected option quote is stale")

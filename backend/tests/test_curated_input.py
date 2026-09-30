@@ -95,6 +95,60 @@ def test_short_call_unbounded_loss_and_unavailable_depth_is_advisory():
         build_preview(definition, resolved, [raw], raw["observedAt"] + 31_000)
 
 
+def test_credit_spread_and_ratio_payoff_bounds():
+    raw, _, _ = fixture()
+    raw = {**raw, "contractValue": 1, "bestBid": 10, "bestAsk": 11}
+    hedge = {**raw, "symbol": raw["symbol"].replace("-100-", "-110-"), "strike": 110, "bestBid": 4, "bestAsk": 5}
+    legs = [
+        {
+            "productSymbol": raw["symbol"],
+            "strike": 100,
+            "optionType": "call",
+            "position": "sell",
+            "lots": 1,
+            "orderType": "market_order",
+        },
+        {
+            "productSymbol": hedge["symbol"],
+            "strike": 110,
+            "optionType": "call",
+            "position": "buy",
+            "lots": 1,
+            "orderType": "market_order",
+        },
+    ]
+    result = build_preview({}, legs, [raw, hedge], raw["observedAt"])
+    assert result["netCreditUsd"] == 5
+    assert result["expiryPayoff"] == {
+        "breakevens": [105.0],
+        "maximumLossUsd": 5.0,
+        "maximumProfitUsd": 5.0,
+        "basis": "gross, at expiry; software stops do not bound payoff",
+    }
+    legs[0].update(position="buy", lots=4)
+    legs[1].update(position="sell", lots=2)
+    result = build_preview({}, legs, [raw, hedge], raw["observedAt"])
+    assert [row["contracts"] for row in result["legs"]] == [2, 1]
+    assert result["netCreditUsd"] == -18
+    assert result["expiryPayoff"]["breakevens"] == [109]
+    assert result["expiryPayoff"]["maximumProfitUsd"] == "unbounded"
+
+
+def test_verified_greek_scaling_and_limit_price_fill():
+    raw, definition, _ = fixture()
+    resolved = resolve_contracts(definition, [raw])
+    days = (datetime.fromisoformat(raw["expiry"]).timestamp() * 1000 - raw["observedAt"]) / 86_400_000
+    raw["vega"] = 0.001 * 100**2 * 0.4 * days / 365 / 100
+    raw["theta"] = -0.001 * 100**2 * 0.4**2 / (2 * 365)
+    result = build_preview(definition, resolved, [raw], raw["observedAt"])
+    assert result["greeks"]["vega"] == pytest.approx(raw["vega"] * 0.001)
+    assert result["localEstimates"]["scenarios"][2]["estimatedValueChangeUsd"] == pytest.approx(0.000250125)
+    assert result["localEstimates"]["scenarios"][-1]["estimatedValueChangeUsd"] == pytest.approx(-9.13242e-8)
+    resolved[0].update(orderType="limit_order", limitPrice="9")
+    result = build_preview(definition, resolved, [raw], raw["observedAt"])
+    assert result["legs"][0]["fill"]["estimatedPremium"] is None
+
+
 def test_native_calculator_can_be_followed_by_cancellation():
     from automation_agent.tools import DropStrategyTools
 

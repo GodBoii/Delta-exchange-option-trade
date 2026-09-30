@@ -420,6 +420,7 @@ class BinanceSpotFeed:
                 replace_latest_candle(current_candles, current_1m, 500)
             cvd = sum(delta for _, delta in self.trade_deltas)
             self._analysis = calculate_analysis(current_candles, bids, asks, cvd)
+            self._analysis["cvd"]["windowSeconds"] = self.settings.cvd_window_seconds
             self._analysis_at = now
         return {
             "type": "market_update",
