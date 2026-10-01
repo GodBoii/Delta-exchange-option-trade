@@ -1,8 +1,11 @@
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.capital import CapitalPolicy, has_available_capital_slot
+from app.engine import TradingEngine
 
 
 @pytest.mark.parametrize(
@@ -50,3 +53,54 @@ def test_existing_allocations_can_block_a_changed_capital_policy():
     assert not has_available_capital_slot(
         Decimal("100"), Decimal("100"), CapitalPolicy("half_balance"), [4], Decimal("75")
     )
+
+
+@pytest.mark.parametrize("connected,slots", [(False, []), (True, [1, 2, 3, 4])])
+async def test_full_or_disconnected_account_does_not_fetch_exchange_wallet(connected, slots):
+    db = SimpleNamespace(rpc=AsyncMock(return_value={
+        "connected": connected, "occupiedSlots": slots, "reservedBudget": "100",
+    }))
+    engine = TradingEngine(db, SimpleNamespace())
+    engine.capital_policy = AsyncMock(return_value=CapitalPolicy("one_quarter_balance"))
+    engine.client_for_user = AsyncMock()
+    try:
+        assert not await engine.has_available_trade_slot("user")
+        db.rpc.assert_awaited_once_with("get_strategy_capital_capacity", {"p_user_id": "user"})
+        engine.client_for_user.assert_not_awaited()
+    finally:
+        await engine.close()
+
+
+@pytest.mark.parametrize("available,reserved,expected", [(25, 75, True), (0, 75, False), (25, 100, False)])
+async def test_engine_combines_live_wallet_with_reserved_capital(available, reserved, expected):
+    db = SimpleNamespace(rpc=AsyncMock(return_value={
+        "connected": True, "occupiedSlots": [1, 2, 3], "reservedBudget": str(reserved),
+    }))
+    client = SimpleNamespace(close=AsyncMock())
+    engine = TradingEngine(db, SimpleNamespace())
+    engine.capital_policy = AsyncMock(return_value=CapitalPolicy("one_quarter_balance"))
+    engine.client_for_user = AsyncMock(return_value=client)
+    engine.usd_capital = AsyncMock(return_value=(Decimal(available), Decimal("100")))
+    try:
+        assert await engine.has_available_trade_slot("user") is expected
+        client.close.assert_awaited_once()
+        assert db.rpc.await_count == 1
+    finally:
+        await engine.close()
+
+
+async def test_wallet_error_propagates_and_releases_the_client():
+    db = SimpleNamespace(rpc=AsyncMock(return_value={
+        "connected": True, "occupiedSlots": [], "reservedBudget": "0",
+    }))
+    client = SimpleNamespace(close=AsyncMock())
+    engine = TradingEngine(db, SimpleNamespace())
+    engine.capital_policy = AsyncMock(return_value=CapitalPolicy("fixed_amount", Decimal("25")))
+    engine.client_for_user = AsyncMock(return_value=client)
+    engine.usd_capital = AsyncMock(side_effect=TimeoutError("Wallet unavailable"))
+    try:
+        with pytest.raises(TimeoutError, match="Wallet unavailable"):
+            await engine.has_available_trade_slot("user")
+        client.close.assert_awaited_once()
+    finally:
+        await engine.close()

@@ -13,7 +13,14 @@ from typing import Any
 import httpx
 
 from .auth import credentials_for_user
-from .capital import CapitalPolicy, capital_budget, maximum_concurrent_strategies, policy_from_row
+from .capital import (
+    CapitalPolicy,
+    capital_budget,
+    has_available_capital_slot,
+    maximum_concurrent_strategies,
+    percentage_concurrency_limit,
+    policy_from_row,
+)
 from .config import Settings
 from .database import Database
 from .delta import DeltaClient, RequestBudget
@@ -271,6 +278,24 @@ class TradingEngine:
 
     async def capital_policy(self, user_id: str) -> CapitalPolicy:
         return policy_from_row(await self.application_data.request("library:getCapital", {"userId": user_id}))
+
+    async def has_available_trade_slot(self, user_id: str) -> bool:
+        """Check capacity without reserving capital or sending exchange orders."""
+        capacity = await self.db.rpc("get_strategy_capital_capacity", {"p_user_id": user_id})
+        if not capacity["connected"]:
+            return False
+        policy = await self.capital_policy(user_id)
+        maximum = percentage_concurrency_limit(policy.allocation_mode)
+        if maximum is not None and len(capacity["occupiedSlots"]) >= maximum:
+            return False
+        client = await self.client_for_user(user_id)
+        try:
+            available, total = await self.usd_capital(client)
+            return has_available_capital_slot(
+                available, total, policy, capacity["occupiedSlots"], Decimal(capacity["reservedBudget"])
+            )
+        finally:
+            await client.close()
 
     async def saved_strategies(self, user_id: str, strategy_id: str | None = None) -> list[dict[str, Any]]:
         return await self.application_data.saved_strategies(user_id, strategy_id)
