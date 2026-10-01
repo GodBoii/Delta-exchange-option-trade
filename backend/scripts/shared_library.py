@@ -5,6 +5,7 @@ Commands print the planned change unless ``--apply`` is given:
   seed           create canonical shared templates that are missing, by name
   descriptions   copy canonical descriptions onto existing shared templates
   take-profit    set every shared template to a 50% take profit (refused while runs are open)
+  emergency-stop set shared short-leg templates to a 300% emergency stop for future entries
 
 Every update increments the template version so open editors detect the change.
 """
@@ -130,6 +131,25 @@ def take_profit(cursor: psycopg.Cursor, apply: bool) -> int:
     return changed
 
 
+def emergency_stop(cursor: psycopg.Cursor, apply: bool) -> int:
+    rows = shared_templates(cursor)
+    if not rows:
+        raise RuntimeError("The shared strategy catalog is empty")
+    changed = 0
+    for row in rows:
+        definition = dict(row["definition_json"])
+        if not any(leg.get("position") == "sell" for leg in definition.get("legs", [])):
+            continue
+        if definition.get("emergencyStopLossPercent") == 300:
+            continue
+        definition["emergencyStopLossPercent"] = 300
+        changed += 1
+        print(f"{'Updating' if apply else 'Would update'} {row['name']} (version {row['version']}) to 300%")
+        if apply:
+            update_definition(cursor, row, definition)
+    return changed
+
+
 def exit_templates(cursor: psycopg.Cursor, apply: bool) -> int:
     """Convert saved templates and retire duplicate expiry-only entries."""
     cursor.execute(
@@ -183,7 +203,7 @@ def exit_templates(cursor: psycopg.Cursor, apply: bool) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("seed", "descriptions", "take-profit", "exit-templates"))
+    parser.add_argument("command", choices=("seed", "descriptions", "take-profit", "emergency-stop", "exit-templates"))
     parser.add_argument("--apply", action="store_true", help="Commit the changes")
     parser.add_argument("--database-url", default=os.getenv("LOCAL_DATABASE_URL"))
     args = parser.parse_args()
@@ -193,6 +213,7 @@ def main() -> None:
         "seed": seed,
         "descriptions": descriptions,
         "take-profit": take_profit,
+        "emergency-stop": emergency_stop,
         "exit-templates": exit_templates,
     }[args.command]
     with psycopg.connect(args.database_url, row_factory=dict_row) as connection, connection.cursor() as cursor:
