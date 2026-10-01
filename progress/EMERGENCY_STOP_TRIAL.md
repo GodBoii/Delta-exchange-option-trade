@@ -26,10 +26,5 @@ The library update is available as `shared_library.py emergency-stop`, with a
 dry run by default and `--apply` to commit. It updates shared short-leg templates
 for future entries and does not modify run snapshots or exchange orders.
 
-A heartbeat named "Review 300% emergency stop trial" is scheduled for seven days
-after setup. It will inspect production results without changing trading settings
-and pause after reporting. Compare fees-adjusted P&L, completed trade counts,
-win/loss counts, largest loss, stop-exit reasons, and unresolved trades with the
-preceding seven days. Separate BTC and ETH and avoid counting shared outcomes
-multiple times. Include only new entries whose definition uses the 300% emergency
-stop, and state any missing accounting data.
+The user requested no scheduled review. The heartbeat named "Review 300% emergency
+stop trial" was deleted on October 1, 2026. No review or automatic reset is scheduled.
