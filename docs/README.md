@@ -22,6 +22,7 @@ Verified: **2026-08-08**. Exchange capabilities, product listings, limits, and d
 14. [Automated strategy system](14-automated-strategy-system.md)
 15. [Compact market inputs and focused tools](28-compact-agent-inputs.md)
 16. [Trading state migration and execution corrections](15-trading-state-migration.md)
+17. [Agent trade capacity checks and deployment verification](30-agent-trade-capacity.md)
 
 ## Source hierarchy
 
