@@ -34,7 +34,7 @@ def test_builtin_risk_controls_apply_to_every_compatible_template():
     assert all(definition.takeProfitPercent == 50 for definition in DEFINITIONS)
     for definition in DEFINITIONS:
         has_short_leg = any(leg.position == "sell" for leg in definition.legs)
-        assert definition.emergencyStopLossPercent == (170 if has_short_leg else None)
+        assert definition.emergencyStopLossPercent == (300 if has_short_leg else None)
         if definition.riskMode == "combined_premium":
             assert definition.combinedStopLossPercent == 100
 

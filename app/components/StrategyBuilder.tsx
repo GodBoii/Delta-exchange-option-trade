@@ -82,7 +82,7 @@ const initialStrategy = (): StrategyDefinition => ({
   stopLossPercent: 100,
   takeProfitPercent: 50,
   combinedStopLossPercent: 100,
-  emergencyStopLossPercent: 170,
+  emergencyStopLossPercent: 300,
   emergencyExitEnabled: true,
   trailToBreakEven: false,
   breakEvenScope: "all_legs",
