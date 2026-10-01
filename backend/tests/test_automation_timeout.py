@@ -1,10 +1,16 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from app import automation
 from app.errors import AppError
+
+
+@pytest.fixture(autouse=True)
+def available_capacity(monkeypatch):
+    monkeypatch.setattr(automation, "has_automation_trade_capacity", AsyncMock(return_value=True))
 
 
 class RunDatabase:

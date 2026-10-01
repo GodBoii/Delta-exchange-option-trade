@@ -13,6 +13,11 @@ from app.errors import AppError
 PRIVATE_ANALYSIS = SimpleNamespace(shared_analysis_enabled=False)
 
 
+@pytest.fixture(autouse=True)
+def available_capacity(monkeypatch):
+    monkeypatch.setattr(automation, "has_automation_trade_capacity", AsyncMock(return_value=True))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["healthy", "starting", "wrong_service", "invalid_json", "http_error", "offline"])
 async def test_readiness_requires_a_healthy_analysis_service(monkeypatch, case) -> None:

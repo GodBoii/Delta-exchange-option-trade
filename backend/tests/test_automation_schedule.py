@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -19,6 +20,11 @@ from app.automation_schedule import (
 
 # Per-account analysis; the shared-analysis path has its own tests.
 PRIVATE_ANALYSIS = SimpleNamespace(shared_analysis_enabled=False)
+
+
+@pytest.fixture(autouse=True)
+def available_capacity(monkeypatch):
+    monkeypatch.setattr(automation, "has_automation_trade_capacity", AsyncMock(return_value=True))
 
 
 def test_utc_and_ist_inputs_resolve_to_the_same_instant() -> None:

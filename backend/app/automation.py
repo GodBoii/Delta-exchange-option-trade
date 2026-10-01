@@ -41,10 +41,12 @@ MAX_PARALLEL_RECHECK_RUNS = 8
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
 ANALYSIS_FAILED_MESSAGE = "The analysis failed. No strategy was activated."
+NO_TRADE_SLOTS_MESSAGE = "No trade slots are available"
 # Errors this module writes itself. Anything else in a run row came from an exception or
 # the analyzer and can carry provider, model or infrastructure detail.
 PUBLIC_RUN_ERRORS = frozenset({
     ANALYSIS_FAILED_MESSAGE,
+    NO_TRADE_SLOTS_MESSAGE,
     "Final report unavailable",
     "Automation was turned off",
     "The analysis run could not be claimed",
@@ -312,9 +314,11 @@ async def execute_automation_run(
     # The service stops recheck execution at 300s; allow its cleanup/error response to arrive.
     timeout_seconds = 310 if trigger == "activation_recheck" else AUTOMATION_ANALYSIS_TIMEOUT_SECONDS
     try:
+        if trigger == "activation_recheck" and not strategy_proposal_id:
+            raise AppError(500, "Activation recheck is missing its strategy proposal", "recheck_proposal_missing")
+        if not await has_automation_trade_capacity(db, engine, user_id):
+            return await skip_automation_run(db, user_id, run_id, status="running")
         if trigger == "activation_recheck":
-            if not strategy_proposal_id:
-                raise AppError(500, "Activation recheck is missing its strategy proposal", "recheck_proposal_missing")
             account_context = await build_activation_recheck_context(db, user_id, strategy_proposal_id)
         else:
             account_context = await build_account_context(engine, user_id, asset)
@@ -445,6 +449,42 @@ async def execute_automation_run(
             {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": "eq.running"},
         )
         raise
+
+
+async def has_automation_trade_capacity(db: Database, engine: TradingEngine, user_id: str) -> bool:
+    if user_id != SHARED_USER_ID:
+        return await engine.has_available_trade_slot(user_id)
+    accounts = await db.select(
+        "automation_settings",
+        {"select": "user_id", "enabled": "eq.true", "user_id": f"neq.{SHARED_USER_ID}"},
+    )
+    unavailable = False
+    for account in accounts:
+        try:
+            if await engine.has_available_trade_slot(str(account["user_id"])):
+                return True
+        except Exception:
+            unavailable = True
+            logger.exception("Could not check trade capacity user_id=%s", account["user_id"])
+    if unavailable:
+        # An unknown wallet must not be reported as a confirmed lack of capacity.
+        raise AppError(503, "Trade slot availability could not be checked", "capital_capacity_unavailable")
+    return False
+
+
+async def skip_automation_run(
+    db: Database, user_id: str, run_id: str, *, status: str
+) -> dict[str, Any]:
+    report = "The agent review was skipped because no trade slots are available. No strategy was scheduled."
+    await db.update(
+        "automation_agent_runs",
+        {"status": "cancelled", "completed_at": iso_now(), "error": NO_TRADE_SLOTS_MESSAGE,
+         "report_markdown": report},
+        {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": f"eq.{status}"},
+    )
+    logger.info("Automation run skipped run_id=%s user_id=%s reason=capital_slots_full", run_id, user_id)
+    return {"runId": run_id, "status": "cancelled", "skipped": True, "reason": NO_TRADE_SLOTS_MESSAGE,
+            "report": report}
 
 
 @router.get("/overview")
@@ -651,6 +691,8 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     user_id = str(user["id"])
     await require_owner(db, user)
     if shared_enabled(db.settings):
+        if not await has_automation_trade_capacity(db, engine, SHARED_USER_ID):
+            raise AppError(409, NO_TRADE_SLOTS_MESSAGE, "capital_slots_full")
         await require_analyzer_ready()
         row = await db.runtime.data.request(
             "sharedAnalysis:manual", {"requestedBy": user_id, "asset": body.asset}, mutation=True
@@ -660,6 +702,8 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     settings = await ensure_settings(db, user_id)
     if not settings["enabled"]:
         raise AppError(409, "Turn on Automation before running the agent", "automation_disabled")
+    if not await has_automation_trade_capacity(db, engine, user_id):
+        raise AppError(409, NO_TRADE_SLOTS_MESSAGE, "capital_slots_full")
     await require_analyzer_ready()
     rows = await db.insert(
         "automation_agent_runs",
@@ -885,6 +929,14 @@ class AutomationScheduler:
                     {"status": "cancelled", "completed_at": iso_now(), "error": "Scheduled review became stale"},
                     {"id": f"eq.{row['id']}", "status": "eq.scheduled"},
                 )
+                continue
+            try:
+                has_capacity = await has_automation_trade_capacity(self.db, self.engine, str(row["user_id"]))
+            except Exception:
+                logger.exception("Scheduled automation capacity check deferred run_id=%s", row["id"])
+                continue
+            if not has_capacity:
+                await skip_automation_run(self.db, str(row["user_id"]), str(row["id"]), status="scheduled")
                 continue
             if not analyzer_ready:
                 try:
