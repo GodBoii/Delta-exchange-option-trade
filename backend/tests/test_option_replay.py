@@ -21,6 +21,18 @@ def test_marks_never_read_a_future_candle():
     assert latest_candle(bars, 120).close == 100
 
 
+def test_entry_minute_close_is_available_after_entry_but_pre_entry_wick_is_not():
+    leg_ = leg(stop=D("27"))
+    policy = Policy("strategy_level", "net_credit", D(100), D(50), 60)
+    result = replay_policy(
+        [leg_], {"call": {0: bar(0, "12", "30")}}, {0: bar(0, "100")}, policy,
+        entry_at=15, include_brackets=True, intrabar_emergency=True,
+    )
+    assert result is not None and result.at == 60
+    assert result.reason == "scheduled_exit"
+    assert result.observed_intrabar_emergency_crossings == 0
+
+
 def test_sideways_round_trip_can_trigger_emergency_loss():
     legs = [leg(stop=D("27")), leg("put", "put", stop=D("27"))]
     series = {"call": {0: bar(0, "28"), 60: bar(60, "5")}, "put": {0: bar(0, "1"), 60: bar(60, "5")}}
@@ -49,6 +61,19 @@ def test_intrabar_stop_crossing_is_flagged_without_inventing_its_fill():
     result = replay_policy([leg_], series, {0: bar(0, "100")}, policy, entry_at=0, include_brackets=True)
     assert result.reason == "scheduled_exit"
     assert result.observed_intrabar_emergency_crossings == 1
+
+
+def test_range_trigger_variant_exits_on_an_emergency_wick_at_observed_close():
+    leg_ = leg(stop=D("27"))
+    series = {"call": {0: bar(0, "12", "30"), 60: bar(60, "1")}}
+    policy = Policy("strategy_level", "net_credit", D(100), D(50), 120)
+    result = replay_policy(
+        [leg_], series, {0: bar(0, "100"), 60: bar(60, "100")}, policy,
+        entry_at=0, include_brackets=True, intrabar_emergency=True,
+    )
+    assert result.reason == "external_leg_exit" and result.at == 60
+    assert result.prices == (D("12"),)
+    assert result.gross == D("-.04")
 
 
 def test_missing_leg_bars_do_not_produce_free_profit():

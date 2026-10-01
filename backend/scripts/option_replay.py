@@ -49,6 +49,8 @@ class Leg:
     target_price: Decimal | None = None
 
     def __post_init__(self) -> None:
+        if self.side not in {"buy", "sell"} or self.kind not in {"call", "put"}:
+            raise ValueError("Unsupported option side or kind")
         for value in (self.strike, self.contracts, self.multiplier):
             if not value.is_finite() or value <= 0:
                 raise ValueError("Strike, contracts and multiplier must be positive")
@@ -148,6 +150,7 @@ def replay_policy(
     entry_at: int,
     include_brackets: bool,
     financial_triggers: bool = True,
+    intrabar_emergency: bool = False,
 ) -> PaperExit | None:
     """Replay completed-bar triggers, using the same combined mathematics as production.
 
@@ -164,20 +167,22 @@ def replay_policy(
     for start in common:
         bars = [series[leg.symbol][start] for leg in legs]
         at = bars[0].end
-        if start < entry_at or at > policy.deadline:
+        if at <= entry_at or at > policy.deadline:
             continue
         spot_bar = latest_candle(underlying, at, max_age=0)
         if spot_bar is None:
             continue
         prices = [bar.close for bar in bars]
-        if include_brackets:
-            emergency_crossings += sum(
+        bar_emergency_crossings = 0
+        if include_brackets and start >= entry_at:
+            bar_emergency_crossings = sum(
                 bracket_trigger(leg, bar.low if leg.side == "buy" else bar.high) == "leg_stop"
                 for leg, bar in zip(legs, bars, strict=True)
             )
+            emergency_crossings += bar_emergency_crossings
         combined = metrics(legs, prices, policy)
         # Each option's favorable/adverse extremes need not happen together.
-        if policy.risk_mode != "legwise":
+        if policy.risk_mode != "legwise" and start >= entry_at:
             favorable = [bar.high if leg.side == "buy" else bar.low for leg, bar in zip(legs, bars, strict=True)]
             adverse = [bar.low if leg.side == "buy" else bar.high for leg, bar in zip(legs, bars, strict=True)]
             combined_crossings += int(bool(metrics(legs, favorable, policy)["target_triggered"]))
@@ -185,7 +190,7 @@ def replay_policy(
         reason = "scheduled_exit"
         if financial_triggers:
             brackets = [bracket_trigger(leg, price) for leg, price in zip(legs, prices, strict=True)]
-            if include_brackets and any(brackets):
+            if include_brackets and (any(brackets) or intrabar_emergency and bar_emergency_crossings):
                 reason = "external_leg_exit"
             elif policy.risk_mode != "legwise" and combined["stop_triggered"]:
                 reason = "stop_loss"
