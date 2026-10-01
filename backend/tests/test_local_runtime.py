@@ -120,6 +120,43 @@ async def test_capital_reservation_and_agent_claim_are_atomic(runtime: LocalRunt
 
 
 @pytest.mark.asyncio
+async def test_capacity_counts_both_assets_and_alias_wallet_budgets(runtime: LocalRuntimeStore):
+    user_id, alias_id, other_id = (str(uuid4()) for _ in range(3))
+    account_id = str(uuid4())
+    async with runtime.pool.connection() as connection:
+        for owner, wallet_id in ((user_id, account_id), (alias_id, account_id), (other_id, str(uuid4()))):
+            await connection.execute(
+                """insert into trade.users (user_id,connection,automation,capital,record)
+                   values (%s,%s,%s,%s,%s)""",
+                (owner, Jsonb({"status": "connected", "delta_user_id": wallet_id}),
+                 Jsonb({"enabled": True}), Jsonb({"allocation_mode": "one_quarter_balance"}), Jsonb({})),
+            )
+    strategies = []
+    for owner, asset, budget in ((user_id, "BTC", "25"), (user_id, "ETH", "25"),
+                                 (alias_id, "BTC", "50"), (other_id, "BTC", "100")):
+        strategy_id = str(uuid4())
+        strategies.append(strategy_id)
+        await runtime.write("strategies", {"id": strategy_id, "user_id": owner, "asset": asset, "status": "active"})
+        await runtime.rpc("reserve_strategy_capital_slot", {
+            "p_user_id": owner, "p_strategy_id": strategy_id, "p_maximum_slots": 4,
+            "p_budget": budget, "p_total_balance": "100",
+        })
+    await runtime.update("strategy_capital_slots", {"status": "active"}, {"user_id": f"eq.{alias_id}"})
+    args = {"p_user_id": user_id}
+    before = await runtime.select("strategy_capital_slots", {"user_id": f"eq.{user_id}"})
+    capacity = await runtime.rpc("get_strategy_capital_capacity", args)
+    assert capacity == {"connected": True, "occupiedSlots": [1, 2], "reservedBudget": "100"}
+    assert await runtime.select("strategy_capital_slots", {"user_id": f"eq.{user_id}"}) == before
+    await runtime.update("strategies", {"status": "completed"}, {"id": f"eq.{strategies[0]}"})
+    assert await runtime.rpc("get_strategy_capital_capacity", args) == {
+        "connected": True, "occupiedSlots": [2], "reservedBudget": "75",
+    }
+    assert await runtime.rpc("get_strategy_capital_capacity", {"p_user_id": str(uuid4())}) == {
+        "connected": False, "occupiedSlots": [], "reservedBudget": "0",
+    }
+
+
+@pytest.mark.asyncio
 async def test_btc_eth_and_recheck_runs_claim_while_another_run_is_running(runtime: LocalRuntimeStore):
     user_id = str(uuid4())
     runs = [

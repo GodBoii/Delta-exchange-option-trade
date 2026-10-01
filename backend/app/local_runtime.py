@@ -440,6 +440,7 @@ class LocalRuntimeStore:
 
     async def rpc(self, name: str, payload: dict[str, Any]) -> Any:
         operations = {
+            "get_strategy_capital_capacity": self._capital_capacity,
             "reserve_strategy_capital_slot": self._reserve_capital,
             "release_strategy_capital_slot": self._release_capital,
             "claim_automation_agent_run": self._claim_agent,
@@ -450,6 +451,35 @@ class LocalRuntimeStore:
         if operation is None:
             raise AppError(500, "Unsupported local control operation", "unsupported_record_query")
         return await operation(payload)
+
+    async def _capital_capacity(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Read occupied slots across every login using the same Delta wallet."""
+        user_id = str(args["p_user_id"])
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute("select connection from trade.users where user_id=%s", (user_id,))
+            user = await cursor.fetchone()
+            account = user["connection"] if user else None
+            if not account or account.get("status") != "connected":
+                return {"connected": False, "occupiedSlots": [], "reservedBudget": "0"}
+            account_id = account.get("delta_user_id")
+            if not account_id:
+                raise AppError(503, "The exchange account identity is missing", "journal_not_configured")
+            await cursor.execute(
+                """select slots.owner_id,slots.data->>'slot_number' as slot_number,
+                          slots.data->>'reserved_budget' as reserved_budget
+                   from trade.strategy_capital_slots as slots
+                   join trade.users as users on users.user_id=slots.owner_id
+                   where users.connection->>'delta_user_id'=%s and slots.status in ('reserved','active')""",
+                (str(account_id),),
+            )
+            slots = await cursor.fetchall()
+        return {
+            "connected": True,
+            "occupiedSlots": sorted(int(slot["slot_number"]) for slot in slots if slot["owner_id"] == user_id),
+            "reservedBudget": str(
+                sum((Decimal(slot["reserved_budget"] or "0") for slot in slots), Decimal("0"))
+            ),
+        }
 
     async def _reserve_capital(self, args: dict[str, Any]) -> dict[str, Any]:
         user_id = str(args["p_user_id"])
