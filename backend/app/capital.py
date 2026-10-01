@@ -97,3 +97,20 @@ def maximum_concurrent_strategies(
 
 def percentage_concurrency_limit(allocation_mode: str) -> int | None:
     return ALLOCATION_DIVISORS.get(allocation_mode)
+
+
+def has_available_capital_slot(
+    available: Decimal,
+    total_balance: Decimal,
+    policy: CapitalPolicy,
+    occupied_slots: list[int],
+    reserved_budget: Decimal,
+) -> bool:
+    """Check the same slot and account-budget limits used by entry reservation."""
+    if available <= 0 or total_balance <= 0:
+        return False
+    maximum = maximum_concurrent_strategies(total_balance, policy.allocation_mode, policy.capital_amount)
+    if len(occupied_slots) >= maximum:
+        return False
+    budget = capital_budget(available, total_balance, policy.allocation_mode, policy.capital_amount)
+    return reserved_budget + budget <= total_balance
