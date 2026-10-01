@@ -4,6 +4,9 @@ import asyncio
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import psycopg
@@ -11,6 +14,10 @@ import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from app import automation
+from app.automation import NO_TRADE_SLOTS_MESSAGE, execute_automation_run
+from app.database import Database
+from app.engine import TradingEngine
 from app.errors import AppError
 from app.local_runtime import LocalRuntimeStore
 
@@ -154,6 +161,74 @@ async def test_capacity_counts_both_assets_and_alias_wallet_budgets(runtime: Loc
     assert await runtime.rpc("get_strategy_capital_capacity", {"p_user_id": str(uuid4())}) == {
         "connected": False, "occupiedSlots": [], "reservedBudget": "0",
     }
+
+
+@pytest.mark.asyncio
+async def test_four_quarter_allocations_skip_analysis_and_release_restores_capacity(runtime, monkeypatch):
+    user_id = str(uuid4())
+    async with runtime.pool.connection() as connection:
+        await connection.execute(
+            """insert into trade.users (user_id,connection,automation,capital,record) values (%s,%s,%s,%s,%s)""",
+            (user_id, Jsonb({"status": "connected", "delta_user_id": str(uuid4())}),
+             Jsonb({"enabled": True}), Jsonb({"allocation_mode": "one_quarter_balance"}), Jsonb({})),
+        )
+    strategy_ids = [str(uuid4()) for _ in range(5)]
+    for index, strategy_id in enumerate(strategy_ids):
+        await runtime.write("strategies", {
+            "id": strategy_id, "user_id": user_id, "status": "active" if index < 4 else "scheduled",
+            "asset": "BTC" if index % 2 else "ETH",
+        })
+        if index < 4:
+            await runtime.rpc("reserve_strategy_capital_slot", {
+                "p_user_id": user_id, "p_strategy_id": strategy_id, "p_maximum_slots": 4,
+                "p_budget": "25", "p_total_balance": "100",
+            })
+    settings = SimpleNamespace(
+        supabase_url="https://supabase.test", supabase_publishable_key="test", supabase_service_role_key="test",
+        analysis_service_secret="test-analysis-service-secret", chart_link_seconds=3600,
+    )
+    db = Database(settings, runtime.pool)
+    engine = TradingEngine(db, SimpleNamespace())
+    client = SimpleNamespace(close=AsyncMock())
+    engine.client_for_user = AsyncMock(return_value=client)
+    engine.usd_capital = AsyncMock(return_value=(Decimal("25"), Decimal("100")))
+    try:
+        assert not await engine.has_available_trade_slot(user_id)
+        engine.client_for_user.assert_not_awaited()
+        # Real run persistence also stores the skip report outside the runtime row.
+        run_id = str(uuid4())
+        await db.insert("automation_agent_runs", {
+            "id": run_id, "user_id": user_id, "trigger": "manual", "status": "running",
+            "scheduled_for": datetime.now(UTC).isoformat(),
+        })
+        monkeypatch.setattr(automation, "build_account_context", AsyncMock(side_effect=AssertionError("No analysis")))
+        result = await execute_automation_run(
+            db=db, engine=engine, user_id=user_id, run_id=run_id, session_id="capacity-test", trigger="manual",
+            reason="No capacity",
+        )
+        assert result["skipped"]
+        row = (await db.select("automation_agent_runs", {"id": f"eq.{run_id}"}))[0]
+        assert row["status"] == "cancelled" and row["error"] == NO_TRADE_SLOTS_MESSAGE
+        assert row["outcome"] is None and "skipped" in row["report_markdown"]
+        with pytest.raises(AppError) as caught:
+            await runtime.rpc("reserve_strategy_capital_slot", {
+                "p_user_id": user_id, "p_strategy_id": strategy_ids[4], "p_maximum_slots": 4,
+                "p_budget": "25", "p_total_balance": "100",
+            })
+        assert caught.value.code == "capital_slots_full"
+        await db.update("strategies", {"status": "completed"}, {"id": f"eq.{strategy_ids[0]}"})
+        assert await engine.has_available_trade_slot(user_id)
+        # Analysis only reads capacity; the existing entry RPC still owns reservation.
+        capacity = await runtime.rpc("get_strategy_capital_capacity", {"p_user_id": user_id})
+        assert capacity["occupiedSlots"] == [2, 3, 4]
+        reservation = await runtime.rpc("reserve_strategy_capital_slot", {
+            "p_user_id": user_id, "p_strategy_id": strategy_ids[4], "p_maximum_slots": 4,
+            "p_budget": "25", "p_total_balance": "100",
+        })
+        assert reservation["slot"] == 1
+    finally:
+        await engine.close()
+        await db.close()
 
 
 @pytest.mark.asyncio
