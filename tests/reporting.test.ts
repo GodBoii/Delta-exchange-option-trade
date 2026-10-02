@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  exclusionText, observationLabel, runStub, tradeQuery, walletUnavailableText, winRateText
+  exclusionText, observationLabel, pnlQuery, runStub, tradeQuery, walletUnavailableText, winRateText
 } from "../lib/reporting";
 import type { CapitalObservation, TradeItem } from "../lib/app-types";
 
@@ -17,6 +17,16 @@ test("trade query omits the all-state filter and keeps the cursor", () => {
   expect(tradeQuery({ range: "30d", state: "all" })).toBe("range=30d&limit=25");
   expect(tradeQuery({ range: "all", state: "open", cursor: "abc", deleted: "only", limit: 10 }))
     .toBe("range=all&limit=10&state=open&deleted=only&cursor=abc");
+});
+
+test("P&L queries apply the same asset scope to totals and paginated trades", () => {
+  expect(pnlQuery({ range: "30d", asset: "all" })).toBe("range=30d");
+  expect(tradeQuery({ range: "30d", state: "settled", asset: "all" })).toBe("range=30d&limit=25&state=settled");
+  for (const asset of ["BTC", "ETH"] satisfies ("BTC" | "ETH")[]) {
+    expect(pnlQuery({ range: "7d", asset })).toBe(`range=7d&asset=${asset}`);
+    expect(tradeQuery({ range: "7d", state: "settled", asset, cursor: "next-page", limit: 50 }))
+      .toBe(`range=7d&limit=50&state=settled&asset=${asset}&cursor=next-page`);
+  }
 });
 
 test("win rate reads as missing, not zero, before anything settles", () => {
