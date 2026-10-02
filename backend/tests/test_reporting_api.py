@@ -213,6 +213,60 @@ async def test_owner_own_personal_pnl_excludes_other_users(api):
     assert (await api.client.get("/api/me/pnl", params={"range": "5y"})).status_code == 400
 
 
+async def test_personal_asset_filter_matches_totals_and_paginated_chart_trades(api):
+    runtime = api.db.runtime
+    legacy = await settled_run(runtime, api.brother)
+    btc_loss = await settled_run(runtime, api.brother, asset="BTC", exit_price="1500")
+    eth_win = await settled_run(runtime, api.brother, asset="ETH")
+    eth_loss = await settled_run(runtime, api.brother, asset="ETH", exit_price="2000")
+    removed = await settled_run(runtime, api.brother, asset="ETH")
+    await runtime.update("strategies", {}, {"id": f"eq.{removed}"}, remove=True)
+    await settled_run(runtime, api.owner, asset="ETH")
+    api.current["id"] = api.brother
+
+    for asset, ids, net in (
+        (None, {legacy, btc_loss, eth_win, eth_loss}, "-1.5"),
+        ("BTC", {legacy, btc_loss}, "-0.3"),
+        ("ETH", {eth_win, eth_loss}, "-1.2"),
+    ):
+        params = {"range": "30d"}
+        if asset:
+            params["asset"] = asset
+        response = await api.client.get("/api/me/pnl", params=params)
+        assert response.status_code == 200
+        summary = response.json()["summary"]
+        assert Decimal(summary["netRealizedPnl"]) == Decimal(net)
+        assert summary["wins"] == summary["losses"] == len(ids) // 2
+        assert summary["settledRuns"] == summary["totalRuns"] == len(ids)
+        assert Decimal(summary["grossGains"]) + Decimal(summary["grossLosses"]) == Decimal(net)
+        assert Decimal(summary["exchangeFees"]) == Decimal("0.2") * len(ids)
+        assert summary["winRate"] == 0.5
+
+        items = []
+        query = {**params, "state": "settled", "limit": 1}
+        while True:
+            page = await api.client.get("/api/me/trades", params=query)
+            assert page.status_code == 200
+            body = page.json()
+            items.extend(body["items"])
+            if not body["nextCursor"]:
+                break
+            query["cursor"] = body["nextCursor"]
+        assert {item["runId"] for item in items} == ids
+        assert sum(Decimal(item["realizedPnl"]) for item in items) == Decimal(net)
+
+
+async def test_personal_asset_filter_rejects_unknown_assets_and_handles_no_matches(api):
+    await settled_run(api.db.runtime, api.owner, asset="BTC")
+    summary = (await api.client.get("/api/me/pnl", params={"asset": "ETH"})).json()["summary"]
+    assert summary["settledRuns"] == summary["totalRuns"] == 0
+    assert Decimal(summary["netRealizedPnl"]) == 0 and summary["winRate"] is None
+    trades = (await api.client.get("/api/me/trades", params={"asset": "ETH"})).json()
+    assert trades["items"] == [] and trades["nextCursor"] is None
+    for path in ("/api/me/pnl", "/api/me/trades"):
+        assert (await api.client.get(path, params={"asset": "SOL"})).status_code == 400
+
+
 async def test_capital_shows_live_unavailable_and_recorded_values_separately(api):
     run_id = await settled_run(api.db.runtime, api.brother)
     owner = (await api.client.get(f"/api/owner/users/{api.owner}")).json()

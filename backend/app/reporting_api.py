@@ -25,7 +25,7 @@ from .capital import capital_budget, maximum_concurrent_strategies
 from .database import Database
 from .errors import AppError
 from .models import CapitalSettingsUpdate
-from .owner_ledger import DeletedFilter, OwnerLedger
+from .owner_ledger import AssetFilter, DeletedFilter, OwnerLedger
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reporting"])
@@ -155,9 +155,11 @@ async def _history(ledger: OwnerLedger) -> dict[str, Any]:
 
 
 @router.get("/api/me/pnl")
-async def my_pnl(request: Request, user: RequiredUser, range_key: RangeQuery = "all") -> dict[str, Any]:
+async def my_pnl(
+    request: Request, user: RequiredUser, range_key: RangeQuery = "all", asset: AssetFilter | None = None
+) -> dict[str, Any]:
     ledger = _ledger(request)
-    summary = await ledger.summary(str(user["id"]), deleted="exclude", since=_since(range_key))
+    summary = await ledger.summary(str(user["id"]), deleted="exclude", since=_since(range_key), asset=asset)
     return {
         "success": True,
         "scope": "personal",
@@ -176,9 +178,11 @@ async def my_trades(
     state: StateFilter | None = None,
     cursor: str | None = None,
     limit: PageLimit = 25,
+    asset: AssetFilter | None = None,
 ) -> dict[str, Any]:
     page = await _ledger(request).trades(
-        str(user["id"]), deleted="exclude", since=_since(range_key), state=state, cursor=cursor, limit=limit
+        str(user["id"]), deleted="exclude", since=_since(range_key), state=state, cursor=cursor,
+        limit=limit, asset=asset
     )
     return {"success": True, "items": [trade_item(row) for row in page["items"]], "nextCursor": page["nextCursor"]}
 

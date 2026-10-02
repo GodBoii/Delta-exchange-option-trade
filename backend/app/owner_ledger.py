@@ -27,6 +27,7 @@ LEDGER_VERSION = 1
 CAPTURE_LOCK_SPACE = 47
 LIVE_WALLET_INTERVAL = "15 minutes"
 DeletedFilter = Literal["include", "exclude", "only"]
+AssetFilter = Literal["BTC", "ETH"]
 LIST_COLUMNS = """run_id,strategy_name,asset,status,accounting_state,exclusion_reason,created_at,
     entry_at,exit_at,entry_executed_at,exit_executed_at,activity_at,realized_pnl,gross_pnl,exchange_fees,
     capital_budget,wallet_total_at_entry,wallet_available_at_entry,deleted_by_user_at,last_captured_at"""
@@ -322,7 +323,7 @@ class OwnerLedger:
             await self.backfill()
 
     async def summary(
-        self, user_id: str, *, deleted: DeletedFilter, since: datetime | None
+        self, user_id: str, *, deleted: DeletedFilter, since: datetime | None, asset: AssetFilter | None = None
     ) -> dict[str, Any]:
         """Totals over ``settled`` runs plus a count of every other accounting state."""
         state_counts = ",".join(
@@ -345,8 +346,9 @@ class OwnerLedger:
                     from owner_reporting.trade_ledger
                    where owner_user_id=%s
                      and (%s = 'include' or (%s = 'exclude') = (deleted_by_user_at is null))
-                     and (%s::timestamptz is null or activity_at >= %s)""",
-                (user_id, deleted, deleted, since, since),
+                     and (%s::timestamptz is null or activity_at >= %s)
+                     and (%s::text is null or coalesce(asset, 'BTC') = %s)""",
+                (user_id, deleted, deleted, since, since, asset, asset),
             )
             totals = await cursor.fetchone()
         settled = int(totals["settled"])
@@ -376,6 +378,7 @@ class OwnerLedger:
         state: str | None,
         cursor: str | None,
         limit: int,
+        asset: AssetFilter | None = None,
     ) -> dict[str, Any]:
         after = decode_cursor(cursor)
         after_time, after_id = after if after else (None, None)
@@ -386,9 +389,11 @@ class OwnerLedger:
                      and (%s = 'include' or (%s = 'exclude') = (deleted_by_user_at is null))
                      and (%s::timestamptz is null or activity_at >= %s)
                      and (%s::text is null or accounting_state = %s)
+                     and (%s::text is null or coalesce(asset, 'BTC') = %s)
                      and (%s::timestamptz is null or (activity_at, run_id) < (%s, %s))
                    order by activity_at desc, run_id desc limit %s""",
-                (user_id, deleted, deleted, since, since, state, state, after_time, after_time, after_id, limit + 1),
+                (user_id, deleted, deleted, since, since, state, state, asset, asset,
+                 after_time, after_time, after_id, limit + 1),
             )
             rows = await query.fetchall()
         page = rows[:limit]

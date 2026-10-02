@@ -34,12 +34,14 @@ async def runtime():
         yield LocalRuntimeStore(pool)
 
 
-async def settled_run(runtime: LocalRuntimeStore, user_id: str, *, exit_price: str = "400", when=None) -> str:
+async def settled_run(
+    runtime: LocalRuntimeStore, user_id: str, *, exit_price: str = "400", when=None, asset: str | None = None
+) -> str:
     """A completed run: sell 1 lot at 1000, buy back at ``exit_price``, 0.1 fee per order."""
     run_id = str(uuid4())
     entered = (when or datetime.now(UTC)) - timedelta(hours=2)
     await runtime.write("strategies", {
-        "id": run_id, "user_id": user_id, "name": "Short call", "status": "scheduled",
+        "id": run_id, "user_id": user_id, "name": "Short call", "status": "scheduled", "asset": asset,
         "entry_at": entered.isoformat(), "exit_at": (entered + timedelta(hours=1)).isoformat(),
     })
     await runtime.update("strategies", {
@@ -52,7 +54,7 @@ async def settled_run(runtime: LocalRuntimeStore, user_id: str, *, exit_price: s
         await runtime.write("execution_orders", {
             "execution_id": execution["id"], "client_order_id": f"t_{uuid4().hex[:20]}", "side": side,
             "size": 1, "filled_size": "1", "average_fill_price": price, "contract_value": "0.001",
-            "commission": "0.1", "state": "closed", "product_symbol": "C-BTC-1", "product_id": 1,
+            "commission": "0.1", "state": "closed", "product_symbol": f"C-{asset or 'BTC'}-1", "product_id": 1,
             "response_json": {"raw": "exchange body"},
         })
     exited = (entered + timedelta(hours=1)).isoformat()
