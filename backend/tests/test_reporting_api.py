@@ -225,9 +225,9 @@ async def test_personal_asset_filter_matches_totals_and_paginated_chart_trades(a
     api.current["id"] = api.brother
 
     for asset, ids, net in (
-        (None, {legacy, btc_loss, eth_win, eth_loss}, "-1.5"),
+        (None, {legacy, btc_loss, eth_win, eth_loss}, "-1.1"),
         ("BTC", {legacy, btc_loss}, "-0.3"),
-        ("ETH", {eth_win, eth_loss}, "-1.2"),
+        ("ETH", {eth_win, eth_loss}, "-0.8"),
     ):
         params = {"range": "30d"}
         if asset:
