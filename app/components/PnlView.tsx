@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw } from "@/app/components/icons";
 import { requestJson } from "@/lib/api";
 import { errorMessage, formatTimestamp, relativeTime } from "@/lib/format";
-import { runStub, tradeQuery } from "@/lib/reporting";
+import { REPORT_ASSET_OPTIONS, pnlQuery, runStub, tradeQuery, type ReportAsset } from "@/lib/reporting";
 import type { PnlResponse, ReportRange, TradeItem } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
 import PnlCharts from "@/app/components/PnlCharts";
@@ -12,7 +12,7 @@ import {
   PnlTiles, RangeControl, StateSelect, TradeTable, useTradePages, type StateFilter
 } from "@/app/components/TradeReport";
 import {
-  IconSwap, InlineMessage, Panel, PanelHeader, SectionHeading, TileSkeleton
+  IconSwap, InlineMessage, Panel, PanelHeader, SectionHeading, Segmented, TileSkeleton
 } from "@/app/components/ui";
 
 type SummaryState =
@@ -28,18 +28,19 @@ type SummaryState =
  */
 export default function PnlView() {
   const [range, setRange] = useState<ReportRange>("30d");
+  const [asset, setAsset] = useState<ReportAsset>("all");
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [summary, setSummary] = useState<SummaryState>({ kind: "loading" });
   const [inspecting, setInspecting] = useState<TradeItem | null>(null);
   const [chartsToken, setChartsToken] = useState(0);
   const generation = useRef(0);
-  const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, state: stateFilter })}`);
+  const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, asset, state: stateFilter })}`);
 
-  const loadSummary = useCallback(async () => {
+  const loadSummary = useCallback(async (refresh = false) => {
     const current = ++generation.current;
-    setSummary(previous => previous.kind === "ready" ? { ...previous, refresh: "loading" } : { kind: "loading" });
+    setSummary(previous => refresh && previous.kind === "ready" ? { ...previous, refresh: "loading" } : { kind: "loading" });
     try {
-      const data = await requestJson<PnlResponse>(`/api/me/pnl?range=${range}`);
+      const data = await requestJson<PnlResponse>(`/api/me/pnl?${pnlQuery({ range, asset })}`);
       if (current === generation.current) setSummary({ kind: "ready", data, refresh: "idle" });
     } catch (error) {
       if (current !== generation.current) return;
@@ -48,14 +49,14 @@ export default function PnlView() {
         ? { ...previous, refresh: "failed" }
         : { kind: "error", message: errorMessage(error) });
     }
-  }, [range]);
+  }, [range, asset]);
 
   useEffect(() => { void loadSummary(); }, [loadSummary]);
 
   const refreshing = summary.kind === "ready" && summary.refresh === "loading";
 
   function refresh() {
-    void loadSummary();
+    void loadSummary(true);
     void trades.reload();
     setChartsToken(token => token + 1);
   }
@@ -73,7 +74,18 @@ export default function PnlView() {
         }
       />
 
-      <RangeControl value={range} onChange={setRange} />
+      <div className="report-filters">
+        <RangeControl value={range} onChange={setRange} />
+        <Segmented
+          label="Asset"
+          value={asset}
+          options={REPORT_ASSET_OPTIONS.map(option => ({ ...option }))}
+          onChange={next => {
+            const match = REPORT_ASSET_OPTIONS.find(option => option.value === next);
+            if (match) setAsset(match.value);
+          }}
+        />
+      </div>
 
       {summary.kind === "ready" && !summary.data.historyComplete && (
         <p className="callout tone-warning" role="status">
@@ -111,7 +123,7 @@ export default function PnlView() {
         )}
       </Panel>
 
-      <PnlCharts range={range} refreshToken={chartsToken} />
+      <PnlCharts key={`${range}:${asset}`} range={range} asset={asset} refreshToken={chartsToken} />
 
       <Panel className="report-panel">
         <PanelHeader title="Software trades" meta="Newest first. Open a trade to see its fills and settlement." />
@@ -123,7 +135,9 @@ export default function PnlView() {
           onInspect={setInspecting}
           onRetry={() => void trades.reload()}
           onLoadMore={() => void trades.loadMore()}
-          emptyText="Runs this software places for you will appear here with their results."
+          emptyText={asset === "all"
+            ? "Runs this software places for you will appear here with their results."
+            : `No ${asset} runs match this period and accounting state.`}
         />
       </Panel>
 

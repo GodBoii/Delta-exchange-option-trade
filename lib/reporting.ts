@@ -1,5 +1,5 @@
 import type {
-  AccountingState, CapitalObservation, LiveWallet, ReportRange, StrategyRun, TradeItem
+  AccountingState, AgentAsset, CapitalObservation, LiveWallet, ReportRange, StrategyRun, TradeItem
 } from "@/lib/app-types";
 
 /** P&L time filters. Values match the backend's `range` parameter. */
@@ -11,6 +11,20 @@ export const RANGE_OPTIONS: readonly { value: ReportRange; label: string }[] = [
   { value: "1y", label: "1Y" },
   { value: "all", label: "All" }
 ];
+
+export type ReportAsset = AgentAsset | "all";
+
+export const REPORT_ASSET_OPTIONS: readonly { value: ReportAsset; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "BTC", label: "BTC" },
+  { value: "ETH", label: "ETH" }
+];
+
+export function pnlQuery(params: { range: ReportRange; asset: ReportAsset }): string {
+  const query = new URLSearchParams({ range: params.range });
+  if (params.asset !== "all") query.set("asset", params.asset);
+  return query.toString();
+}
 
 export const STATE_LABELS: Record<AccountingState, string> = {
   settled: "Settled",
@@ -54,12 +68,14 @@ export function winRateText(rate: number | null): string {
 export function tradeQuery(params: {
   range: ReportRange;
   state: AccountingState | "all";
+  asset?: ReportAsset;
   cursor?: string | null;
   deleted?: "include" | "exclude" | "only";
   limit?: number;
 }): string {
   const query = new URLSearchParams({ range: params.range, limit: String(params.limit ?? 25) });
   if (params.state !== "all") query.set("state", params.state);
+  if (params.asset && params.asset !== "all") query.set("asset", params.asset);
   if (params.deleted) query.set("deleted", params.deleted);
   if (params.cursor) query.set("cursor", params.cursor);
   return query.toString();
