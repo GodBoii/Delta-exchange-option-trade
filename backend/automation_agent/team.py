@@ -75,7 +75,7 @@ def run_automation_team(
             session_id=f"news:{agent_run_id}",
             user_id=user_id,
             db=InMemoryDb(),
-            debug_mode=False,
+            debug_mode=True,
             asset=code,
             focus_query=asset.news_focus_query,
         )
@@ -274,7 +274,7 @@ def run_automation_team(
             # Charts live in ai.chart_images; sessions keep text, not base64 image copies.
             store_media=False,
             tool_call_limit=48,
-            debug_mode=False,
+            debug_mode=True,
             telemetry=False,
         )
         if curated:
@@ -456,7 +456,7 @@ def run_activation_recheck(
         timezone_identifier="Asia/Kolkata",
         tool_call_limit=16 if curated else 1,
         store_events=True,
-        debug_mode=False,
+        debug_mode=True,
         telemetry=False,
     )
     images = [

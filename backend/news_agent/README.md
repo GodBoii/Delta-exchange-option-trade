@@ -2,6 +2,8 @@
 
 The BTC and ETH automation runs each call `run_news_pipeline` for a news report. The news agent has no order or account tools. It chooses its own searches and article reads, then writes a Markdown report for the automation agent to consider.
 
+Both assets run in the shared `news-analyzer` service, whose container is named `bitcoin-agent`. News research, strategy decisions, and activation rechecks use Agno `debug_mode=True`. Compose also sets `NEWS_LOG_LEVEL=DEBUG`. View detailed runs with `docker logs --timestamps --since 1h -f bitcoin-agent`; the analysis start message identifies the asset and run ID. `Binace` and `Binace-ETH` are market-data services and do not execute AI agents.
+
 ## Research flow
 
 1. `curate_public_sources` reads public official feeds, crypto publisher feeds, exchange and project announcements, economic calendars, GDELT discovery, and Polymarket event pages. It returns dated source cards and an error for each unavailable source. A missing source does not stop research.
