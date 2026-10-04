@@ -14,7 +14,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
 
     assert agent.model.id == "deepseek/deepseek-v4.1-flash"
     assert settings.automation_model_id == agent.model.id
-    assert agent.model.reasoning_effort == "high"
+    assert agent.model.reasoning_effort == "low"
     assert agent.model.supports_native_structured_outputs is False
     assert agent.model.max_tokens is None
     assert agent.model.max_completion_tokens is None

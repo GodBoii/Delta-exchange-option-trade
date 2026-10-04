@@ -22,7 +22,7 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRou
         id=settings.model_id,
         api_key=api_key,
         supports_native_structured_outputs=False,
-        reasoning_effort="high",
+        reasoning_effort="low",
         timeout=90,
         max_retries=0,
         max_tokens=None,
