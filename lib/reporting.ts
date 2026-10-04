@@ -14,6 +14,12 @@ export const RANGE_OPTIONS: readonly { value: ReportRange; label: string }[] = [
 
 export type ReportAsset = AgentAsset | "all";
 
+/** Older backends ignore unknown query parameters; never label their combined totals as one market. */
+export function verifyReportAsset(response: { asset?: ReportAsset }, requested: ReportAsset): void {
+  if (response.asset === requested || (requested === "all" && response.asset === undefined)) return;
+  throw new Error(`The server did not return ${requested === "all" ? "combined" : requested} results. Refresh after the backend is updated.`);
+}
+
 export const REPORT_ASSET_OPTIONS: readonly { value: ReportAsset; label: string }[] = [
   { value: "all", label: "All" },
   { value: "BTC", label: "BTC" },

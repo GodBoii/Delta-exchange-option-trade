@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  exclusionText, observationLabel, pnlQuery, runStub, tradeQuery, walletUnavailableText, winRateText
+  exclusionText, observationLabel, pnlQuery, runStub, tradeQuery, verifyReportAsset, walletUnavailableText, winRateText
 } from "../lib/reporting";
 import type { CapitalObservation, TradeItem } from "../lib/app-types";
 
@@ -27,6 +27,17 @@ test("P&L queries apply the same asset scope to totals and paginated trades", ()
     expect(tradeQuery({ range: "7d", state: "settled", asset, cursor: "next-page", limit: 50 }))
       .toBe(`range=7d&limit=50&state=settled&asset=${asset}&cursor=next-page`);
   }
+});
+
+test("a backend that ignores an asset filter cannot display combined data as BTC or ETH", () => {
+  expect(() => verifyReportAsset({}, "all")).not.toThrow();
+  for (const asset of ["all", "BTC", "ETH"] satisfies ("all" | "BTC" | "ETH")[]) {
+    expect(() => verifyReportAsset({ asset }, asset)).not.toThrow();
+  }
+  expect(() => verifyReportAsset({}, "BTC")).toThrow(/server did not return BTC/);
+  expect(() => verifyReportAsset({ asset: "all" }, "ETH")).toThrow(/server did not return ETH/);
+  expect(() => verifyReportAsset({ asset: "BTC" }, "ETH")).toThrow(/server did not return ETH/);
+  expect(() => verifyReportAsset({ asset: "ETH" }, "all")).toThrow(/combined/);
 });
 
 test("win rate reads as missing, not zero, before anything settles", () => {

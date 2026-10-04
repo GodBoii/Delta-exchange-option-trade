@@ -260,6 +260,7 @@ export type PnlResponse = {
   success: boolean;
   scope: "personal";
   range: ReportRange;
+  asset?: AgentAsset | "all";
   asOf: string;
   historyComplete: boolean;
   historyVerifiedAt: string | null;
@@ -290,7 +291,7 @@ export type TradeItem = {
   capturedAt: string;
 };
 
-export type TradePage = { success: boolean; items: TradeItem[]; nextCursor: string | null };
+export type TradePage = { success: boolean; asset?: AgentAsset | "all"; items: TradeItem[]; nextCursor: string | null };
 
 export type OwnerAccount = {
   initialized: boolean;

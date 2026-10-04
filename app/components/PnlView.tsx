@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw } from "@/app/components/icons";
 import { requestJson } from "@/lib/api";
 import { errorMessage, formatTimestamp, relativeTime } from "@/lib/format";
-import { REPORT_ASSET_OPTIONS, pnlQuery, runStub, tradeQuery, type ReportAsset } from "@/lib/reporting";
+import { REPORT_ASSET_OPTIONS, pnlQuery, runStub, tradeQuery, verifyReportAsset, type ReportAsset } from "@/lib/reporting";
 import type { PnlResponse, ReportRange, TradeItem } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
 import PnlCharts from "@/app/components/PnlCharts";
@@ -34,13 +34,14 @@ export default function PnlView() {
   const [inspecting, setInspecting] = useState<TradeItem | null>(null);
   const [chartsToken, setChartsToken] = useState(0);
   const generation = useRef(0);
-  const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, asset, state: stateFilter })}`);
+  const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, asset, state: stateFilter })}`, asset);
 
   const loadSummary = useCallback(async (refresh = false) => {
     const current = ++generation.current;
     setSummary(previous => refresh && previous.kind === "ready" ? { ...previous, refresh: "loading" } : { kind: "loading" });
     try {
       const data = await requestJson<PnlResponse>(`/api/me/pnl?${pnlQuery({ range, asset })}`);
+      verifyReportAsset(data, asset);
       if (current === generation.current) setSummary({ kind: "ready", data, refresh: "idle" });
     } catch (error) {
       if (current !== generation.current) return;

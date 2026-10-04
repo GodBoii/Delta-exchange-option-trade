@@ -5,7 +5,9 @@ import { Activity, AlertTriangle, RefreshCw } from "@/app/components/icons";
 import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { EM_DASH, errorMessage, formatDateTime, relativeTime, toNumber } from "@/lib/format";
-import { RANGE_OPTIONS, STATE_LABELS, STATE_TONES, exclusionText, winRateText } from "@/lib/reporting";
+import {
+  RANGE_OPTIONS, STATE_LABELS, STATE_TONES, exclusionText, verifyReportAsset, winRateText, type ReportAsset
+} from "@/lib/reporting";
 import type { AccountingState, PnlSummary, ReportRange, TradeItem, TradePage } from "@/lib/app-types";
 import {
   EmptyState, IconSwap, InlineMessage, Segmented, Select, StatusChip, TableSkeleton
@@ -112,7 +114,7 @@ type ListState =
  * Cursor-paged trade list. `path` must already include every filter; changing it
  * restarts from the first page. Older requests are ignored once a newer one starts.
  */
-export function useTradePages(path: string | null) {
+export function useTradePages(path: string | null, asset: ReportAsset = "all") {
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const generation = useRef(0);
 
@@ -122,13 +124,14 @@ export function useTradePages(path: string | null) {
     setState(previous => previous.kind === "ready" ? previous : { kind: "loading" });
     try {
       const page = await requestJson<TradePage>(path);
+      verifyReportAsset(page, asset);
       if (current === generation.current) {
         setState({ kind: "ready", items: page.items, nextCursor: page.nextCursor, more: "idle" });
       }
     } catch (error) {
       if (current === generation.current) setState({ kind: "error", message: errorMessage(error) });
     }
-  }, [path]);
+  }, [path, asset]);
 
   useEffect(() => {
     setState({ kind: "loading" });
@@ -142,6 +145,7 @@ export function useTradePages(path: string | null) {
     setState({ ...state, more: "loading" });
     try {
       const page = await requestJson<TradePage>(`${path}&cursor=${encodeURIComponent(cursor)}`);
+      verifyReportAsset(page, asset);
       if (current !== generation.current) return;
       setState(previous => previous.kind === "ready"
         ? { kind: "ready", items: [...previous.items, ...page.items], nextCursor: page.nextCursor, more: "idle" }
@@ -149,7 +153,7 @@ export function useTradePages(path: string | null) {
     } catch {
       if (current === generation.current) setState(previous => previous.kind === "ready" ? { ...previous, more: "error" } : previous);
     }
-  }, [path, state]);
+  }, [path, asset, state]);
 
   return { state, reload: load, loadMore };
 }

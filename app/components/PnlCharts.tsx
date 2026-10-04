@@ -8,7 +8,7 @@ import { BarChart3, RefreshCw, TrendingUp } from "@/app/components/icons";
 import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
-import { tradeQuery, type ReportAsset } from "@/lib/reporting";
+import { tradeQuery, verifyReportAsset, type ReportAsset } from "@/lib/reporting";
 import {
   bucketSizeFor, bucketize, niceTicks, settledSeries, type BucketSize, type PnlBucket, type PnlPoint
 } from "@/lib/pnl-series";
@@ -47,6 +47,7 @@ function useSettledTrades(range: ReportRange, asset: ReportAsset, refreshToken: 
         const query = tradeQuery({ range, asset, state: "settled", limit: PAGE_SIZE, cursor });
         const page: TradePage = await requestJson<TradePage>(`/api/me/trades?${query}`);
         if (current !== generation.current) return;
+        verifyReportAsset(page, asset);
         trades.push(...page.items);
         cursor = page.nextCursor;
         pages += 1;

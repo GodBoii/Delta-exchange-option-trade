@@ -164,6 +164,7 @@ async def my_pnl(
         "success": True,
         "scope": "personal",
         "range": range_key,
+        "asset": asset or "all",
         "asOf": datetime.now(UTC).isoformat(),
         **await _history(ledger),
         "summary": summary,
@@ -184,7 +185,10 @@ async def my_trades(
         str(user["id"]), deleted="exclude", since=_since(range_key), state=state, cursor=cursor,
         limit=limit, asset=asset
     )
-    return {"success": True, "items": [trade_item(row) for row in page["items"]], "nextCursor": page["nextCursor"]}
+    return {
+        "success": True, "asset": asset or "all",
+        "items": [trade_item(row) for row in page["items"]], "nextCursor": page["nextCursor"],
+    }
 
 
 def _profile_fields(profile: dict[str, Any], owner_id: str) -> dict[str, Any]:
