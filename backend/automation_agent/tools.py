@@ -22,7 +22,7 @@ from app.automation_schedule import (
     utc_text,
 )
 from app.capital import percentage_concurrency_limit
-from app.errors import AppError
+from app.errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE, AppError
 from app.exit_schedule import ExitChoice, resolve_exit_schedule
 from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
@@ -259,13 +259,29 @@ class AutomationStrategyTools(Toolkit):
                     watch.raise_for_status()
             self._previews[key] = (definition, schedule)
             return dumps({"valid": True, "schedule": schedule, **result})
-        except (ValueError, AppError, httpx.HTTPError) as error:
+        except httpx.HTTPError as error:
+            status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+            path = error.request.url.path if error.request is not None else "unknown"
+            logger.warning(
+                "Strategy preview service failed run_id=%s asset=%s path=%s status=%s",
+                self.agent_run_id, self.asset, path, status,
+            )
+            authentication_failed = status in {401, 403}
+            return json.dumps({
+                "valid": False,
+                "errorCode": (
+                    MARKET_AUTH_ERROR_CODE if authentication_failed else "market_service_unavailable"
+                ),
+                "reason": (
+                    MARKET_AUTH_ERROR_MESSAGE
+                    if authentication_failed else "Selected public option evidence is unavailable"
+                ),
+            })
+        except (ValueError, AppError) as error:
             return json.dumps(
                 {
                     "valid": False,
-                    "reason": str(error)
-                    if not isinstance(error, httpx.HTTPError)
-                    else "Selected public option evidence is unavailable",
+                    "reason": str(error),
                 }
             )
 

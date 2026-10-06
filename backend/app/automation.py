@@ -19,7 +19,7 @@ from .chart_images import chart_link
 from .database import Database
 from .decision_report import committed_action_text, replace_model_decision
 from .engine import TradingEngine, iso_now
-from .errors import AppError
+from .errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE, AppError
 from .shared_analysis import SHARED_USER_ID, history_filter
 from .shared_analysis import enabled as shared_enabled
 
@@ -47,6 +47,7 @@ NO_TRADE_SLOTS_MESSAGE = "No trade slots are available"
 PUBLIC_RUN_ERRORS = frozenset({
     ANALYSIS_FAILED_MESSAGE,
     NO_TRADE_SLOTS_MESSAGE,
+    MARKET_AUTH_ERROR_MESSAGE,
     "Final report unavailable",
     "Automation was turned off",
     "The analysis run could not be claimed",
@@ -371,6 +372,8 @@ async def execute_automation_run(
             logger.warning(
                 "Automation analyzer failed run_id=%s status=%s message=%s", run_id, response.status_code, message
             )
+            if isinstance(nested, dict) and nested.get("code") == MARKET_AUTH_ERROR_CODE:
+                raise AppError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE)
             raise AppError(502, ANALYSIS_FAILED_MESSAGE, "automation_agent_failed")
         outcome = str(payload.get("outcome") or "no_trade_for_current_window")
         report = payload.get("report")

@@ -1,5 +1,6 @@
 import asyncio
 import hmac
+import json
 import logging
 import os
 import sys
@@ -14,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.assets import DEFAULT_ASSET, Asset
 from app.decision_report import replace_model_decision
+from app.errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE
 from app.shared_analysis import SHARED_USER_ID
 from automation_agent.assets import asset_profile
 from automation_agent.team import run_activation_recheck, run_automation_team
@@ -164,6 +166,16 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
             user_id=body.userId,
             agent_run_id=body.agentRunId,
         )
+        if not state or not state.get("outcome"):
+            for call in result.tool_calls:
+                if call.get("name") != "preview_strategy":
+                    continue
+                try:
+                    preview = json.loads(call.get("result") or "{}")
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(preview, dict) and preview.get("errorCode") == MARKET_AUTH_ERROR_CODE:
+                    raise ServiceError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE)
         outcome = str(state.get("outcome") or "no_trade_for_current_window") if state else "no_trade_for_current_window"
         report = (
             result.report if body.trigger == "activation_recheck"
@@ -222,6 +234,8 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
             round((time.perf_counter() - started_at) * 1_000),
             exc_info=exc,
         )
+        if isinstance(exc, ServiceError):
+            raise
         raise ServiceError(
             502,
             "The automation analysis could not be completed. No strategy was activated.",
@@ -356,4 +370,6 @@ async def analyze_automation(body: AutomationAnalysisRequest, request: Request) 
     except TimeoutError as exc:
         raise ServiceError(504, str(exc), "automation_analysis_timeout") from exc
     except RuntimeError as exc:
+        if str(exc) == MARKET_AUTH_ERROR_MESSAGE:
+            raise ServiceError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE) from exc
         raise ServiceError(502, "Automation analysis could not be completed", "automation_agent_failed") from exc

@@ -5,7 +5,28 @@ import httpx
 import pytest
 
 from app import automation
-from app.errors import AppError
+from app.errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE, AppError
+
+
+@pytest.mark.asyncio
+async def test_service_auth_error_is_saved_and_visible_in_run_history(monkeypatch):
+    database = RunDatabase(datetime.now(UTC))
+    monkeypatch.setattr(automation, "build_account_context", AsyncMock(return_value={}))
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(
+        automation.httpx, "AsyncClient",
+        lambda **kwargs: client_type(transport=httpx.MockTransport(lambda _: httpx.Response(
+            503, json={"error": {"code": MARKET_AUTH_ERROR_CODE, "message": "untrusted service detail"}},
+        )), **kwargs),
+    )
+    with pytest.raises(AppError, match="Market service authentication failed"):
+        await automation.execute_automation_run(
+            db=database, engine=object(), user_id="user-1", run_id="run-1", session_id="session-1",
+            trigger="asia_session", reason="Review",
+        )
+    assert database.row["status"] == "failed"
+    assert database.row["error"] == MARKET_AUTH_ERROR_MESSAGE
+    assert automation.public_run_error(database.row["error"]) == MARKET_AUTH_ERROR_MESSAGE
 
 
 @pytest.fixture(autouse=True)
