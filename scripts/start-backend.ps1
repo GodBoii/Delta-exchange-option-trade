@@ -23,9 +23,11 @@ if (Test-Path -LiteralPath $envFile) {
 }
 
 $composeFile = Join-Path $projectRoot "docker-compose.yml"
-$backendIsRunning = (docker compose -f $composeFile ps --status running --services 2>$null) -contains "delta-exchange"
+$backendEnvFile = Join-Path $projectRoot "backend/.env"
+$composeArgs = @("--env-file", $envFile, "--env-file", $backendEnvFile, "-f", $composeFile)
+$backendIsRunning = (docker compose @composeArgs ps --status running --services 2>$null) -contains "delta-exchange"
 $currentBinding = if ($backendIsRunning) {
-    docker compose -f $composeFile port delta-exchange 8000 2>$null | Select-Object -First 1
+    docker compose @composeArgs port delta-exchange 8000 2>$null | Select-Object -First 1
 }
 else {
     $null
@@ -54,7 +56,7 @@ Push-Location $projectRoot
 try {
     # Recreate the service so containers retained across a Docker Desktop restart
     # cannot keep stale DNS resolver state.
-    docker compose up -d --build --force-recreate
+    docker compose @composeArgs up -d --build --force-recreate
     if ($LASTEXITCODE -ne 0) {
         throw "Docker Compose could not start the backend."
     }
@@ -78,7 +80,7 @@ try {
     }
 
     if (-not $healthy) {
-        docker compose logs --tail 50 delta-exchange
+        docker compose @composeArgs logs --tail 50 delta-exchange
         throw "The backend started but did not become healthy on port $backendPort."
     }
 
@@ -102,7 +104,7 @@ try {
     }
 
     if (-not $binanceHealthy) {
-        docker compose logs --tail 50 binace
+        docker compose @composeArgs logs --tail 50 binace
         throw "The Binace market-data service did not become healthy on port $binancePort."
     }
 

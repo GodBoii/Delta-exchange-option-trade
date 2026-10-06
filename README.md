@@ -96,12 +96,15 @@ a null phone number.
 
 ## Local Python backend with Docker
 
-The Compose service reads server credentials from the ignored root `.env.local` file.
+The Compose services read server credentials from the ignored root `.env.local` and `backend/.env` files.
+Pass both files with `--env-file` so Compose also resolves environment substitutions. The nonempty
+`ANALYSIS_SERVICE_SECRET` in `backend/.env` must match across the trading, analysis, and market services.
+Compose refuses to start without it. The market services receive only their explicitly listed settings.
 
 ```powershell
-docker compose up -d --build
-docker compose ps
-docker compose logs -f delta-exchange binace news-analyzer
+docker compose --env-file .env.local --env-file backend/.env up -d --build
+docker compose --env-file .env.local --env-file backend/.env ps
+docker compose --env-file .env.local --env-file backend/.env logs -f delta-exchange binace news-analyzer
 ```
 
 The Delta trading API is available at `http://localhost:8000`; the Binance Spot analysis API is available at `http://localhost:8001`. The private News Analyzer listens only inside the Compose network on port 8002.
@@ -163,7 +166,7 @@ If you prefer to choose the backend port yourself:
 
 ```powershell
 $env:BACKEND_PORT=8585
-docker compose up -d --build
+docker compose --env-file .env.local --env-file backend/.env up -d --build
 npm run dev
 ```
 
@@ -174,7 +177,7 @@ The scheduler is part of the Python application lifecycle. There is no separate 
 To stop it:
 
 ```powershell
-docker compose down
+docker compose --env-file .env.local --env-file backend/.env down
 ```
 
 ## Production deployment
@@ -216,12 +219,12 @@ Every application service waits for PostgreSQL to report healthy. The automation
 
 Agent reviews check trade capacity before starting. A 25% allocation allows four occupied strategy slots across BTC and ETH together. The check uses the current capital policy, reserved budgets across logins sharing the same Delta wallet, and the live available balance. Shared reviews require at least one enabled, connected account with capacity. Scheduled reviews, follow-ups and activation rechecks with no capacity are cancelled with `No trade slots are available`; manual requests return that message before creating a run. A wallet lookup failure leaves scheduled reviews pending under the existing lateness limit. Entry still checks and reserves capital atomically, and active trade monitoring and exits continue independently.
 
-After pulling code, use `docker compose up -d --build` to rebuild and apply the service configuration. Restarting or recreating the analyzer during an active analysis can still interrupt that run; readiness checks cannot preserve work inside a stopped process. Deploy between analyses. A disconnected analysis request is not automatically resubmitted because it may already have recorded a strategy or follow-up. The backend checks for a committed outcome before marking it failed.
+After pulling code, use `docker compose --env-file .env.local --env-file backend/.env up -d --build` to rebuild and apply the service configuration. Restarting or recreating the analyzer during an active analysis can still interrupt that run; readiness checks cannot preserve work inside a stopped process. Deploy between analyses. A disconnected analysis request is not automatically resubmitted because it may already have recorded a strategy or follow-up. The backend checks for a committed outcome before marking it failed.
 
 Copy `.cloudflared.env.example` to `.cloudflared.env` and set `TUNNEL_TOKEN` to the token for the remotely managed `tradecognition-backend` tunnel. Start the application and tunnel together:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d --build
+docker compose --env-file .env.local --env-file backend/.env -f docker-compose.yml -f docker-compose.tunnel.yml up -d --build
 ```
 
 Configure these published application routes in the Cloudflare tunnel dashboard. The service names resolve through the shared Compose network:
@@ -241,7 +244,7 @@ https://tradecognition.online
 https://www.tradecognition.online
 ```
 
-Run exactly one trading writer (`Delta-exchange`, one Uvicorn worker); it owns the scheduler and exchange orders. Read traffic scales out with `docker compose --profile read-replicas up -d`: readers use the read-only role, reject writes, and receive the same change notifications through PostgreSQL `LISTEN`. `Binace` only accesses public market endpoints. `news-analyzer` owns Agno and OpenRouter and never sees Delta credentials.
+Run exactly one trading writer (`Delta-exchange`, one Uvicorn worker); it owns the scheduler and exchange orders. Read traffic scales out with `docker compose --env-file .env.local --env-file backend/.env --profile read-replicas up -d`: readers use the read-only role, reject writes, and receive the same change notifications through PostgreSQL `LISTEN`. `Binace` only accesses public market endpoints. `news-analyzer` owns Agno and OpenRouter and never sees Delta credentials.
 
 Add the backend server's static public IP to the Delta API key allowlist. Vercel's IP is not used for Delta requests.
 
@@ -319,8 +322,8 @@ cd binance_backend
 Docker:
 
 ```powershell
-docker compose build
-docker compose up -d
+docker compose --env-file .env.local --env-file backend/.env build
+docker compose --env-file .env.local --env-file backend/.env up -d
 ```
 
 ## Security notes
