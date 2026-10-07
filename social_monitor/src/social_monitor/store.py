@@ -36,14 +36,18 @@ CREATE TABLE IF NOT EXISTS baselines (target TEXT PRIMARY KEY);
 
 
 class Store:
-    def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.connection = sqlite3.connect(path)
+    def __init__(self, path: Path, *, read_only: bool = False):
+        if not read_only:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.connection = (
+            sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) if read_only else sqlite3.connect(path)
+        )
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
-        self.connection.execute("PRAGMA journal_mode = WAL")
-        self.connection.executescript(SCHEMA)
-        path.chmod(0o600)
+        if not read_only:
+            self.connection.execute("PRAGMA journal_mode = WAL")
+            self.connection.executescript(SCHEMA)
+            path.chmod(0o600)
 
     def close(self) -> None:
         self.connection.close()
