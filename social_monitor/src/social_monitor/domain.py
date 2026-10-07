@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 HANDLE = re.compile(r"[A-Za-z0-9_]{1,15}\Z")
-CASHTAG = re.compile(r"(?<!\w)\$([A-Za-z][A-Za-z0-9_]{1,14})\b")
+CASHTAG = re.compile(r"(?<!\w)\$([A-Za-z][A-Za-z0-9_]{0,14})\b")
 EVM = re.compile(r"(?<![A-Za-z0-9])0x[0-9a-fA-F]{40}(?![A-Za-z0-9])")
 BASE58 = re.compile(r"(?<![A-Za-z0-9])[1-9A-HJ-NP-Za-km-z]{32,44}(?![A-Za-z0-9])")
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -30,6 +30,8 @@ class Post:
     quoted_id: str | None = None
     reposted_id: str | None = None
     media_urls: tuple[str, ...] = ()
+    quoted_text: str | None = None
+    reposted_text: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "Post":
@@ -54,6 +56,12 @@ class Post:
             not isinstance(url, str) or not url.startswith("https://") for url in media
         ):
             raise ValueError("media_urls must contain HTTPS URLs")
+        context = {}
+        for key, id_key in (("quoted_text", "quoted_id"), ("reposted_text", "reposted_id")):
+            value = data.get(key)
+            if value is not None and (not isinstance(value, str) or len(value) > 100_000 or ids[id_key] is None):
+                raise ValueError(f"invalid {key}")
+            context[key] = value
         return cls(
             id=data["id"],
             author_id=data["author_id"],
@@ -63,6 +71,7 @@ class Post:
             url=f"https://x.com/{data['author']}/status/{data['id']}",
             media_urls=tuple(media),
             **ids,
+            **context,
         )
 
     def to_dict(self) -> dict:
@@ -88,6 +97,9 @@ def make_alert(post: Post, observed_at: datetime, max_age: int) -> dict | None:
     if age < -60 or age > max_age:
         return None
     refs = references(post.text)
+    for context_id, text in ((post.quoted_id, post.quoted_text), (post.reposted_id, post.reposted_text)):
+        if text:
+            refs.extend({**ref, "source_post_id": context_id} for ref in references(text))
     return {
         "event": "post_observed",
         "post": post.to_dict(),

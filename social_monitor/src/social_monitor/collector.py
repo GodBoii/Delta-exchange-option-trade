@@ -48,6 +48,8 @@ def normalize(tweet) -> Post:
             "quoted_id": str(tweet.quotedTweet.id) if tweet.quotedTweet else None,
             "reposted_id": str(tweet.retweetedTweet.id) if tweet.retweetedTweet else None,
             "media_urls": media,
+            "quoted_text": tweet.quotedTweet.rawContent if tweet.quotedTweet else None,
+            "reposted_text": tweet.retweetedTweet.rawContent if tweet.retweetedTweet else None,
         }
     )
 

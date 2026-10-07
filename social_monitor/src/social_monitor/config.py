@@ -38,7 +38,10 @@ def load_config(path: Path) -> Config:
     if unknown := data.keys() - allowed:
         raise ValueError(f"unknown config options: {sorted(unknown)}")
     targets = []
-    for item in data.get("targets", []):
+    raw_targets = data.get("targets", [])
+    if not isinstance(raw_targets, list):
+        raise ValueError("targets must be a TOML array of tables")
+    for item in raw_targets:
         if not isinstance(item, dict) or item.keys() - set(Target.__dataclass_fields__):
             raise ValueError("invalid target options")
         if not all(isinstance(item.get(key), str) and item[key].strip() for key in ("name", "kind", "value")):

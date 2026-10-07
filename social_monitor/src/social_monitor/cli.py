@@ -4,10 +4,11 @@ import json
 import re
 import sqlite3
 import sys
+import warnings
 from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime
-from getpass import getpass
+from getpass import GetPassWarning, getpass
 from pathlib import Path
 
 from .collector import Collection, XCollector, add_session
@@ -84,7 +85,13 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("invalid local account name")
             if not sys.stdin.isatty():
                 raise ValueError("auth requires an interactive terminal with hidden input")
-            auth_token, ct0 = getpass("X auth_token (hidden): ").strip(), getpass("X ct0 (hidden): ").strip()
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", GetPassWarning)
+                try:
+                    auth_token = getpass("X auth_token (hidden): ").strip()
+                    ct0 = getpass("X ct0 (hidden): ").strip()
+                except GetPassWarning as error:
+                    raise ValueError("hidden input is unavailable in this terminal") from error
             if not all(re.fullmatch(r"[A-Za-z0-9_-]{16,512}", value) for value in (auth_token, ct0)):
                 raise ValueError("cookies must be 16-512 letters, digits, underscores or hyphens")
             with writer_lock(config.state_dir):

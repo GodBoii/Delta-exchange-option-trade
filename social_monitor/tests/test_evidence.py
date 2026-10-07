@@ -29,6 +29,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn({"kind": "cashtag", "value": "DOGE"}, result)
         self.assertFalse(make_alert(post(), NOW, 900)["token_identity_verified"])
         self.assertEqual(references("1" * 33), [])
+        self.assertEqual(references("$X"), [{"kind": "cashtag", "value": "X"}])
 
     def test_old_and_future_posts_do_not_alert(self):
         self.assertIsNone(make_alert(post(age=901), NOW, 900))
@@ -44,34 +45,32 @@ class EvidenceTests(unittest.TestCase):
 
     def test_deduplicates_across_targets_and_restarts(self):
         directory = self.enterContext(tempfile.TemporaryDirectory())
-        if directory:
-            path = Path(directory) / "monitor.sqlite"
-            for target in ("first", "second"):
-                store = Store(path)
-                store.complete_poll(target, NOW, NOW, [post()], {"123": make_alert(post(), NOW, 900)}, "ok")
-                store.close()
+        path = Path(directory) / "monitor.sqlite"
+        for target in ("first", "second"):
             store = Store(path)
-            self.addCleanup(store.close)
-            self.assertEqual(store.status()["posts"], 1)
-            events = []
-            self.assertEqual(store.deliver(events.append, NOW), 1)
-            self.assertEqual(store.deliver(events.append, NOW), 0)
-            self.assertEqual(events[0]["post"]["id"], "123")
+            store.complete_poll(target, NOW, NOW, [post()], {"123": make_alert(post(), NOW, 900)}, "ok")
+            store.close()
+        store = Store(path)
+        self.addCleanup(store.close)
+        self.assertEqual(store.status()["posts"], 1)
+        events = []
+        self.assertEqual(store.deliver(events.append, NOW), 1)
+        self.assertEqual(store.deliver(events.append, NOW), 0)
+        self.assertEqual(events[0]["post"]["id"], "123")
 
     def test_failed_delivery_remains_pending_and_failed_poll_is_not_baseline(self):
         directory = self.enterContext(tempfile.TemporaryDirectory())
-        if directory:
-            store = Store(Path(directory) / "monitor.sqlite")
-            self.addCleanup(store.close)
-            store.complete_poll("first", NOW, NOW, [post()], {"123": make_alert(post(), NOW, 900)}, "partial")
-            self.assertFalse(store.has_baseline("first"))
+        store = Store(Path(directory) / "monitor.sqlite")
+        self.addCleanup(store.close)
+        store.complete_poll("first", NOW, NOW, [post()], {"123": make_alert(post(), NOW, 900)}, "partial")
+        self.assertFalse(store.has_baseline("first"))
 
-            def broken_sink(event):
-                raise OSError("disconnected")
+        def broken_sink(event):
+            raise OSError("disconnected")
 
-            with self.assertRaises(OSError):
-                store.deliver(broken_sink, NOW)
-            self.assertEqual(store.status()["pending_alerts"], 1)
+        with self.assertRaises(OSError):
+            store.deliver(broken_sink, NOW)
+        self.assertEqual(store.status()["pending_alerts"], 1)
 
     def test_config_paths_and_invalid_options(self):
         with tempfile.TemporaryDirectory() as directory:

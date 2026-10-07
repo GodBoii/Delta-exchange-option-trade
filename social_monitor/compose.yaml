@@ -1,0 +1,24 @@
+name: delta-social-monitor
+services:
+  monitor:
+    build: .
+    init: true
+    restart: "no"
+    read_only: true
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - ./config.example.toml:/monitor/config.toml:ro
+      - monitor-state:/monitor/state
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  monitor-state:
