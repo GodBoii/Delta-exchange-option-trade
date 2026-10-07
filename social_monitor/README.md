@@ -72,7 +72,7 @@ docker compose -f compose.yaml run --rm -it monitor auth
 docker compose -f compose.yaml run --rm monitor run --once
 docker compose -f compose.yaml up -d
 docker compose -f compose.yaml logs -f monitor
-docker compose -f compose.yaml exec monitor status
+docker compose -f compose.yaml exec monitor python -m social_monitor --config /monitor/config.toml status
 docker compose -f compose.yaml down
 ```
 
@@ -99,6 +99,6 @@ docker compose -f compose.yaml down
 
 Tests exercise real SQLite persistence, deduplication, baseline behavior, failed delivery recovery, timeout/cancellation, credential-safe failures, process locking, configuration validation, replay/export and the installed collector's missing-session behavior. Authenticated collection must be verified after you supply your own session.
 
-The Windows test suite and replay were verified during implementation. Compose configuration validation passed. The Docker image was not built or run because the local Docker engine was unavailable. No deployment or restart commands were run for the existing services.
+The Windows test suite and replay were verified during implementation. On 8 October 2026, the standalone Docker image was built on Ubuntu and live collection was verified for both configured accounts using a dedicated authorized session. The monitor runs in its own Compose project and volume. No deployment or restart commands were run for the existing trading services.
 
 Upstream collection library: [Twscrape](https://github.com/vladkens/twscrape).
