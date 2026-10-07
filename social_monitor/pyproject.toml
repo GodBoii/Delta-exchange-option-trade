@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "delta-social-monitor"
+version = "0.1.0"
+description = "Independent, read-only X monitoring with local evidence storage"
+requires-python = ">=3.11"
+dependencies = ["twscrape==0.20.1"]
+
+[project.optional-dependencies]
+dev = ["ruff==0.14.0"]
+
+[project.scripts]
+social-monitor = "social_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

@@ -1,0 +1,8 @@
+.venv/
+state/
+*.jsonl
+!examples/*.jsonl
+config.local.toml
+*.egg-info/
+build/
+dist/
