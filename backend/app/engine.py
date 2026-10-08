@@ -918,7 +918,9 @@ class TradingEngine:
             wallet = await self.usd_capital(client)
             available, total_balance = wallet
             if available <= 0 or total_balance <= 0:
-                raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
+                raise AppError(
+                    409, "No available Delta balance can fund this strategy", "automation_balance_unavailable"
+                )
             maximum_slots = maximum_concurrent_strategies(
                 total_balance,
                 policy.allocation_mode,

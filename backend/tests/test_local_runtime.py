@@ -5,6 +5,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -38,6 +39,61 @@ async def runtime():
     async with AsyncConnectionPool(os.environ["TEST_LOCAL_DATABASE_URL"], open=False) as pool:
         await pool.open()
         yield LocalRuntimeStore(pool)
+
+
+@pytest.mark.asyncio
+async def test_unplaced_migration_preserves_any_execution_or_reservation(runtime: LocalRuntimeStore):
+    owner = str(uuid4())
+    ids = {kind: str(uuid4()) for kind in ("unplaced", "entered", "execution", "intent", "claim", "reservation")}
+    for kind, strategy_id in ids.items():
+        await runtime.write("strategies", {
+            "id": strategy_id, "user_id": owner, "status": "attention",
+            "last_error": "Entry not placed: Account capital is already reserved",
+            "entry_execution_at": datetime.now(UTC).isoformat() if kind == "entered" else None,
+        })
+    await runtime.write("executions", {
+        "id": str(uuid4()), "strategy_id": ids["execution"], "user_id": owner, "status": "running", "kind": "entry",
+    })
+    await runtime.write("strategy_capital_slots", {
+        "id": str(uuid4()), "strategy_id": ids["reservation"], "user_id": owner,
+        "slot_number": 1, "status": "reserved",
+    })
+    async with runtime.pool.connection() as connection:
+        await connection.execute(
+            "insert into trade.order_intents (account_id,client_order_id,payload,context) values (%s,%s,%s,%s)",
+            (owner, uuid4().hex, "{}", Jsonb({"strategyId": ids["intent"]})),
+        )
+        await connection.execute(
+            "insert into trade.product_claims (account_id,product_id,strategy_id) values (%s,%s,%s)",
+            (owner, "101", ids["claim"]),
+        )
+        migration = Path(__file__).resolve().parents[1] / "db" / "010_entry_outcomes.sql"
+        await connection.execute(migration.read_text())
+    for kind, strategy_id in ids.items():
+        row = (await runtime.select("strategies", {"id": f"eq.{strategy_id}"}))[0]
+        assert row["status"] == ("skipped" if kind == "unplaced" else "attention")
+        assert row["last_error"] == "Entry not placed: Account capital is already reserved"
+        if kind == "unplaced":
+            assert row["entry_outcome"]["category"] == "capital_full"
+            assert row["entry_outcome"]["message"] == "Account capital is already reserved"
+
+
+@pytest.mark.asyncio
+async def test_skipped_entry_releases_its_slot_and_has_no_attention_accounting(runtime: LocalRuntimeStore):
+    owner, strategy_id = str(uuid4()), str(uuid4())
+    await runtime.write("strategies", {"id": strategy_id, "user_id": owner, "status": "scheduled"})
+    await runtime.write("strategy_capital_slots", {
+        "id": str(uuid4()), "strategy_id": strategy_id, "user_id": owner, "slot_number": 1, "status": "reserved",
+    })
+    await runtime.update("strategies", {"status": "skipped"}, {"id": f"eq.{strategy_id}"})
+    slot = (await runtime.select("strategy_capital_slots", {"user_id": f"eq.{owner}"}))[0]
+    assert slot["status"] == "available" and slot["strategy_id"] is None
+    async with runtime.pool.connection() as connection:
+        row = await (await connection.execute(
+            "select accounting_state,exclusion_reason from owner_reporting.trade_ledger where run_id=%s",
+            (strategy_id,),
+        )).fetchone()
+    assert row == ("cancelled", "entry_not_placed")
 
 
 @pytest.mark.asyncio
