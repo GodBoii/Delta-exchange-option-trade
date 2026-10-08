@@ -56,6 +56,13 @@ def test_preview_requires_authenticated_watch_and_preserves_failure_reason(monke
     assert len(requests) == 3
     assert result["valid"] is (status == 200)
     assert bool(tool._previews) is (status == 200)
+    if status == 200:
+        scale = result["selectedLegMoveScales"]
+        assert scale["expiryUtc"] == result["schedule"]["contractExpiryUtc"]
+        assert scale["hours"] == pytest.approx(result["schedule"]["durationMinutes"] / 60)
+        leg, = scale["legs"]
+        assert leg["symbol"] == raw["symbol"]
+        assert leg["impliedScaledMovePercent"] == pytest.approx(40 * (scale["hours"] / 8760) ** 0.5)
     if status in {401, 403}:
         assert result["errorCode"] == MARKET_AUTH_ERROR_CODE
         assert result["reason"] == MARKET_AUTH_ERROR_MESSAGE

@@ -77,7 +77,7 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         team,
         "MarketIntelligenceTools",
         lambda **_: SimpleNamespace(
-            collect_market_packet=lambda: {"source": "Binance Spot"},
+            collect_market_packet=lambda: {"source": "Binance Spot", "capturedAt": 1791417600000},
             collect_delta_option_context=lambda: {},
         ),
     )
