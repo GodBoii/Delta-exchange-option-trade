@@ -29,7 +29,7 @@ const FILTERS: { id: FilterId; label: string; match: (status: string) => boolean
   { id: "pending", label: "Scheduled", match: status => ["draft", "scheduled"].includes(status) },
   { id: "live", label: "Live", match: status => ["active", "executing_entry", "executing_exit"].includes(status) },
   { id: "attention", label: "Attention", match: status => status === "attention" },
-  { id: "closed", label: "Closed", match: status => ["completed", "cancelled", "expired"].includes(status) }
+  { id: "closed", label: "Closed", match: status => ["completed", "cancelled", "expired", "skipped"].includes(status) }
 ];
 
 const ACTION_COPY: Record<ActionKind, {
@@ -64,7 +64,7 @@ function statusTone(status: string): StatusTone {
 
 /** Mirrors the backend rule: a run that may still hold a position cannot be erased. */
 function canDeleteRun(run: StrategyRun) {
-  if (["draft", "scheduled", "cancelled", "completed"].includes(run.status)) return true;
+  if (["draft", "scheduled", "cancelled", "completed", "skipped"].includes(run.status)) return true;
   return run.status === "attention"
     && (!run.entryExecutedAt || Boolean(run.exitExecutedAt) || run.exposureStatus === "flat");
 }

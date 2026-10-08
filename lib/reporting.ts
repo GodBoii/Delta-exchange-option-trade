@@ -63,6 +63,8 @@ export function exclusionText(reason: string | null): string | null {
     case "realized_pnl_missing": return "No realized P&L was recorded.";
     case "no_fills": return "No orders filled.";
     case "cancelled_after_fill": return "Cancelled after a fill; accounting is incomplete.";
+    case "entry_not_placed": return "Entry was not placed. See the run for its recorded reason.";
+    case "skipped_after_fill": return "A skipped run has recorded fills; accounting needs review.";
     default: return "Accounting is incomplete.";
   }
 }
