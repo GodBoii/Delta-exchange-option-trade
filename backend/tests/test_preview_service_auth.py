@@ -15,6 +15,12 @@ from news_analyzer import main
 @pytest.mark.parametrize("status", [200, 401, 403, 503])
 def test_preview_requires_authenticated_watch_and_preserves_failure_reason(monkeypatch, status):
     raw, definition, _ = fixture()
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(raw["observedAt"] / 1000, tz or UTC)
+
+    monkeypatch.setattr("automation_agent.tools.datetime", FrozenDatetime)
     requests = []
 
     def respond(request):
@@ -42,7 +48,7 @@ def test_preview_requires_authenticated_watch_and_preserves_failure_reason(monke
     tool.application_data = SimpleNamespace(selection_context=lambda *_: ([{
         "enabled_for_ai": True, "version": 1, "definition_json": definition,
     }], {}))
-    now = datetime.now(UTC)
+    now = datetime.fromtimestamp(raw["observedAt"] / 1000, UTC)
     result = json.loads(tool.preview_strategy(
         "S01", (now + timedelta(minutes=10)).isoformat(),
         {"kind": "specific_time", "exit_at": (now + timedelta(hours=1)).isoformat()},

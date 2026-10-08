@@ -6,15 +6,15 @@ import httpx
 import pytest
 
 from app.default_strategies import default_strategy_definitions
-from app.exit_schedule import ExitChoice, resolve_exit_schedule, template_from_definition
+from app.exit_schedule import ExitChoice, resolve_exit_schedule, session_expiry, template_from_definition
 from automation_agent.curated import chart_notes, market_input
 from automation_agent.preview import build_preview, resolve_contracts
 from automation_agent.team import calculator
 
 
 def fixture(name="Long call"):
-    now = datetime.now(UTC)
-    expiry = now + timedelta(days=2)
+    now = datetime(2026, 10, 8, 0, 30, tzinfo=UTC)
+    expiry = session_expiry(now)
     template = next(s for s in default_strategy_definitions(now) if s.name == name)
     raw = {
         "symbol": f"C-BTC-100-{expiry:%d%m%y}",
@@ -68,21 +68,27 @@ def test_curated_input_owns_numbers_and_has_no_market_arrays():
     assert chart_notes({"a": {"values": {"price": 100}, "readingNotes": ["read"]}}) == {"a": {"readingNotes": ["read"]}}
 
 
-def test_holding_scales_use_only_expiries_covering_the_hold():
+def test_holding_scales_use_only_upcoming_expiry_and_shorten_at_cutoff():
+    now = datetime(2026, 10, 7, 10, 0, tzinfo=UTC)
     packet = {
+        "capturedAt": int(now.timestamp() * 1000),
+        "ticker": {"lastPrice": 100},
         "analysis": {"historicalVolatility": {"annualizedPercent": 40}},
-        "enrichment": {
-            "options": [
-                {"expiry": "near", "daysRemaining": 0.5, "atmIvPercent": 50},
-                {"expiry": "later", "daysRemaining": 2, "atmIvPercent": 60},
-            ]
-        },
+        "enrichment": {"options": [
+            {"expiry": "2026-10-07T12:00:00Z", "daysRemaining": 2/24, "atmIvPercent": 26},
+            {"expiry": "2026-10-08T12:00:00Z", "daysRemaining": 26/24, "atmIvPercent": 31},
+        ]},
     }
-    rows = market_input(packet, "BTC")["holdingMoveScales"]["rows"]
-    assert rows[0]["referenceExpiry"] == "near"
-    assert rows[2]["referenceExpiry"] == "later"
-    assert rows[-1]["impliedScaledMovePercent"] is None
-    assert rows[0]["realizedScaledMovePercent"] == pytest.approx(1.1307, rel=0.001)
+    data = market_input(packet, "BTC", "pre_expiry")
+    assert len(data["options"]) == 1
+    row, = data["holdingMoveScales"]["rows"]
+    assert row["referenceExpiry"] == "2026-10-07T12:00:00Z"
+    assert row["hours"] == pytest.approx(115/60)
+    assert row["impliedScaledMovePercent"] == pytest.approx(26 * (row["hours"] / 8760)**0.5)
+    packet["enrichment"]["options"].pop(0)
+    assert market_input(packet, "BTC")["holdingMoveScales"]["rows"][0]["impliedScaledMovePercent"] is None
+
+
 
 
 def test_exact_call_payoff_units_greeks_and_advisory_fill():

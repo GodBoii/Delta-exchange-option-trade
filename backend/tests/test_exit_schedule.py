@@ -34,73 +34,90 @@ def template(asset: str = "BTC") -> dict:
 
 
 @pytest.mark.parametrize("asset", ["BTC", "ETH"])
-@pytest.mark.parametrize("hours", [7, 11, 16, 24, 48, 72])
-def test_preset_holds_choose_first_contract_covering_exit(asset: str, hours: int) -> None:
-    entry = datetime(2026, 9, 29, 13, tzinfo=UTC)  # 18:30 IST
-    expiries = [datetime(2026, 9, 30, 12, tzinfo=UTC) + timedelta(days=day) for day in range(5)]
-    kind = "intraday" if hours in (7, 11) else "overnight" if hours in (16, 24) else "positional"
-    # Sixteen hours from 18:30 IST stays in the same session and is deliberately rejected.
-    if hours == 16:
-        with pytest.raises(ValueError, match="overnight"):
-            resolve_exit_schedule(
-                template(asset),
-                entry_at=entry,
-                choice=ExitChoice(kind=kind, hours=hours),
-                options=chain(asset, *expiries),
-            )
-        return
+@pytest.mark.parametrize("hours", [7, 11])
+def test_evening_holds_use_upcoming_expiry_and_can_cross_midnight(asset: str, hours: int) -> None:
+    entry = datetime(2026, 9, 29, 13, 45, tzinfo=UTC)
+    expiry = datetime(2026, 9, 30, 12, tzinfo=UTC)
     live, detail = resolve_exit_schedule(
-        template(asset), entry_at=entry, choice=ExitChoice(kind=kind, hours=hours), options=chain(asset, *expiries)
+        template(asset), entry_at=entry, choice=ExitChoice(kind="intraday", hours=hours),
+        options=chain(asset, expiry, expiry + timedelta(days=1)), trigger="new_york_session",
     )
     assert detail["durationMinutes"] == hours * 60
-    assert all(
-        datetime.fromisoformat(leg["expiry"]).date() == datetime.fromisoformat(detail["contractExpiryIst"]).date()
-        for leg in live["legs"]
-    )
-    assert datetime.fromisoformat(detail["latestSafeExitUtc"]) >= datetime.fromisoformat(detail["exitUtc"])
-    assert live["expiryPolicy"] == "auto"
-
-
-def test_session_boundary_is_at_1730_ist() -> None:
-    entry = datetime(2026, 9, 29, 5, 30, tzinfo=UTC)  # 11:00 IST
-    options = chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC))
-    with pytest.raises(ValueError, match="intraday"):
-        resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="intraday", hours=7), options=options)
-    late = datetime(2026, 9, 29, 12, 1, tzinfo=UTC)  # 17:31 IST
-    live, detail = resolve_exit_schedule(
-        template(), entry_at=late, choice=ExitChoice(kind="intraday", hours=7), options=options
-    )
+    assert detail["contractExpiryUtc"] == expiry.isoformat()
     assert detail["sessionCrossings"] == 0
     assert live["entry"]["strategyType"] == "intraday"
 
 
-def test_expiry_choices_skip_short_hold_and_incomplete_chain() -> None:
-    entry = datetime(2026, 9, 29, 10, 30, tzinfo=UTC)  # 16:00 IST
-    today = datetime(2026, 9, 29, 12, tzinfo=UTC)
-    tomorrow = today + timedelta(days=1)
-    following = today + timedelta(days=2)
-    options = chain("BTC", today, tomorrow, following, omit_put_at=tomorrow)
-    first, detail = resolve_exit_schedule(
-        template(), entry_at=entry, choice=ExitChoice(kind="expiry", expiry_number=1), options=options
+@pytest.mark.parametrize("trigger,hour,minute,duration", [
+    ("asia_session", 0, 15, 420), ("london_session", 7, 15, 280), ("pre_expiry", 10, 15, 100),
+])
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+def test_presets_shorten_at_current_expiry_buffer(trigger, hour, minute, duration, asset):
+    entry = datetime(2026, 9, 29, hour, minute, tzinfo=UTC)
+    expiry = datetime(2026, 9, 29, 12, tzinfo=UTC)
+    _, schedule = resolve_exit_schedule(
+        template(asset), entry_at=entry, choice=ExitChoice(kind="intraday", hours=7),
+        options=chain(asset, expiry), trigger=trigger,
     )
-    assert first["legs"][0]["expiry"] == following.date().isoformat()
-    assert detail["durationMinutes"] > 90
-    with pytest.raises(ValueError, match="requested listed expiry"):
+    assert schedule["durationMinutes"] == duration
+    assert schedule["contractExpiryUtc"] == expiry.isoformat()
+
+
+@pytest.mark.parametrize("kind,hours", [("overnight", 16), ("positional", 48), ("expiry", None)])
+def test_removed_choices_rejected(kind, hours):
+    with pytest.raises(ValueError):
+        ExitChoice(kind=kind, hours=hours)
+
+
+def test_second_expiry_parameter_rejected():
+    with pytest.raises(ValueError):
+        ExitChoice(kind="intraday", hours=7, expiry_number=2)
+
+
+@pytest.mark.parametrize("trigger", [None, "manual", "asia_session", "london_session", "pre_expiry", "midnight_review"])
+def test_eleven_hours_requires_evening_review(trigger):
+    entry = datetime(2026, 9, 29, 13, tzinfo=UTC)
+    with pytest.raises(ValueError, match="evening"):
         resolve_exit_schedule(
-            template(), entry_at=entry, choice=ExitChoice(kind="expiry", expiry_number=2), options=options
+            template(), entry_at=entry, choice=ExitChoice(kind="intraday", hours=11),
+            options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)), trigger=trigger,
         )
 
 
-def test_missing_chain_and_uncovered_exit_fail_without_shortening() -> None:
+def test_missing_current_chain_does_not_fall_back_to_tomorrow():
+    entry = datetime(2026, 9, 29, 10, 15, tzinfo=UTC)
+    today = datetime(2026, 9, 29, 12, tzinfo=UTC)
+    options = chain("BTC", today, today + timedelta(days=1), omit_put_at=today)
+    with pytest.raises(ValueError, match="Upcoming session expiry"):
+        resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="intraday", hours=7), options=options)
+
+
+@pytest.mark.parametrize("hours", [8, 25])
+def test_custom_exit_cannot_bypass_maximum_or_session(hours):
     entry = datetime(2026, 9, 29, 13, tzinfo=UTC)
-    with pytest.raises(ValueError, match="no listed options"):
-        resolve_exit_schedule(template(), entry_at=entry, choice=ExitChoice(kind="positional", hours=72), options=[])
-    with pytest.raises(ValueError, match="full requested hold"):
+    with pytest.raises(ValueError, match="maximum|session"):
         resolve_exit_schedule(
-            template(),
-            entry_at=entry,
-            choice=ExitChoice(kind="positional", hours=72),
+            template(), entry_at=entry, choice=ExitChoice(kind="specific_time", exit_at=entry + timedelta(hours=hours)),
             options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)),
+        )
+
+
+def test_entry_cannot_move_past_reviewed_expiry():
+    review = datetime(2026, 9, 29, 10, tzinfo=UTC)
+    entry = datetime(2026, 9, 29, 13, tzinfo=UTC)
+    with pytest.raises(ValueError, match="reviewed"):
+        resolve_exit_schedule(
+            template(), entry_at=entry, choice=ExitChoice(kind="intraday", hours=7),
+            options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)), review_at=review,
+        )
+
+
+def test_entry_inside_expiry_buffer_rejected():
+    entry = datetime(2026, 9, 29, 11, 56, tzinfo=UTC)
+    with pytest.raises(ValueError, match="buffer"):
+        resolve_exit_schedule(
+            template(), entry_at=entry, choice=ExitChoice(kind="intraday", hours=7),
+            options=chain("BTC", datetime(2026, 9, 29, 12, tzinfo=UTC)),
         )
 
 

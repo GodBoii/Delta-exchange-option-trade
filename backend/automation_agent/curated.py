@@ -4,7 +4,10 @@ import json
 import math
 import os
 from copy import deepcopy
+from datetime import UTC, datetime
 from typing import Any
+
+from app.exit_schedule import maximum_hold_hours, session_expiry
 
 from .market import compact_btc_market_packet
 
@@ -26,7 +29,7 @@ def dumps(value: Any) -> str:
     return json.dumps(display(value), separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str)
 
 
-def market_input(packet: dict, asset: str) -> dict:
+def market_input(packet: dict, asset: str, trigger: str | None = None) -> dict:
     legacy = compact_btc_market_packet(packet, asset)
     analysis = deepcopy(legacy["computedAnalysis"])
     order_book = analysis.pop("orderBook", {})
@@ -36,19 +39,29 @@ def market_input(packet: dict, asset: str) -> dict:
     vwap = analysis.pop("vwap", None)
     volatility = analysis.pop("historicalVolatility", {})
     enrichment = packet.get("enrichment") or {}
+    captured = (
+        datetime.fromtimestamp(packet["capturedAt"] / 1000, UTC)
+        if packet.get("capturedAt") else datetime.now(UTC)
+    )
+    expiry = session_expiry(captured)
+    option_rows = []
+    for row in enrichment.get("options", []):
+        try:
+            observed_expiry = datetime.fromisoformat(str(row.get("expiry", "")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if observed_expiry == expiry:
+            option_rows.append(row)
     holding_scales = []
-    for hours in (7, 11, 16, 24, 48, 72):
+    for preset in ([7, 11] if maximum_hold_hours(trigger) == 11 else [7]):
+        hours = max(0, min(preset, (expiry.timestamp() - captured.timestamp() - 300) / 3600))
         factor = math.sqrt(hours / (365 * 24))
-        expiries = [
-            row
-            for row in enrichment.get("options", [])
-            if row.get("daysRemaining", 0) * 24 >= hours and row.get("atmIvPercent") is not None
-        ]
-        reference = min(expiries, key=lambda row: row["daysRemaining"]) if expiries else None
+        reference = option_rows[0] if option_rows and option_rows[0].get("atmIvPercent") is not None else None
         rv = volatility.get("annualizedPercent")
         holding_scales.append(
             {
                 "hours": hours,
+                "presetHours": preset,
                 "realizedScaledMovePercent": rv * factor if rv is not None else None,
                 "impliedScaledMovePercent": reference["atmIvPercent"] * factor if reference else None,
                 "referenceExpiry": reference["expiry"] if reference else None,
@@ -111,9 +124,14 @@ def market_input(packet: dict, asset: str) -> dict:
         },
         "liquidity": {"current": liquidity, "lastBucket": enrichment.get("previousLiquidityBucket", {})},
         "futures": enrichment.get("futures", {}),
-        "options": enrichment.get("options", []),
+        "options": option_rows,
+        "sessionPolicy": {
+            "expiryUtc": expiry.isoformat(), "maximumHoldHours": maximum_hold_hours(trigger),
+            "remainingMinutes": max(0, (expiry.timestamp() - captured.timestamp()) / 60),
+        },
         "holdingMoveScales": {
-            "basis": "annualized volatility times sqrt(hours/8760), not forecasts or probabilities",
+            "basis": "Indicative ATM scale for the upcoming expiry; duration uses snapshot time and a five-minute "
+            "buffer. Preview supplies the actual selected-leg scales and saved buffer. Not forecasts or probabilities.",
             "rows": holding_scales,
         },
     }

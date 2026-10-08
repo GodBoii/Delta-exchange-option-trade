@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -23,7 +24,7 @@ from app.automation_schedule import (
 )
 from app.capital import percentage_concurrency_limit
 from app.errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE, AppError
-from app.exit_schedule import ExitChoice, resolve_exit_schedule
+from app.exit_schedule import ExitChoice, maximum_hold_hours, resolve_exit_schedule, template_from_definition
 from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
@@ -53,11 +54,15 @@ class AutomationStrategyTools(Toolkit):
         asset: Asset = DEFAULT_ASSET,
         curated: bool = False,
         option_context: dict[str, Any] | None = None,
+        trigger: str | None = None,
+        review_at: datetime | None = None,
         **kwargs: Any,
     ) -> None:
         self.settings = settings
         self.asset = asset
         self.curated = curated
+        self.trigger = trigger
+        self.review_at = review_at
         self._previews: dict[tuple, tuple[dict, dict]] = {}
         self._initial_options = (option_context or {}).get("options") or []
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
@@ -155,12 +160,10 @@ class AutomationStrategyTools(Toolkit):
             **source,
             "strategies": rows,
             "holdingChoices": {
-                "intradayHours": [7, 11],
-                "overnightHours": [16, 24],
-                "positionalHours": [48, 72],
-                "other": ["specific_time", "expiry 1 or 2"],
+                "intradayHours": [7, 11] if maximum_hold_hours(self.trigger) == 11 else [7],
+                "other": ["specific_time within the session maximum"],
             },
-            "comparisonBasis": "Indicative normalized leg ratio at the first expiry covering the next hour; "
+            "comparisonBasis": "Indicative normalized leg ratio at the upcoming session expiry; "
             "use this for ranking, then preview the chosen holding period once.",
         }
 
@@ -177,6 +180,7 @@ class AutomationStrategyTools(Toolkit):
                 entry_at=now + timedelta(minutes=8),
                 choice=ExitChoice(kind="specific_time", exit_at=now + timedelta(hours=1)),
                 options=self._initial_options,
+                trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
             )
             legs = resolve_contracts(definition, self._initial_options)
             divisor = reduce(gcd, (leg["lots"] for leg in legs))
@@ -211,8 +215,9 @@ class AutomationStrategyTools(Toolkit):
 
         Use the starting strategyRef. This reads public data and never schedules or places an order.
         The same strategy_ref, activation_time and exit_choice must be used when selecting.
-        exit_choice uses kind, not type: {kind: intraday|overnight|positional, hours: allowed preset},
-        {kind: specific_time, exit_at: aware ISO timestamp}, or {kind: expiry, expiry_number: 1|2}.
+        exit_choice uses kind: {kind: intraday, hours: 7}, or hours: 11 for the evening review only,
+        or {kind: specific_time, exit_at: aware ISO timestamp} within the session maximum.
+        Only the upcoming 17:30 IST expiry is eligible. Preset holds shorten at its safety cutoff.
         """
         try:
             reference = strategy_ref.strip().upper()
@@ -237,7 +242,8 @@ class AutomationStrategyTools(Toolkit):
                     raise ValueError("Option asset mismatch")
                 options = catalogue.get("options") or []
                 definition, schedule = resolve_exit_schedule(
-                    rows[0]["definition_json"], entry_at=activation, choice=choice, options=options
+                    rows[0]["definition_json"], entry_at=activation, choice=choice, options=options,
+                    trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
                 )
                 resolved = resolve_contracts(definition, options)
                 response = client.post(
@@ -250,6 +256,21 @@ class AutomationStrategyTools(Toolkit):
                 result = build_preview(
                     definition, resolved, selected.get("contracts") or [], int(datetime.now(UTC).timestamp() * 1000)
                 )
+                hours = schedule["durationMinutes"] / 60
+                result["selectedLegMoveScales"] = {
+                    "hours": hours,
+                    "expiryUtc": schedule["contractExpiryUtc"],
+                    "basis": "Each selected leg's IV times sqrt(actual holding hours / 8760); "
+                    "a movement scale, not a forecast or an early-exit profit threshold.",
+                    "legs": [
+                        {
+                            "symbol": leg["symbol"], "ivPercent": leg["ivPercent"],
+                            "impliedScaledMovePercent": leg["ivPercent"] * math.sqrt(hours / 8760)
+                            if leg["ivPercent"] is not None else None,
+                        }
+                        for leg in result["legs"]
+                    ],
+                }
                 if self.settings.analysis_service_secret:
                     watch = client.post(
                         f"{route}/watch-expiries",
@@ -315,7 +336,7 @@ class AutomationStrategyTools(Toolkit):
                         "version": row["version"],
                         "name": row["name"],
                         "description": row["definition_json"].get("description", ""),
-                        "definition": row["definition_json"],
+                        "definition": template_from_definition(row["definition_json"]),
                         "currentAvailability": "unavailable"
                         if self.user_id != SHARED_USER_ID and maximum and occupied >= maximum
                         else "available_for_live_schedule",
@@ -427,10 +448,9 @@ class AutomationStrategyTools(Toolkit):
         """Schedule the strategyRef returned by show_available_strategy.
 
         First call calculate_exit_time with the same entry time, strategyRef and exit_choice.
-        exit_choice is {kind: intraday|overnight|positional, hours: allowed preset},
-        {kind: specific_time, exit_at: aware ISO timestamp}, or
-        {kind: expiry, expiry_number: 1|2}. The server resolves a listed contract
-        covering the chosen exit. Risk, legs and sizing remain owned by the saved strategy.
+        exit_choice is {kind: intraday, hours: 7}, with 11 allowed only for the evening review,
+        or {kind: specific_time, exit_at: aware ISO timestamp} within the session maximum.
+        The server selects the upcoming session expiry. Risk, legs and sizing remain saved.
         Returns JSON confirming a scheduled account strategy or a shared proposal.
         Rejected calls may be corrected and retried. A committed run cannot schedule again.
         """
@@ -600,6 +620,7 @@ class AutomationStrategyTools(Toolkit):
             entry_at=activation,
             choice=choice,
             options=option_context.get("options") or [],
+            trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
         )
 
     def calculate_exit_time(self, strategy_ref: str, activation_time: str, exit_choice: dict[str, Any]) -> str:

@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -17,6 +18,7 @@ from agno.models.openrouter import OpenRouter
 from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
+from app.exit_schedule import maximum_hold_hours, session_expiry
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
 from news_agent.pipeline import run_news_pipeline
@@ -115,6 +117,8 @@ def run_automation_team(
         asset=code,
         curated=curated,
         option_context=option_context,
+        trigger=trigger,
+        review_at=datetime.fromtimestamp(market_packet["capturedAt"] / 1000, UTC),
     )
     catalogue = strategy_tools.starting_catalogue() if curated else None
 
@@ -156,11 +160,10 @@ def run_automation_team(
                 ),
                 (
                     "Preserve the saved option legs, strike rules, size policy, stops, profit target and order types. "
-                    "Choose an entry time and exit_choice to match the market thesis. Intraday presets are 7 or "
-                    "11 hours, overnight presets 16 or 24 hours, and positional presets 48 or 72 hours. Intraday "
-                    "must remain within one 17:30 IST options session, overnight must cross one session boundary, "
-                    "and positional must cross at least two. The specific_time choice needs an aware exit_at; the "
-                    "expiry choice needs expiry_number 1 or 2 for the first or second eligible listed expiry. "
+                    "Choose an entry time and exit_choice for the upcoming 17:30 IST expiry only. "
+                    "Intraday permits seven hours, or eleven only for new_york_session. Presets shorten to the "
+                    "saved expiry safety cutoff. A specific_time exit must remain within the same maximum and "
+                    "options session. Never select a later expiry or defer entry to another options session. "
                     "Call calculate_exit_time with the strategyRef, activation_time and exit_choice before selecting. "
                     "Use its exact duration, exit and listed contract expiry in the decision report. "
                     "Use each strategy description to understand its intended market conditions and payoff. "
@@ -199,6 +202,7 @@ def run_automation_team(
                 ),
                 ("Never schedule a strategy activation during the exact minute of any fixed review."),
                 "Use the supplied current news report. Research is complete; do not delegate or repeat it.",
+                session_instructions(trigger, datetime.fromtimestamp(market_packet["capturedAt"] / 1000, UTC)),
                 (
                     "Use sessionHistory alongside the current 60-minute sideways score. Compare the last one and two "
                     "hours with each dated session back to the previous matching session opening. Report session "
@@ -280,7 +284,7 @@ def run_automation_team(
         if curated:
             team.instructions = curated_instructions(team.instructions)
             team.additional_context += (
-                f" Starting market evidence: {dumps(market_input(market_packet, code))}. "
+                f" Starting market evidence: {dumps(market_input(market_packet, code, trigger))}. "
                 f"Starting strategy catalogue: {dumps(catalogue)}"
             )
 
@@ -501,6 +505,27 @@ def run_activation_recheck(
     )
 
 
+def session_instructions(trigger: str, reference: datetime) -> str:
+    expiry = session_expiry(reference)
+    remaining = max(0, (expiry - reference).total_seconds() / 60)
+    focus = {
+        "asia_session": "Asia review: primarily evaluate strategies suited to today's expiry.",
+        "london_session": "London review: primarily evaluate strategies suited to the remaining hours today.",
+        "pre_expiry": "Pre-expiry review: only consider strategies that can work in the short remaining window. "
+        "Processing and recheck reduce it; do not move to tomorrow's contract if today's is unsuitable.",
+        "new_york_session": "Evening review: focus on the upcoming expiry; "
+        "a trade may cross midnight for up to eleven hours.",
+    }.get(trigger, "Focus on strategies suited to the upcoming expiry within seven hours.")
+    return (
+        f"{focus} Upcoming expiry is {expiry.isoformat()} with {remaining:.1f} minutes remaining at the snapshot. "
+        f"Maximum hold is {maximum_hold_hours(trigger)} hours from planned entry, "
+        "shortened by the saved expiry buffer. "
+        "Use actual preview duration and selected-contract IV, premiums and scenarios. "
+        "No suitable trade means no trade. "
+        "Earlier strategy reports are dated evidence; their old expiry and holding choices are not current choices."
+    )
+
+
 def calculator() -> CalculatorTools:
     return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide", "exponentiate", "square_root"])
 
@@ -553,9 +578,9 @@ def curated_instructions(instructions: list[str]) -> list[str]:
         "Use supplied scenario values rather than recalculating the standard estimates."
     )
     result.append(
-        "The starting holdingMoveScales already supplies volatility-scaled moves for all six holding "
-        "presets. Compare those percentages directly with the supplied short-strike distances and "
-        "preview breakevens. Do not use the calculator to redo these scales or the preview scenarios."
+        "Starting holdingMoveScales are indicative for the upcoming expiry only. After preview, use its "
+        "selectedLegMoveScales for the actual contracts and duration; never combine another expiry's IV with "
+        "selected legs. Expiry breakevens do not represent early-exit profit thresholds."
     )
     result.append(
         "Complete any additional arithmetic before committing an action. After a scheduling or "

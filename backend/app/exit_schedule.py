@@ -21,10 +21,41 @@ IST = ZoneInfo("Asia/Kolkata")
 SESSION_END = time(17, 30)
 PRESETS: dict[str, frozenset[int]] = {
     "intraday": frozenset({7, 11}),
-    "overnight": frozenset({16, 24}),
-    "positional": frozenset({48, 72}),
 }
-MIN_EXPIRY_HOLD = timedelta(minutes=90)
+
+
+def session_expiry(reference: datetime) -> datetime:
+    """The next 17:30 IST settlement, never a later listed expiry fallback."""
+    if reference.utcoffset() is None:
+        raise ValueError("Session reference must include a timezone")
+    local = reference.astimezone(IST)
+    end = datetime.combine(local.date(), SESSION_END, IST)
+    if local >= end:
+        end += timedelta(days=1)
+    return end.astimezone(UTC)
+
+
+def maximum_hold_hours(trigger: str | None = None) -> int:
+    return 11 if trigger == "new_york_session" else 7
+
+
+def validate_session_schedule(
+    definition: dict[str, Any], *, trigger: str | None = None, review_at: datetime | None = None
+) -> None:
+    """Validate new decisions without changing historical or already active definitions."""
+    entry = _instant((definition.get("entry") or {}).get("entryAt"))
+    exit_at = _instant((definition.get("entry") or {}).get("exitAt"))
+    if entry is None or exit_at is None:
+        raise ValueError("A timezone-aware entry and exit are required")
+    expiry = session_expiry(review_at or entry)
+    cutoff = expiry - timedelta(minutes=int(definition.get("exitMinutesBeforeExpiry") or 5))
+    if session_expiry(entry) != expiry or not entry < exit_at <= cutoff:
+        raise ValueError("Entry and exit must remain inside the current options session and expiry buffer")
+    if exit_at - entry > timedelta(hours=maximum_hold_hours(trigger)):
+        raise ValueError("Planned hold exceeds this review's maximum duration")
+    date = expiry.astimezone(IST).date().isoformat()
+    if any(leg.get("expiry") != date for leg in definition.get("legs") or []):
+        raise ValueError("Every leg must use the upcoming session expiry")
 
 
 async def fetch_option_catalog(client: DeltaClient, underlying: str) -> list[dict[str, Any]]:
@@ -76,26 +107,17 @@ async def fetch_option_catalog(client: DeltaClient, underlying: str) -> list[dic
 class ExitChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["intraday", "overnight", "positional", "specific_time", "expiry"]
+    kind: Literal["intraday", "specific_time"]
     hours: int | None = None
     exit_at: datetime | None = None
-    expiry_number: Literal[1, 2] | None = None
 
     @model_validator(mode="after")
     def validate_choice(self) -> ExitChoice:
         if self.kind in PRESETS:
-            if self.hours not in PRESETS[self.kind] or self.exit_at is not None or self.expiry_number is not None:
+            if self.hours not in PRESETS[self.kind] or self.exit_at is not None:
                 raise ValueError(f"{self.kind} requires one of {sorted(PRESETS[self.kind])} hours only")
-        elif self.kind == "specific_time":
-            if (
-                self.exit_at is None
-                or self.exit_at.utcoffset() is None
-                or self.hours is not None
-                or self.expiry_number is not None
-            ):
-                raise ValueError("specific_time requires a timezone-aware exit_at only")
-        elif self.expiry_number not in (1, 2) or self.hours is not None or self.exit_at is not None:
-            raise ValueError("expiry requires expiry_number 1 or 2 only")
+        elif self.exit_at is None or self.exit_at.utcoffset() is None or self.hours is not None:
+            raise ValueError("specific_time requires a timezone-aware exit_at only")
         return self
 
 
@@ -189,53 +211,42 @@ def validate_template(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def resolve_exit_schedule(
-    template: dict[str, Any], *, entry_at: datetime, choice: ExitChoice, options: list[dict[str, Any]]
+    template: dict[str, Any], *, entry_at: datetime, choice: ExitChoice, options: list[dict[str, Any]],
+    trigger: str | None = None, review_at: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return an immutable live v2 definition and an explanation of its schedule."""
     if entry_at.utcoffset() is None:
         raise ValueError("Entry time must include a timezone")
     entry = entry_at.astimezone(UTC)
     cutoff = timedelta(minutes=int(template.get("exitMinutesBeforeExpiry") or 5))
-    expiries = _listed_expiries(template, options)
-    if not expiries:
-        raise ValueError("No listed expiry supports every leg and strike rule")
-
-    if choice.kind == "expiry":
-        eligible = [expiry for expiry in expiries if expiry - cutoff - entry >= MIN_EXPIRY_HOLD]
-        if len(eligible) < int(choice.expiry_number or 0):
-            raise ValueError("The requested listed expiry is unavailable after the 90-minute minimum and buffer")
-        expiry = eligible[int(choice.expiry_number or 1) - 1]
-        exit_at = expiry - cutoff
+    expiry = session_expiry(review_at or entry)
+    if session_expiry(entry) != expiry:
+        raise ValueError("Activation must remain in the reviewed options session")
+    if expiry not in _listed_expiries(template, options):
+        raise ValueError("Upcoming session expiry does not support every leg and strike rule")
+    limit = maximum_hold_hours(trigger)
+    if choice.kind == "intraday":
+        if int(choice.hours or 0) > limit:
+            raise ValueError("Eleven hours is available only to the evening review")
+        exit_at = min(entry + timedelta(hours=int(choice.hours or 0)), expiry - cutoff)
     else:
-        exit_at = (
-            choice.exit_at.astimezone(UTC)
-            if choice.kind == "specific_time" and choice.exit_at is not None
-            else entry + timedelta(hours=int(choice.hours or 0))
-        )
-        if exit_at <= entry:
-            raise ValueError("Exit time must be after entry")
-        crossings = session_number(exit_at) - session_number(entry)
-        required = {"intraday": 0, "overnight": 1}
-        if choice.kind in required and crossings != required[choice.kind]:
-            raise ValueError(f"{choice.kind} must cross {required[choice.kind]} options-session boundaries")
-        if choice.kind == "positional" and crossings < 2:
-            raise ValueError("positional must cross at least two options-session boundaries")
-        expiry = next((item for item in expiries if item - cutoff >= exit_at), None)
-        if expiry is None:
-            raise ValueError("No listed option expiry covers the full requested hold and safety buffer")
+        if choice.exit_at is None:
+            raise ValueError("Specific exit time is required")
+        exit_at = choice.exit_at.astimezone(UTC)
 
     live = deepcopy(template)
     live["schemaVersion"] = 2
     live["expiryPolicy"] = "auto"
-    live["holdingMode"] = "hold_to_expiry" if choice.kind == "expiry" else "intraday"
+    live["holdingMode"] = "intraday"
     crossings = session_number(exit_at) - session_number(entry)
     live["entry"] = {
-        "strategyType": "intraday" if crossings == 0 else "btst" if crossings == 1 else "positional",
+        "strategyType": "intraday",
         "entryAt": entry.isoformat(),
         "exitAt": exit_at.isoformat(),
     }
     for leg in live["legs"]:
         leg["expiry"] = expiry.astimezone(IST).date().isoformat()
+    validate_session_schedule(live, trigger=trigger, review_at=review_at)
     definition = StrategyDefinition.model_validate(live).model_dump(mode="json", exclude_none=True)
     detail = {
         "entryUtc": entry.isoformat(),
@@ -247,6 +258,7 @@ def resolve_exit_schedule(
         "contractExpiryUtc": expiry.isoformat(),
         "contractExpiryIst": expiry.astimezone(IST).isoformat(),
         "latestSafeExitUtc": (expiry - cutoff).isoformat(),
+        "maximumHoldHours": limit,
         "choice": choice.model_dump(mode="json", exclude_none=True),
     }
     return definition, detail

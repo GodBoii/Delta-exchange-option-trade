@@ -101,6 +101,7 @@ def run_case(
     frozen = deepcopy(case["market"])
     options = deepcopy(case["options"])
     frozen_now = max(int(o["observedAt"]) for o in options)
+    frozen["capturedAt"] = frozen_now
     simulation_now = datetime.fromtimestamp(frozen_now / 1000, UTC)
     rows = case["catalogue"]
     record = {
@@ -148,8 +149,8 @@ def run_case(
         def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
             """Preview one saved strategy with frozen evidence and the production expiry/payoff calculations.
 
-            exit_choice uses kind: intraday|overnight|positional with hours, specific_time with exit_at,
-            or expiry with expiry_number 1 or 2. Choose using starting comparisons before previewing.
+            exit_choice uses kind: intraday with seven hours, eleven for evening only, or specific_time with exit_at.
+            Only the upcoming session expiry is eligible. Use starting comparisons before previewing.
             """
             try:
                 saved_id, version = self.strategy_references[strategy_ref.strip().upper()]
@@ -157,7 +158,8 @@ def run_case(
                 activation = datetime.fromisoformat(activation_time.replace("Z", "+00:00")).astimezone(UTC)
                 choice = ExitChoice.model_validate(exit_choice)
                 definition, schedule = resolve_exit_schedule(
-                    saved["definition_json"], entry_at=activation, choice=choice, options=options
+                    saved["definition_json"], entry_at=activation, choice=choice, options=options,
+                    trigger=self.trigger, review_at=self.review_at,
                 )
                 resolved = resolve_contracts(definition, options)
                 selected = [o for o in options if o["symbol"] in {leg["productSymbol"] for leg in resolved}]

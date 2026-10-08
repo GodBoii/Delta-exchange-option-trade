@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 
 from .assets import Asset, asset_run_key, run_asset
 from .errors import AppError
+from .exit_schedule import validate_session_schedule
 from .materialized_definition import validate_materialized_definition
 
 if TYPE_CHECKING:
@@ -132,6 +133,17 @@ class LocalResearchOperations:
             raise AppError(422, "Definition exit mismatch", "definition_changed")
         return proposed
 
+    @staticmethod
+    def _session_policy(definition: dict[str, Any], run: dict[str, Any]) -> None:
+        data = run["data"]
+        reference = data.get("scheduled_for") or data.get("started_at")
+        try:
+            validate_session_schedule(
+                definition, trigger=data.get("trigger"), review_at=instant(reference) if reference else None
+            )
+        except ValueError as error:
+            raise AppError(422, str(error), "session_schedule_invalid") from error
+
     async def _saved(self, cursor: Any, saved_id: str, version: int, user_id: str) -> dict[str, Any]:
         await cursor.execute("select * from trade.saved_strategies where id=%s", (saved_id,))
         saved = await cursor.fetchone()
@@ -179,6 +191,7 @@ class LocalResearchOperations:
             asset = run_asset(run["data"])
             self._require_asset(saved, asset)
             definition = self._materialized(args, saved["definition_json"])
+            self._session_policy(definition, run)
             now = timestamp()
             decision_id, recheck_id = str(uuid4()), str(uuid4())
             proposal = {
@@ -277,6 +290,7 @@ class LocalResearchOperations:
             asset = run_asset(run["data"])
             self._require_asset(saved, asset)
             definition = self._materialized(args, saved["definition_json"])
+            self._session_policy(definition, run)
             maximum = {
                 "full_balance": 1,
                 "half_balance": 2,
