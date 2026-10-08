@@ -15,15 +15,16 @@ their numerical statistics are not copied into another market-data section.
 
 The catalogue supplies run-local references and decision-relevant saved rules. Its indicative
 cost/spread/short-distance comparisons use one normalized saved-leg ratio and the first eligible
-expiry covering the next hour. They help rank strategies before requesting a final preview.
+upcoming session expiry. They help rank strategies before requesting a final preview.
 Account trade size is still calculated by the trading engine at entry.
-The starting input also supplies six standard holding-period volatility scales. It uses the
-nearest quoted expiry covering each hold and keeps unavailable IV scales unknown. These simple
-scales avoid repeated calculator calls and are explicitly labelled as estimates, not forecasts.
+The starting input supplies indicative scales for the seven-hour preset, plus eleven hours only
+for the evening review. Both use the upcoming expiry and shorten near its default five-minute
+buffer. Missing IV stays unknown. The successful preview supplies selected-leg IV scales using
+the actual duration and saved buffer, which supersede these indicative starting comparisons.
 
 `preview_strategy(strategy_ref, activation_time, exit_choice)` replaces the catalogue and exit
 lookup tools on the compact path. `exit_choice` is an Agno/Pydantic schema whose discriminator
-is `kind`, with the existing hours, exit_at, or expiry_number fields. The tool refreshes selected
+is `kind`, with hours or exit_at. Only intraday and bounded specific_time choices remain. The tool refreshes selected
 contracts, resolves the exact schedule and strikes, and provides gross expiry payoff, breakevens,
 bounded/unbounded outcomes, fee estimates excluding tax when available, and advisory depth fills.
 Limit-order fill estimates respect the saved limit price. The selection must match a successful
@@ -117,6 +118,9 @@ Provider failures are marked failed, not counted as successful model comparisons
 complete runs, because repeated tool rounds and image costs are not captured by text byte counts.
 
 ## Measured validation
+
+The measurements below describe the earlier September 30 input configuration. Its multi-expiry
+overview and six holding scales were replaced on October 8 by the upcoming-session policy.
 
 The final paired DeepSeek checks used frozen public market evidence and the same existing news
 summary. All actions were simulated. The numerical results are in
