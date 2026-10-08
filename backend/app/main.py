@@ -583,7 +583,8 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
         "strategies",
         {
             "select": (
-                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,risk_state,created_at"
+                "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,risk_state,created_at,"
+                "entry_outcome"
             ),
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
@@ -602,6 +603,7 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "entryExecutedAt": row["entry_execution_at"],
                 "exitExecutedAt": row["exit_execution_at"],
                 "lastError": row["last_error"],
+                "entryOutcome": row.get("entry_outcome"),
                 "exposureStatus": (row.get("risk_state") or {}).get("exposureStatus"),
                 "createdAt": row["created_at"],
             }

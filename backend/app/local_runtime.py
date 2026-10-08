@@ -300,7 +300,7 @@ class LocalRuntimeStore:
         run_id = await self._ledger_run(connection, table, row, previous)
         if run_id is not None:
             await capture_quietly(self.ledger, connection, run_id)
-        if table == "strategies" and status in {"completed", "cancelled"}:
+        if table == "strategies" and status in {"completed", "cancelled", "skipped"}:
             slots = await connection.execute(
                 "select data from trade.strategy_capital_slots where relation_id=%s for update", (row["id"],)
             )
@@ -514,8 +514,10 @@ class LocalRuntimeStore:
             if existing:
                 return {"slot": existing["slot_number"], "created": False, "occupiedBefore": len(owned) - 1}
             reserved = sum((Decimal(str(row.get("reserved_budget") or "0")) for row in active), Decimal("0"))
-            if reserved + budget > balance or len(owned) >= maximum:
-                raise AppError(409, "Account capital is already reserved", "capital_slots_full")
+            if len(owned) >= maximum:
+                raise AppError(409, f"All {maximum} strategy slots are occupied", "capital_slots_full")
+            if reserved + budget > balance:
+                raise AppError(409, "Account capital is already reserved", "capital_reserved")
             await cursor.execute(
                 "select data from trade.strategy_capital_slots where owner_id=%s for update", (user_id,)
             )

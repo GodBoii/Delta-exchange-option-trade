@@ -651,8 +651,9 @@ async def test_terminal_sizing_failure_keeps_real_reason_and_stops_retries() -> 
     await engine.process_due_strategies()
 
     assert attempts == 1
-    assert db.strategy["status"] == "attention"
+    assert db.strategy["status"] == "skipped"
     assert db.strategy["last_error"] == "Entry not placed: One lot does not fit inside the account capital budget"
+    assert db.strategy["entry_outcome"]["category"] == "capital_budget"
     assert db.proposal_status["status"] == "rejected"
 
 

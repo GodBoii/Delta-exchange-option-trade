@@ -25,6 +25,7 @@ from .config import Settings
 from .database import Database
 from .delta import DeltaClient, RequestBudget
 from .delta_events import DeltaEvents, PublicMarkFeeds
+from .entry_outcomes import entry_failure
 from .errors import AppError, DeltaOrderRejected
 from .fill_accounting import PositionResult, exclusive_fill_positions
 from .local_journal import LocalOrderJournal
@@ -71,6 +72,7 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
         "automatic_lot_risk_invalid",
         "manual_lots_exceed_capital_budget",
         "capital_slots_full",
+        "capital_reserved",
         "option_chain_empty",
         "spot_price_missing",
         "strike_not_found",
@@ -915,6 +917,8 @@ class TradingEngine:
             policy = await self.capital_policy(str(row["user_id"]))
             wallet = await self.usd_capital(client)
             available, total_balance = wallet
+            if available <= 0 or total_balance <= 0:
+                raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
             maximum_slots = maximum_concurrent_strategies(
                 total_balance,
                 policy.allocation_mode,
@@ -925,7 +929,7 @@ class TradingEngine:
                     str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy
                 )
             except AppError as error:
-                if error.code != "capital_slots_full":
+                if error.code not in {"capital_slots_full", "capital_reserved"}:
                     raise
                 await self.reconcile_attention_runs(str(row["user_id"]), client)
                 reservation = await self.reserve_capital_slot(
@@ -969,6 +973,8 @@ class TradingEngine:
                     "executing_entry",
                     "entry_execution_at",
                     {
+                        "entry_outcome": None,
+                        "last_error": None,
                         "capital_slot": reservation["slot"],
                         "risk_state": {
                             "exclusiveFillAccounting": exclusive,
@@ -2194,6 +2200,16 @@ class TradingEngine:
                 )
 
         await self._dispatch_accounts(active, monitor_one)
+        # A failed exit can later complete through reconciliation, outside monitor_one.
+        # Retain failures for unresolved positions, but drop terminal or deleted runs.
+        failed_ids = list(self.risk_errors)
+        for start in range(0, len(failed_ids), 100):
+            batch = failed_ids[start : start + 100]
+            rows = await self.db.select("strategies", {"select": "id,status", "id": f"in.({','.join(batch)})"})
+            unresolved = {str(row["id"]) for row in rows if row["status"] not in {"completed", "cancelled", "skipped"}}
+            for strategy_id in batch:
+                if strategy_id not in unresolved:
+                    self.risk_errors.pop(strategy_id, None)
 
     async def strategy_pages(self, params: dict[str, str]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -2529,7 +2545,7 @@ class TradingEngine:
         due_entries, due_exits = await asyncio.gather(
             self.strategy_pages(
                 {
-                    "select": "id,user_id,entry_at",
+                    "select": "id,user_id,entry_at,entry_outcome",
                     "status": "eq.scheduled",
                     "entry_execution_at": "is.null",
                     "entry_at": f"lte.{now_iso}",
@@ -2583,6 +2599,7 @@ class TradingEngine:
                         f"the execution window expired after {int(lateness)} seconds",
                         "entry_window_expired",
                     ),
+                    previous_outcome=row.get("entry_outcome"),
                 )
                 return
             try:
@@ -2598,8 +2615,10 @@ class TradingEngine:
                     )
                     return
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
-            except Exception:
+                await self.record_entry_retry(str(row["id"]), error)
+            except Exception as error:
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
+                await self.record_entry_retry(str(row["id"]), error)
 
         await self._dispatch_accounts(due_entries, enter_one)
 
@@ -2654,11 +2673,26 @@ class TradingEngine:
                 states[strategy_id] = state
         return states
 
-    async def reject_scheduled_entry(self, strategy_id: str, error: AppError) -> None:
+    async def record_entry_retry(self, strategy_id: str, error: Exception) -> None:
+        outcome = {"status": "retrying", **entry_failure(error, iso_now())}
+        await self.db.update(
+            "strategies",
+            {"entry_outcome": outcome, "last_error": outcome["message"]},
+            {"id": f"eq.{strategy_id}", "status": "eq.scheduled", "entry_execution_at": "is.null"},
+        )
+
+    async def reject_scheduled_entry(
+        self, strategy_id: str, error: AppError, *, previous_outcome: dict[str, Any] | None = None
+    ) -> None:
+        outcome = {"status": "skipped", **entry_failure(error, iso_now())}
+        if error.code == "entry_window_expired" and previous_outcome:
+            outcome["lastFailure"] = previous_outcome
         reason = f"Entry not placed: {error.message}"
+        if outcome.get("lastFailure"):
+            reason += f". Last failure: {previous_outcome['message']}"
         rows = await self.db.update(
             "strategies",
-            {"status": "attention", "last_error": reason},
+            {"status": "skipped", "last_error": reason, "entry_outcome": outcome},
             {"id": f"eq.{strategy_id}", "status": "eq.scheduled", "entry_execution_at": "is.null"},
         )
         if not rows:

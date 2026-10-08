@@ -101,6 +101,8 @@ def classify_run(status: str, stored_settlement: dict[str, Any], orders: list[di
         return result("open", "position_open")
     if status == "attention":
         return result("attention", "needs_attention")
+    if status == "skipped":
+        return result("incomplete", "skipped_after_fill") if filled > 0 else result("cancelled", "entry_not_placed")
     if status == "cancelled":
         return result("incomplete", "cancelled_after_fill") if filled > 0 else result("cancelled", None)
     if status != "completed":
@@ -153,6 +155,7 @@ def run_detail_payload(
         "entryExecutedAt": row.get("entry_execution_at"),
         "exitExecutedAt": row.get("exit_execution_at"),
         "lastError": row.get("last_error"),
+        "entryOutcome": row.get("entry_outcome"),
         "definition": row.get("definition_json") or {},
         "savedStrategyId": row.get("saved_strategy_id"),
         "capitalSlot": row.get("capital_slot"),
