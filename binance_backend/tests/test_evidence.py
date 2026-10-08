@@ -11,10 +11,16 @@ from app.history import RETENTION_MS
 
 
 def option(now, asset="BTC", days=1):
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, time, timedelta
+    from zoneinfo import ZoneInfo
     symbol = f"C-{asset}-100-010130"
-    product = {"id": 1, "symbol": symbol, "settlement_time": datetime.fromtimestamp(
-        (now + days * 86_400_000) / 1000, UTC).isoformat(), "contract_value": "0.001"}
+    local = datetime.fromtimestamp(now / 1000, UTC).astimezone(ZoneInfo("Asia/Kolkata"))
+    boundary = datetime.combine(local.date(), time(17, 30), local.tzinfo)
+    if local >= boundary:
+        boundary += timedelta(days=1)
+    expiry = boundary + timedelta(days=days - 1)
+    product = {"id": 1, "symbol": symbol, "settlement_time": expiry.astimezone(UTC).isoformat(),
+               "contract_value": "0.001"}
     raw = {"product_id": 1, "symbol": symbol, "strike_price": 100, "spot_price": 100, "mark_vol": "0.4",
            "timestamp": now * 1000, "quotes": {"best_bid": 2, "best_ask": 3, "bid_size": 10, "ask_size": 10}}
     return normalize_option(raw, product, asset, now)
@@ -32,6 +38,26 @@ def test_option_units_missing_values_and_asset_validation():
     assert option_overview([row], now + 100_000) == []
     with pytest.raises(ValueError):
         normalize_option({"symbol": "C-ETH-100-010130"}, {}, "BTC", now)
+
+
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+@pytest.mark.parametrize("at", ["2026-10-08T00:00:00Z", "2026-10-08T10:00:00Z", "2026-10-08T13:30:00Z"])
+def test_overview_includes_only_upcoming_expiry_without_later_fallback(asset, at):
+    from datetime import datetime
+
+    now = int(datetime.fromisoformat(at).timestamp() * 1000)
+    current = option(now, asset)
+    later = option(now, asset, days=2)
+    overview = option_overview([current, later, option(now, asset, days=7)], now)
+    assert [r["expiry"] for r in overview] == [current["expiry"]]
+    assert option_overview([later], now) == []
+
+
+def test_assigned_legacy_expiry_is_available_only_when_explicitly_requested():
+    now = int(time.time() * 1000)
+    later = option(now, days=2)
+    assert option_overview([later], now) == []
+    assert option_overview([later], now, {later["expiryMs"]})[0]["expiry"] == later["expiry"]
 
 
 def test_depth_distances_coverage_and_window_extremes():

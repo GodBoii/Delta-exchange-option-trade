@@ -1,8 +1,9 @@
 """Numerical market summaries. Raw exchange arrays never belong in agent input."""
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def finite(value: Any, *, positive: bool = False) -> float | None:
@@ -112,7 +113,13 @@ def option_overview(options: list[dict[str, Any]], now: int, extra_expiries: set
     expiries = sorted({o["expiryMs"] for o in usable})
     if not expiries:
         return []
-    selected = {min(expiries, key=lambda e: abs(e - now - days * 86_400_000)) for days in (1, 3, 7, 30)}
+    local = datetime.fromtimestamp(now / 1000, UTC).astimezone(ZoneInfo("Asia/Kolkata"))
+    boundary = datetime.combine(local.date(), time(17, 30), local.tzinfo)
+    if local >= boundary:
+        boundary += timedelta(days=1)
+    target = int(boundary.timestamp() * 1000)
+    selected = {target} & set(expiries)
+    # Explicit assigned contracts remain available to rechecks of pre-existing proposals.
     selected.update((extra_expiries or set()) & set(expiries))
     rows = []
     for expiry in sorted(selected):
