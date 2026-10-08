@@ -71,7 +71,7 @@ const initialStrategy = (): StrategyDefinition => ({
   marketOutlook: "sideways",
   enabledForAi: true,
   instrument: { index: "BTCUSD", underlying: "BTC", underlyingFrom: "cash" },
-  entry: { strategyType: "intraday", entryAt: toIso(localDateTime(1)), exitAt: toIso(localDateTime(8)) },
+  entry: { strategyType: "intraday", entryAt: toIso(localDateTime(1)), exitAt: toIso(localDateTime(7)) },
   holdingMode: "hold_to_expiry",
   expiryPolicy: "auto",
   exitMinutesBeforeExpiry: 5,
@@ -360,18 +360,14 @@ function structureModel(legs: StrategyLeg[]): StructureModel {
  * ------------------------------------------------------------------ */
 
 type LibraryState = "loading" | "template" | "local" | "unsaved" | "saving" | "saved" | "error";
-type ExitKind = "intraday" | "overnight" | "positional" | "specific_time" | "expiry";
+type ExitKind = "intraday" | "specific_time";
 type ExitChoice =
-  | { kind: "intraday" | "overnight" | "positional"; hours: number }
-  | { kind: "specific_time"; exit_at: string }
-  | { kind: "expiry"; expiry_number: 1 | 2 };
+  | { kind: "intraday"; hours: 7 }
+  | { kind: "specific_time"; exit_at: string };
 type ExitSchedule = {
   entryIst: string; exitIst: string; exitUtc: string; durationMinutes: number;
   sessionCrossings: number; contractExpiryIst: string; contractExpiryUtc: string;
   latestSafeExitUtc: string;
-};
-const HOURS: Record<"intraday" | "overnight" | "positional", readonly number[]> = {
-  intraday: [7, 11], overnight: [16, 24], positional: [48, 72]
 };
 
 const LIBRARY_COPY: Record<LibraryState, { label: string; tone: "active" | "warning" | "negative" | "neutral" }> = {
@@ -399,9 +395,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
   const localDraftKey = `${LOCAL_DRAFT_KEY}:${userId}`;
   const [strategy, setStrategy] = useState<StrategyDefinition>(initialStrategy);
   const [exitKind, setExitKind] = useState<ExitKind>("intraday");
-  const [presetHours, setPresetHours] = useState(7);
-  const [expiryNumber, setExpiryNumber] = useState<1 | 2>(1);
-  const [customExitAt, setCustomExitAt] = useState(() => toIso(localDateTime(8)));
+  const [customExitAt, setCustomExitAt] = useState(() => toIso(localDateTime(7)));
   const [exitPreview, setExitPreview] = useState<ExitSchedule | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [expandedLeg, setExpandedLeg] = useState<string | null>(strategy.legs[0]?.id ?? null);
@@ -424,10 +418,8 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
 
   const exitChoice: ExitChoice = exitKind === "specific_time"
     ? { kind: "specific_time", exit_at: customExitAt }
-    : exitKind === "expiry"
-      ? { kind: "expiry", expiry_number: expiryNumber }
-      : { kind: exitKind, hours: presetHours };
-  useEffect(() => setExitPreview(null), [strategy.entry.entryAt, exitKind, presetHours, expiryNumber, customExitAt, strategy.legs, strategy.exitMinutesBeforeExpiry]);
+    : { kind: "intraday", hours: 7 };
+  useEffect(() => setExitPreview(null), [strategy.entry.entryAt, exitKind, customExitAt, strategy.legs, strategy.exitMinutesBeforeExpiry]);
 
   const issues = useMemo(() => validate(strategy), [strategy]);
   const invalidFields = useMemo(
@@ -1009,30 +1001,13 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                 label="Exit choice"
                 value={exitKind}
                 onChange={value => {
-                  const kind = value as ExitKind;
-                  setExitKind(kind);
-                  if (kind in HOURS) setPresetHours(HOURS[kind as keyof typeof HOURS][0]);
+                  if (value === "intraday" || value === "specific_time") setExitKind(value);
                 }}
                 options={[
-                  { value: "intraday", label: "Intraday session" },
-                  { value: "overnight", label: "Overnight" },
-                  { value: "positional", label: "Positional" },
+                  { value: "intraday", label: "Up to 7 hours" },
                   { value: "specific_time", label: "Specific exit time" },
-                  { value: "expiry", label: "Contract expiry" }
                 ]}
               />
-              {exitKind in HOURS && <Select
-                label="Holding duration"
-                value={String(presetHours)}
-                onChange={value => setPresetHours(Number(value))}
-                options={HOURS[exitKind as keyof typeof HOURS].map(hours => ({ value: String(hours), label: `${hours} hours` }))}
-              />}
-              {exitKind === "expiry" && <Select
-                label="Listed expiry"
-                value={String(expiryNumber)}
-                onChange={value => setExpiryNumber(Number(value) as 1 | 2)}
-                options={[{ value: "1", label: "First eligible" }, { value: "2", label: "Second eligible" }]}
-              />}
               <Field label="Entry time" invalid={invalidFields.has("entryAt")}>
                 <input
                   type="datetime-local"
@@ -1056,6 +1031,7 @@ export default function StrategyBuilder({ userId, onNotice, liveEnabled, backend
                 onChange={exitMinutesBeforeExpiry => setStrategy({ ...strategy, exitMinutesBeforeExpiry })}
               />
             </div>
+            <p className="fine-print">Uses the upcoming 17:30 IST expiry. Exit is within seven hours and before the expiry safety buffer. Late-session holds shorten automatically.</p>
             <button type="button" className="button secondary" disabled={previewing || !backendOnline} onClick={() => void previewExitTime()}>
               {previewing ? "Calculating…" : "Calculate exit time"}
             </button>
