@@ -11,7 +11,16 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
-from .assets import DEFAULT_ASSET, Asset, asset_run_key, enabled_assets, run_asset, strategy_asset
+from .assets import (
+    ASSETS,
+    DEFAULT_ASSET,
+    Asset,
+    asset_run_key,
+    automation_asset_enabled,
+    enabled_assets,
+    run_asset,
+    strategy_asset,
+)
 from .auth import current_account, require_owner, require_user
 from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
 from .capital import percentage_concurrency_limit
@@ -82,6 +91,12 @@ class AutomationRunRequest(BaseModel):
 
     reason: str | None = None
     asset: Asset = DEFAULT_ASSET
+
+
+class AssetAutomationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    enabled: bool
 
 
 def verified_decision_report(outcome: str, report: str, *, shared: bool) -> str:
@@ -587,8 +602,11 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
             and (run_id, str(chart.get("id"))) in available
             and (link := chart_link(db.charts, run_id, chart)) is not None
         ]
+    shared_settings = await db.select("automation_settings", {"user_id": f"eq.{SHARED_USER_ID}"})
+    analysis = shared_settings[0] if shared_settings else {"enabled": False}
     return {
         "success": True,
+        "assetAutomation": {asset: automation_asset_enabled(analysis, asset) for asset in ASSETS},
         "settings": {
             "enabled": settings["enabled"],
             "maximumConcurrentStrategies": percentage_concurrency_limit(capital_policy.allocation_mode),
@@ -645,6 +663,20 @@ async def update_automation_settings(
     db: Database = request.app.state.db
     settings = await set_account_automation(db, str(user["id"]), body.enabled)
     return {"success": True, "settings": settings}
+
+
+@router.put("/assets/{asset}")
+async def update_asset_automation(
+    asset: Asset, request: Request, body: AssetAutomationUpdate, user: RequiredUser
+) -> dict[str, Any]:
+    db: Database = request.app.state.db
+    await require_owner(db, user, max_age=5)
+    flags = await db.runtime.data.request(
+        "sharedAnalysis:setAssetEnabled",
+        {"actorId": str(user["id"]), "asset": asset, "enabled": body.enabled}, mutation=True,
+    )
+    logger.info("Owner asset automation change actor=%s asset=%s enabled=%s", user["id"], asset, body.enabled)
+    return {"success": True, "assetAutomation": flags}
 
 
 async def set_account_automation(
@@ -853,7 +885,7 @@ class AutomationScheduler:
         now = datetime.now(UTC)
         if shared_enabled(getattr(self.db, "settings", None)):
             global_settings = await self.db.select("automation_settings", {"user_id": f"eq.{SHARED_USER_ID}"})
-            settings = [{"user_id": SHARED_USER_ID}] if global_settings and global_settings[0]["enabled"] else []
+            settings = global_settings if global_settings and global_settings[0]["enabled"] else []
         else:
             settings = await self.db.select(
                 "automation_settings",
@@ -882,6 +914,7 @@ class AutomationScheduler:
             }
             for row in settings
             for asset in enabled_assets(getattr(self.db, "settings", None))
+            if automation_asset_enabled(row, asset)
             for run in fixed_runs
         ]
         if payload:
@@ -921,7 +954,9 @@ class AutomationScheduler:
                 await self.db.select(
                     "automation_agent_runs",
                     {
-                        "select": "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id",
+                        "select": (
+                            "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id,asset"
+                        ),
                         "status": "eq.scheduled",
                         "trigger": trigger_filter,
                         **(
@@ -942,6 +977,11 @@ class AutomationScheduler:
             if (recheck_available if is_recheck else analysis_available) <= 0:
                 continue
             if str(row["user_id"]) not in enabled_users:
+                continue
+            if (
+                shared_enabled(getattr(self.db, "settings", None))
+                and not automation_asset_enabled(settings[0], run_asset(row))
+            ):
                 continue
             scheduled_for = datetime.fromisoformat(str(row["scheduled_for"]).replace("Z", "+00:00"))
             if now - scheduled_for > MAX_AUTOMATION_RUN_LATENESS:

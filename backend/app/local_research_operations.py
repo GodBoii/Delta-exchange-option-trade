@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from psycopg.rows import dict_row
 
-from .assets import Asset, asset_run_key, run_asset
+from .assets import Asset, asset_run_key, automation_asset_enabled, run_asset
 from .errors import AppError
 from .exit_schedule import validate_session_schedule
 from .materialized_definition import validate_materialized_definition
@@ -64,12 +64,28 @@ class LocalResearchOperations:
         return await operation(args)
 
     async def _run(self, cursor: Any, run_id: str, *, lock: bool = False) -> dict[str, Any]:
+        if lock:
+            await self.lock_asset_settings(cursor)
         suffix = " for update" if lock else ""
         await cursor.execute(f"select owner_id,status,data from trade.analysis_jobs where id=%s{suffix}", (run_id,))
         record = await cursor.fetchone()
         if not record:
             raise AppError(404, "Agent run unavailable", "agent_run_unavailable")
+        if lock:
+            await self.require_asset_enabled(cursor, run_asset(record["data"]))
         return record
+
+    @staticmethod
+    async def lock_asset_settings(cursor: Any) -> dict[str, Any] | None:
+        # Always lock settings before jobs/proposals, matching the owner pause transaction.
+        await cursor.execute("select analysis from trade.system_settings where key='main' for share")
+        config = await cursor.fetchone()
+        return config["analysis"] if config else None
+
+    async def require_asset_enabled(self, cursor: Any, asset: Asset) -> None:
+        settings = await self.lock_asset_settings(cursor)
+        if settings is not None and not automation_asset_enabled(settings, asset):
+            raise AppError(409, f"{asset} automation is paused", "automation_asset_paused")
 
     async def context(self, args: dict[str, Any]) -> dict[str, Any]:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:

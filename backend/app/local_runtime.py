@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
-from .assets import strategy_asset
+from .assets import run_asset, strategy_asset
 from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
@@ -128,7 +128,7 @@ def _sort_and_project(rows: list[dict[str, Any]], params: dict[str, str]) -> lis
 class AutomationSettings:
     """Per-user automation preferences stored on ``trade.users`` plus the shared analysis row."""
 
-    fields = ("enabled", "model_id", "minimum_follow_up_minutes", "maximum_agent_runs_per_day")
+    fields = ("enabled", "model_id", "minimum_follow_up_minutes", "maximum_agent_runs_per_day", "asset_enabled")
 
     def __init__(self, data: LocalApplicationData) -> None:
         self.data = data
@@ -177,7 +177,7 @@ class AutomationSettings:
         value = {**DEFAULT_AUTOMATION, **(current[0] if current else {}), **payload}
         row = await self.data.request(
             "settings:saveAutomation",
-            {"userId": payload["user_id"], "value": {key: value[key] for key in self.fields}},
+            {"userId": payload["user_id"], "value": {key: value[key] for key in self.fields if key in value}},
             mutation=True,
         )
         return [row]
@@ -605,6 +605,7 @@ class LocalRuntimeStore:
         # Runs of any asset, and rechecks, execute in parallel. The row lock alone keeps one
         # scheduled run from being claimed twice; another running run never blocks a claim.
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await self.data.control.research.lock_asset_settings(cursor)
             await cursor.execute(
                 "select data from trade.analysis_jobs where id=%s and owner_id=%s and status='scheduled' for update",
                 (args["p_run_id"], user_id),
@@ -612,6 +613,7 @@ class LocalRuntimeStore:
             record = await cursor.fetchone()
             if not record:
                 return []
+            await self.data.control.research.require_asset_enabled(cursor, run_asset(record["data"]))
             row = {**record["data"], "status": "running", "started_at": datetime.now(UTC).isoformat(), "error": None}
             await self._save(connection, "automation_agent_runs", row, existing=True)
             return [row]
@@ -622,7 +624,14 @@ class LocalRuntimeStore:
             raise AppError(422, "Fixed-run batch too large", "fixed_run_batch_invalid")
         count = 0
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await self.data.control.research.lock_asset_settings(cursor)
             for item in runs:
+                try:
+                    await self.data.control.research.require_asset_enabled(cursor, run_asset(item))
+                except AppError as error:
+                    if error.code != "automation_asset_paused":
+                        raise
+                    continue
                 await cursor.execute(
                     """select data from trade.analysis_jobs
                        where owner_id=%s and unique_key=%s for update""",

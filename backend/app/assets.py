@@ -43,3 +43,8 @@ def enabled_assets(settings: Any) -> tuple[Asset, ...]:
         return ASSETS
     values = [item.strip() for item in str(configured).split(",") if item.strip()]
     return tuple(dict.fromkeys(parse_asset(value) for value in values))
+
+
+def automation_asset_enabled(settings: dict[str, Any], asset: Asset) -> bool:
+    """Old settings enable both assets until the owner explicitly pauses one."""
+    return bool(settings.get("enabled", True) and settings.get("asset_enabled", {}).get(asset, True))

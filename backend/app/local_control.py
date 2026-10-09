@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
-from .assets import asset_run_key, parse_asset
+from .assets import ASSETS, asset_run_key, automation_asset_enabled, parse_asset, run_asset
 from .errors import AppError
 from .local_research_operations import LocalResearchOperations
 
@@ -40,11 +41,64 @@ class LocalControl:
             "sharedAnalysis:pendingAllocationPage": self.pending_allocation_page,
             "sharedAnalysis:allocate": self.allocate,
             "sharedAnalysis:completeAllocation": self.complete_allocation,
+            "sharedAnalysis:setAssetEnabled": self.set_asset_enabled,
         }
         operation = operations.get(path)
         if operation is None:
             return await self.research.request(path, args)
         return await operation(args)
+
+    async def set_asset_enabled(self, args: dict[str, Any]) -> dict[str, bool]:
+        asset = parse_asset(args["asset"])
+        enabled = args["enabled"]
+        if not isinstance(enabled, bool):
+            raise AppError(422, "Invalid automation switch", "automation_switch_invalid")
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute("select owner_user_id,analysis from trade.system_settings where key='main' for update")
+            config = await cursor.fetchone()
+            if not config or config["owner_user_id"] != args["actorId"]:
+                raise AppError(403, "Owner access required", "owner_required")
+            analysis = config["analysis"]
+            flags = {**analysis.get("asset_enabled", {}), asset: enabled}
+            await cursor.execute(
+                "update trade.system_settings set analysis=%s where key='main'",
+                (Jsonb({**analysis, "asset_enabled": flags}),),
+            )
+            await cursor.execute(
+                "select pg_notify('trade_changes', %s)",
+                ('{"table":"analysis_jobs","owner":"global"}',),
+            )
+            if not enabled:
+                message = f"{asset} automation was turned off"
+                # All writes use the runtime store so indexed status, history and capital stay in sync.
+                await cursor.execute(
+                    """select data from trade.analysis_jobs where status in ('scheduled','running')
+                       and coalesce(nullif(data->>'asset',''),'BTC')=%s for update""", (asset,),
+                )
+                for record in await cursor.fetchall():
+                    await self.store._save(connection, "automation_agent_runs", {
+                        **record["data"], "status": "cancelled", "completed_at": _now(), "error": message,
+                    }, existing=True)
+                await cursor.execute(
+                    """select data from trade.strategy_proposals where status='scheduled'
+                       and coalesce(nullif(data->>'asset',''),'BTC')=%s for update""", (asset,),
+                )
+                for record in await cursor.fetchall():
+                    proposal = record["data"]
+                    if proposal.get("strategy_id"):
+                        await cursor.execute(
+                            "select data from trade.strategies where id=%s and status='scheduled' for update",
+                            (proposal["strategy_id"],),
+                        )
+                        strategy = await cursor.fetchone()
+                        if strategy:
+                            await self.store._save(connection, "strategies", {
+                                **strategy["data"], "status": "cancelled", "last_error": message,
+                            }, existing=True)
+                    await self.store._save(connection, "strategy_proposals", {
+                        **proposal, "status": "cancelled", "rejection_reason": message,
+                    }, existing=True)
+            return {item: automation_asset_enabled({**analysis, "asset_enabled": flags}, item) for item in ASSETS}
 
     async def recheck_states(self, args: dict[str, Any]) -> dict[str, str]:
         strategy_ids = args["strategyIds"]
@@ -89,12 +143,14 @@ class LocalControl:
         requester = args["requestedBy"]
         asset = parse_asset(args.get("asset"))
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("select owner_user_id,analysis from trade.system_settings where key='main'")
+            await cursor.execute("select owner_user_id,analysis from trade.system_settings where key='main' for share")
             config = await cursor.fetchone()
             if not config or config["owner_user_id"] != requester:
                 raise AppError(403, "Owner access required", "owner_required")
             if not config["analysis"].get("enabled"):
                 raise AppError(409, "Global analysis is paused", "analysis_paused")
+            if not automation_asset_enabled(config["analysis"], asset):
+                raise AppError(409, f"{asset} automation is paused", "automation_asset_paused")
             # A manual request always starts its own run, even while other runs are active.
             now = _now()
             row = {
@@ -171,6 +227,7 @@ class LocalControl:
     async def allocate(self, args: dict[str, Any]) -> dict[str, Any]:
         decision_id, user_id = args["decisionId"], args["userId"]
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await self.research.lock_asset_settings(cursor)
             await cursor.execute(
                 "select pg_advisory_xact_lock(hashtextextended(%s, 46))", (f"{decision_id}:{user_id}",)
             )
@@ -179,6 +236,7 @@ class LocalControl:
             if not record or record["status"] != "scheduled" or record["data"].get("user_id") != "global":
                 raise AppError(409, "Shared decision unavailable", "shared_decision_unavailable")
             decision = record["data"]
+            await self.research.require_asset_enabled(cursor, run_asset(decision))
             if _time(decision["activation_time"]) <= datetime.now(UTC):
                 raise AppError(409, "Shared entry window elapsed", "shared_entry_elapsed")
             await cursor.execute(

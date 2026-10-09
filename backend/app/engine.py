@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from .assets import strategy_asset
+from .assets import automation_asset_enabled, strategy_asset
 from .auth import credentials_for_user
 from .capital import (
     CapitalPolicy,
@@ -877,6 +877,10 @@ class TradingEngine:
         row = await self.strategy_by_id(strategy_id)
         if row.get("entry_execution_at"):
             raise AppError(409, "Strategy entry has already run", "already_executed")
+        if row.get("shared_decision_id"):
+            analysis = await self.db.select("automation_settings", {"user_id": "eq.global"})
+            if analysis and not automation_asset_enabled(analysis[0], strategy_asset(row)):
+                raise AppError(409, "Automation was turned off before entry", "automation_disabled")
         if row.get("shared_decision_id"):
             enabled_accounts = await self.db.select(
                 "automation_settings", {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true", "select": "user_id"}
