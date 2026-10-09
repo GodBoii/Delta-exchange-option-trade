@@ -14,7 +14,7 @@ import {
   Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
 
-export type Tab = "connect" | "builder" | "market" | "automation" | "dashboard" | "runs" | "pnl" | "analytics" | "users";
+export type Tab = "connect" | "builder" | "market" | "automation" | "dashboard" | "runs" | "pnl" | "users";
 
 /** `short` is the label under the icon in the phone dock, where ~56px is all a destination gets. */
 type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
@@ -48,7 +48,6 @@ const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
      the desktop strip; Users is profile-only (see PROFILE_ONLY), and the phone
      dock leaves both to the profile. */
   { id: "pnl", label: "My P&L", short: "P&L", hint: "Your software trade results", icon: <TrendingUp />, family: "account" },
-  { id: "analytics", label: "Strategy analytics", short: "Analytics", hint: "Owner BTC and ETH strategy performance", icon: <BarChart3 />, family: "account" },
   { id: "users", label: "Users", short: "Users", hint: "Every account, capital and automation", icon: <Users />, family: "account" }
 ];
 

@@ -8212,46 +8212,6 @@ kbd {
 
 .report-page > .section-heading { margin-bottom: 0; }
 
-/* Owner strategy analytics shares the reporting palette and currency controls. */
-.analytics-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-3); }
-.analytics-toolbar > .report-range { flex: 1 1 230px; }
-.analytics-select { display: grid; gap: var(--s-2); min-width: 0; color: var(--text-2); font-size: 12px; }
-.analytics-toolbar > .analytics-select { flex: 1 1 230px; max-width: 420px; }
-.analytics-select select, .analytics-select input { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-1); padding: var(--s-2) var(--s-3); font: inherit; font-size: 14px; }
-.analytics-select select:focus-visible, .analytics-select input:focus-visible, .analytics-heat-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.analytics-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--line); }
-.analytics-metric { display: grid; align-content: start; gap: var(--s-2); padding: var(--s-4); min-width: 0; }
-.analytics-metric > span, .analytics-metric > small { color: var(--text-2); font-size: 12px; }
-.analytics-metric > strong { font-size: clamp(18px, 2vw, 28px); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.analytics-gain { color: var(--long-text); }
-.analytics-loss { color: var(--danger-text); }
-.analytics-partial { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3); border: 1px solid var(--warn); padding: var(--s-3); border-radius: var(--r-sm); }
-.analytics-partial p { flex: 1 1 280px; color: var(--warn-text); }
-.analytics-month { max-width: 180px; }
-.analytics-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--s-2); }
-.analytics-day-label { color: var(--text-2); text-align: center; font-size: 11px; align-self: center; }
-.analytics-calendar-day { display: grid; gap: var(--s-1); min-width: 0; }
-.analytics-calendar-day > small { color: var(--text-2); font-size: 11px; }
-.analytics-heat-cell { display: grid; position: relative; place-items: center; border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--surface-2); min-height: 32px; font: 600 12px monospace; color: var(--text-1); }
-.analytics-heat-cell.is-gain, .analytics-heat-cell.is-loss { color: var(--text-1); }
-.analytics-heat-cell.is-empty { color: var(--text-3); }
-.analytics-heat-tooltip { display: none; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5; width: max-content; max-width: 180px; padding: var(--s-2); border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface-1); color: var(--text-1); font: 12px/1.5 var(--font-body, sans-serif); box-shadow: 0 3px 12px var(--scrim); pointer-events: none; }
-.analytics-heat-cell:hover .analytics-heat-tooltip, .analytics-heat-cell:focus .analytics-heat-tooltip { display: block; }
-.analytics-hour-grid { display: grid; grid-template-columns: 48px repeat(24, minmax(28px, 1fr)); min-width: 850px; gap: var(--s-1); padding-block: var(--s-2); }
-.analytics-hour-row { display: contents; }
-.analytics-table { font-variant-numeric: tabular-nums; }
-.analytics-table td { white-space: nowrap; }
-.analytics-table th[scope="row"] { min-width: 180px; max-width: 360px; overflow-wrap: anywhere; color: var(--text-1); font-weight: 500; }
-.analytics-run-id { display: block; margin-top: var(--s-1); color: var(--text-3); font: 11px monospace; }
-.analytics-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); font-size: 12px; color: var(--text-2); }
-.analytics-pagination > span { margin-right: auto; }
-@media (max-width: 720px) {
-  .analytics-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .analytics-metric { padding: var(--s-3) var(--s-2); }
-  .analytics-toolbar > .analytics-select { max-width: none; }
-  .analytics-calendar { gap: var(--s-1); }
-}
-
 .report-panel,
 .owner-profile-panel,
 .owner-capital-panel {

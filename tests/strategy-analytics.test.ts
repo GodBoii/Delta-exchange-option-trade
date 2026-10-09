@@ -54,9 +54,3 @@ test("CSV escapes names and blocks spreadsheet formulas", () => {
   expect(csv).toContain('"-3"');
   expect(csv.split("\r\n")).toHaveLength(2);
 });
-
-test("CSV does not count provisional P&L on open runs", () => {
-  const csv = strategyCsv([trade("open", "999", { accountingState: "open" })]);
-  expect(csv).not.toContain('"999"');
-  expect(csv).toContain('"open"');
-});

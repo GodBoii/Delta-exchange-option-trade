@@ -223,7 +223,7 @@ function ChartTooltip({ x, width, children }: { x: number; width: number; childr
   return <div className="pnl-tooltip" style={{ left }} aria-hidden="true">{children}</div>;
 }
 
-export function LineChart({ points, metricLabel = "Cumulative P&L" }: { points: PnlPoint[]; metricLabel?: string }) {
+export function LineChart({ points }: { points: PnlPoint[] }) {
   const { ref, width } = useMeasuredWidth();
   const { convertFromUsd, formatMoney } = useCurrency();
   const axis = useAxisFormat();
@@ -262,7 +262,7 @@ export function LineChart({ points, metricLabel = "Cumulative P&L" }: { points: 
   }
 
   const final = points[points.length - 1];
-  const summary = `${metricLabel} across ${points.length} settled runs from ${shortDate(points[0].at)} to ${shortDate(final.at)}, ending at ${formatMoney(final.cumulative, { signed: true })}. Use the arrow keys to read each run.`;
+  const summary = `Cumulative P&L across ${points.length} settled runs from ${shortDate(points[0].at)} to ${shortDate(final.at)}, ending at ${formatMoney(final.cumulative, { signed: true })}. Use the arrow keys to read each run.`;
 
   return (
     <div className="pnl-chart" ref={ref}>
@@ -346,7 +346,7 @@ export function LineChart({ points, metricLabel = "Cumulative P&L" }: { points: 
             <b className={point.pnl >= 0 ? "is-gain" : "is-loss"}>{formatMoney(point.pnl, { signed: true })}</b>
           </span>
           <span className="pnl-tooltip-row">
-            <span>{metricLabel}</span>
+            <span>Running total</span>
             <b className={point.cumulative >= 0 ? "is-gain" : "is-loss"}>{formatMoney(point.cumulative, { signed: true })}</b>
           </span>
         </ChartTooltip>
@@ -354,7 +354,7 @@ export function LineChart({ points, metricLabel = "Cumulative P&L" }: { points: 
 
       <p className="visually-hidden" aria-live="polite">
         {point
-          ? `${point.name}, ${shortDate(point.at)}: ${formatMoney(point.pnl, { signed: true })}, ${metricLabel} ${formatMoney(point.cumulative, { signed: true })}`
+          ? `${point.name}, ${shortDate(point.at)}: ${formatMoney(point.pnl, { signed: true })}, running total ${formatMoney(point.cumulative, { signed: true })}`
           : ""}
       </p>
     </div>
