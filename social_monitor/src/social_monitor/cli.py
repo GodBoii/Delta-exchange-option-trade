@@ -31,7 +31,7 @@ class ReplayCollector:
     def __init__(self, posts: list[Post]):
         self.posts = posts
 
-    async def fetch(self, target: Target, limit: int) -> Collection:
+    async def fetch(self, target: Target, limit: int, **options) -> Collection:
         return Collection(self.posts, "ok" if self.posts else "empty")
 
 
@@ -59,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", type=Path, help="override local state path, relative to current directory")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("validate", help="validate configuration without network or state changes")
-    commands.add_parser("status", help="show local poll health and pending alerts")
+    status_command = commands.add_parser("status", help="show local poll health and pending alerts")
+    status_command.add_argument("--check", action="store_true", help="exit 2 if collection is unhealthy")
     commands.add_parser("export", help="export public evidence as JSONL, never session cookies")
     stats = commands.add_parser("stats", help="collection reliability and measured alert delay")
     stats.add_argument("--hours", type=int, default=24, choices=range(1, 721), metavar="1-720")
@@ -81,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         database = config.state_dir / "monitor.sqlite"
         if args.command in {"status", "export", "stats"} and not database.exists():
             output({"event": "not_started", "targets": [], "posts": 0, "pending_alerts": 0})
-            return 0
+            return 2 if args.command == "status" and args.check else 0
         if args.command == "auth":
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.name):
                 raise ValueError("invalid local account name")
@@ -110,9 +111,12 @@ def main(argv: list[str] | None = None) -> int:
                     status = store.status()
                     now = datetime.now(UTC)
                     for target in status["targets"]:
-                        target["stale"] = (
-                            now - parse_time(target["completed_at"])
-                        ).total_seconds() > config.poll_seconds * 3
+                        newest = target.get("details", {}).get("newest_published_at")
+                        if newest:
+                            target["newest_post_age_seconds"] = (now - parse_time(newest)).total_seconds()
+                        target["stale"] = (now - parse_time(target["completed_at"])).total_seconds() > target.get(
+                            "details", {}
+                        ).get("interval_seconds", config.poll_seconds) * 3
                     seen = {item["target"]: item for item in status["targets"]}
                     status["healthy"] = bool(config.targets) and all(
                         target.key in seen and seen[target.key]["status"] == "ok" and not seen[target.key]["stale"]
@@ -120,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     status["unpolled_targets"] = [target.name for target in config.targets if target.key not in seen]
                     output(status)
+                    if args.check and not status["healthy"]:
+                        return 2
             return 0
         if args.command == "replay":
             # Validate every fixture before any database mutation.
@@ -136,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         with (
             writer_lock(config.state_dir),
             closing(Store(database)) as store,
-            closing(XCollector(accounts)) as collector,
+            closing(XCollector(accounts, page_size=config.page_size, max_pages=config.max_pages)) as collector,
         ):
             healthy = asyncio.run(Runner(config, store, collector, output, diagnostic).run(once=args.once))
         return 0 if healthy else 2

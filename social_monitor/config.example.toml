@@ -1,8 +1,12 @@
 # Paths are relative to this file, never the trading backend.
 state_dir = "state"
-poll_seconds = 120
-timeout_seconds = 45
-batch_size = 40
+poll_seconds = 15
+timeout_seconds = 15
+batch_size = 80
+page_size = 20
+max_pages = 4
+reconcile_seconds = 900
+request_spacing_seconds = 2
 alert_max_age_seconds = 900
 # First collection of each target establishes a baseline without historical alerts.
 alert_on_first_poll = false
@@ -12,6 +16,8 @@ name = "elon"
 kind = "user"
 value = "elonmusk"
 include_replies = true
+# Optional per-target cadence, otherwise poll_seconds above applies.
+# poll_seconds = 30
 
 [[targets]]
 name = "trump"

@@ -38,8 +38,18 @@ CREATE TABLE IF NOT EXISTS poll_details (
     poll_id INTEGER PRIMARY KEY REFERENCES polls(id),
     details_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS target_posts (
+    target TEXT NOT NULL,
+    post_id TEXT NOT NULL REFERENCES posts(id),
+    PRIMARY KEY (target, post_id)
+);
+CREATE TABLE IF NOT EXISTS reconciliations (
+    target TEXT PRIMARY KEY,
+    completed_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS polls_completed_at ON polls(completed_at);
 CREATE INDEX IF NOT EXISTS alerts_pending ON alerts(id) WHERE delivered_at IS NULL;
+CREATE INDEX IF NOT EXISTS posts_first_seen ON posts(first_seen_at);
 """
 
 
@@ -63,6 +73,23 @@ class Store:
     def has_baseline(self, target: str) -> bool:
         return self.connection.execute("SELECT 1 FROM baselines WHERE target = ?", (target,)).fetchone() is not None
 
+    def recent_ids(self, target: str, author: str | None = None, limit: int = 2000) -> frozenset[str]:
+        rows = self.connection.execute(
+            "SELECT post_id FROM target_posts WHERE target = ? ORDER BY length(post_id) DESC, post_id DESC LIMIT ?",
+            (target, limit),
+        ).fetchall()
+        if not rows and author is not None:
+            rows = self.connection.execute(
+                "SELECT id FROM posts WHERE json_extract(post_json, '$.author') = ? COLLATE NOCASE "
+                "ORDER BY first_seen_at DESC LIMIT ?",
+                (author, limit),
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
+    def reconciliation_due(self, target: str, now: datetime, interval: float) -> bool:
+        row = self.connection.execute("SELECT completed_at FROM reconciliations WHERE target = ?", (target,)).fetchone()
+        return row is None or (now - datetime.fromisoformat(row[0])).total_seconds() >= interval
+
     def complete_poll(
         self,
         target: str,
@@ -74,6 +101,7 @@ class Store:
         error_code: str | None = None,
         *,
         details: dict | None = None,
+        reconciled: bool = False,
     ) -> int:
         inserted = 0
         with self.connection:
@@ -89,6 +117,7 @@ class Store:
                             "INSERT INTO alerts(post_id, payload) VALUES (?, ?)",
                             (post.id, json.dumps(alerts[post.id])),
                         )
+                self.connection.execute("INSERT OR IGNORE INTO target_posts VALUES (?, ?)", (target, post.id))
             cursor = self.connection.execute(
                 "INSERT INTO polls(target,started_at,completed_at,status,fetched,inserted,error_code) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -100,6 +129,13 @@ class Store:
                 )
             if status in {"ok", "empty"}:
                 self.connection.execute("INSERT OR IGNORE INTO baselines VALUES (?)", (target,))
+            if reconciled and posts and status in {"ok", "partial"}:
+                # A partially useful deep read must not force deep pagination on every fast poll.
+                self.connection.execute(
+                    "INSERT INTO reconciliations VALUES (?, ?) ON CONFLICT(target) "
+                    "DO UPDATE SET completed_at = excluded.completed_at",
+                    (target, completed.isoformat()),
+                )
         return inserted
 
     def deliver(self, emit, delivered_at: datetime) -> int:

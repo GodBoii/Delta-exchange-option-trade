@@ -8,6 +8,7 @@ from pathlib import Path
 from test_evidence import NOW, post
 
 from social_monitor.diagnostics import warning_code
+from social_monitor.domain import make_alert
 from social_monitor.store import Store
 
 
@@ -20,6 +21,7 @@ class DiagnosticsTests(unittest.TestCase):
             ("twscrape.queue_client", "Session expired or banned: auth_token=secret", "authentication_required"),
             ("twscrape.queue_client", "Blocked by Cloudflare: 403 secret", "access_blocked"),
             ("twscrape.queue_client", "API busy: (-1) LoadShed", "upstream_busy"),
+            ("twscrape.logger", "API busy: (-1) LoadShed", "upstream_busy"),
         ]
         for module, message, code in cases:
             self.assertEqual(warning_code({"name": module, "message": message}), code)
@@ -40,10 +42,15 @@ class DiagnosticsTests(unittest.TestCase):
                 ("123", NOW.isoformat(), NOW.isoformat(), json.dumps(post().to_dict())),
             )
             db.execute("INSERT INTO baselines VALUES ('old')")
+            db.execute(
+                "INSERT INTO alerts(post_id,payload) VALUES (?, ?)", ("123", json.dumps(make_alert(post(), NOW, 900)))
+            )
         store = Store(path)
         self.addCleanup(store.close)
         self.assertEqual(store.status()["posts"], 1)
         self.assertTrue(store.has_baseline("old"))
+        self.assertEqual(store.status()["pending_alerts"], 1)
+        self.assertEqual(store.recent_ids("user:example:True", "example"), frozenset({"123"}))
         store.complete_poll("old", NOW, NOW, [post()], {}, "ok", details={"pages": 1})
         self.assertEqual(store.status()["targets"][0]["details"], {"pages": 1})
         self.assertEqual(store.statistics(NOW)["collections"][0]["new_posts"], 0)

@@ -77,7 +77,7 @@ class EvidenceTests(unittest.TestCase):
             path = Path(directory) / "config.toml"
             path.write_text('state_dir = "state"\npoll_seconds = 120\n', encoding="utf-8")
             self.assertEqual(load_config(path).state_dir, Path(directory).resolve() / "state")
-            for value in ("true", "nan", "0", "29", '"30"'):
+            for value in ("true", "nan", "0", "14", '"15"'):
                 path.write_text(f"poll_seconds = {value}\n", encoding="utf-8")
                 with self.assertRaises(ValueError):
                     load_config(path)

@@ -15,7 +15,7 @@ def warning_code(record: dict) -> str:
         return "parser_error"
     if module == "twscrape.api" and "pagination stalled" in message:
         return "pagination_stalled"
-    if module == "twscrape.queue_client":
+    if module in {"twscrape.queue_client", "twscrape.logger"}:
         if any(text in message for text in ("Session expired", "Ban detected", "Missing authentication")):
             return "authentication_required"
         if "Blocked by" in message:

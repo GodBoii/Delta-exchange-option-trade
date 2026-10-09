@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delta-social-monitor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Independent, read-only X monitoring with local evidence storage"
 requires-python = ">=3.11"
 dependencies = ["twscrape==0.20.1"]

@@ -24,7 +24,7 @@ class StubCollector:
     def __init__(self, result):
         self.result = result
 
-    async def fetch(self, target, limit):
+    async def fetch(self, target, limit, **options):
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -60,7 +60,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_and_cancellation(self):
         class Hanging:
-            async def fetch(self, target, limit):
+            async def fetch(self, target, limit, **options):
                 await asyncio.sleep(60)
 
         self.config = replace(self.config, timeout_seconds=0.01)
@@ -68,7 +68,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.status()["targets"][0]["error_code"], "TimeoutError")
 
         class Cancelled:
-            async def fetch(self, target, limit):
+            async def fetch(self, target, limit, **options):
                 raise asyncio.CancelledError()
 
         with self.assertRaises(asyncio.CancelledError):
@@ -77,7 +77,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def test_installed_collector_fails_without_session_before_network(self):
         with closing(XCollector(self.state / "accounts.sqlite")) as collector:
             self.assertFalse(await self.runner(collector).run(once=True))
-        self.assertEqual(self.store.status()["targets"][0]["error_code"], "NoAccountError")
+        self.assertEqual(self.store.status()["targets"][0]["error_code"], "authentication_required")
 
     async def test_collector_filters_other_authors_and_closes_stream_at_limit(self):
         closed = []
@@ -93,10 +93,16 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             media=media,
         )
 
-        async def stream(uid, limit):
+        async def stream(uid, limit, kv):
             try:
-                yield SimpleNamespace(user=SimpleNamespace(id=789))
-                yield tweet
+                yield SimpleNamespace(
+                    status_code=200,
+                    headers={},
+                    json=lambda: {
+                        "data": {},
+                        "items": [SimpleNamespace(user=SimpleNamespace(id=789)), tweet],
+                    },
+                )
                 self.fail("collector read past the requested limit")
             finally:
                 closed.append(True)
@@ -104,8 +110,9 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         with closing(XCollector(self.state / "accounts.sqlite")) as collector:
             collector.api = SimpleNamespace(
                 user_by_login=AsyncMock(return_value=SimpleNamespace(id=456)),
-                user_tweets_and_replies=stream,
+                user_tweets_and_replies_raw=stream,
             )
+            collector.parse_page = lambda data: data["items"]
             result = await collector.fetch(self.target, 1)
         self.assertEqual([item.id for item in result.posts], ["123"])
         self.assertEqual(closed, [True])
@@ -116,12 +123,19 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
                 yield tweet
 
         with closing(XCollector(self.state / "accounts.sqlite")) as collector:
-            collector.api = SimpleNamespace(search=empty)
+            collector.api = SimpleNamespace(search_raw=empty)
             result = await collector.fetch(Target("search", "search", "$DOGE"), 40)
         self.assertEqual((result.status, result.error_code), ("failed", "empty_unverified"))
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_status_check_reports_unstarted_monitor_as_unhealthy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text('state_dir="state"\n', encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["--config", str(config), "status", "--check"]), 2)
+
     def test_auth_refuses_visible_input_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
