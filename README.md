@@ -213,6 +213,15 @@ https://www.tradecognition.online/auth/callback
 
 ### Docker backend
 
+The owner's Automation page has separate BTC and ETH switches under **Asset automation**.
+Each pauses that asset's shared analysis and new automated entries across all accounts.
+Pausing cancels pending agent entries and invalidates running analyses, so their later
+responses cannot schedule a trade. Active trades retain their exit and risk rules, and
+manual strategies remain unchanged. Resuming creates future session reviews without
+reviving cancelled entries. Both assets default to enabled for existing installations.
+The original account automation switch still controls only that account's participation.
+See [asset automation controls](docs/33-asset-automation-controls.md) for storage and checks.
+
 Deploy all three application services to an always-on Docker host. The Delta service still needs a stable outbound public IP because the tunnel changes inbound routing only. On the server, create the ignored `.env.local` containing the server variables.
 
 Every application service waits for PostgreSQL to report healthy. The automation scheduler also checks analyzer readiness before claiming a due run, leaving it scheduled during temporary outages. The existing ten-minute lateness limit still applies. Manual runs return a temporary-unavailable message before creating a run if the analyzer is not ready.
