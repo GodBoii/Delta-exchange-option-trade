@@ -2,12 +2,16 @@
 
 import os
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
+from pydantic import ValidationError
 
+from app import automation
 from app.assets import automation_asset_enabled
 from app.errors import AppError
 from app.local_runtime import LocalRuntimeStore
@@ -20,6 +24,25 @@ def test_legacy_settings_keep_both_assets_enabled():
     settings = {"enabled": True, "asset_enabled": {"ETH": False}}
     assert automation_asset_enabled(settings, "BTC")
     assert not automation_asset_enabled(settings, "ETH")
+
+
+async def test_asset_endpoint_rejects_regular_accounts_before_writing():
+    mutation = AsyncMock()
+    db = SimpleNamespace(profile=AsyncMock(return_value={"user_type": "user"}),
+                         runtime=SimpleNamespace(data=SimpleNamespace(request=mutation)))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=db)))
+    with pytest.raises(AppError) as caught:
+        await automation.update_asset_automation(
+            "ETH", request, automation.AssetAutomationUpdate(enabled=False), {"id": "regular-user"},
+        )
+    assert caught.value.status == 403
+    mutation.assert_not_awaited()
+
+
+def test_asset_switch_requires_a_boolean():
+    for value in ("false", 0, None):
+        with pytest.raises(ValidationError):
+            automation.AssetAutomationUpdate(enabled=value)
 
 
 @pytest.fixture
@@ -94,12 +117,24 @@ async def test_pause_cancels_only_selected_asset_and_persists(asset_runtime):
             row = (await runtime.select("automation_agent_runs", {"id": f"eq.{identifiers[asset, status, 'job']}"}))[0]
             assert row["status"] == ("cancelled" if asset == "ETH" else status)
     assert (await runtime.select("strategies", {"id": f"eq.{manual_id}"}))[0]["status"] == "scheduled"
+    # A running analyzer cannot write another action after its owner pauses the asset.
+    running_id = identifiers["ETH", "running", "job"]
+    with pytest.raises(AppError) as caught:
+        await runtime.data.request("runtimeAutomation:saveSnapshot", {
+            "userId": "global", "runId": running_id, "snapshotId": str(uuid4()),
+        }, mutation=True)
+    assert caught.value.code == "automation_asset_paused"
     # Resuming schedules future sessions; cancelled entries remain cancelled.
     await runtime.data.request("sharedAnalysis:setAssetEnabled", {
         "actorId": actor, "asset": "ETH", "enabled": True,
     }, mutation=True)
     row = (await runtime.select("strategies", {"id": f"eq.{identifiers['ETH', 'scheduled']}"}))[0]
     assert row["status"] == "cancelled"
+    with pytest.raises(AppError) as caught:
+        await runtime.data.request("runtimeAutomation:saveSnapshot", {
+            "userId": "global", "runId": running_id, "snapshotId": str(uuid4()),
+        }, mutation=True)
+    assert caught.value.code == "run_not_active"
 
 
 async def test_pause_blocks_manual_requests_and_stale_scheduler_claims(asset_runtime):
