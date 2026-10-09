@@ -68,9 +68,10 @@ export function settlementHeatmaps(points: readonly PnlPoint[]) {
 
 /** Quote every field and neutralize spreadsheet formulas in user-controlled strategy names. */
 export function strategyCsv(trades: readonly TradeItem[]) {
+  const counted = new Set(settledSeries(trades).map(point => point.runId));
   const quote = (value: string, userControlled: boolean) => `"${(userControlled && /^\s*[=+\-@]/.test(value) ? "'" : "") + value.replaceAll('"', '""')}"`;
   const rows = trades.map(trade => [trade.runId, trade.name, trade.asset ?? "Unknown", trade.accountingState,
-    trade.exitExecutedAt ?? trade.activityAt, trade.realizedPnl ?? "", trade.exchangeFees ?? "",
+    trade.exitExecutedAt ?? trade.activityAt, counted.has(trade.runId) ? trade.realizedPnl ?? "" : "", trade.exchangeFees ?? "",
     trade.deletedByUserAt ?? ""]);
   return [["Run ID", "Strategy", "Asset", "Accounting state", "Settlement/activity UTC", "Net P&L USD", "Fees USD", "Deleted at UTC"], ...rows]
     .map(row => row.map((value, index) => quote(value, index === 1)).join(",")).join("\r\n");

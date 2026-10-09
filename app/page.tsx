@@ -41,6 +41,10 @@ const OwnerUsers = dynamic(() => import("@/app/components/OwnerUsers"), {
   loading: () => <TableSkeleton label="users" rows={6} />
 });
 
+const StrategyAnalytics = dynamic(() => import("@/app/components/StrategyAnalytics"), {
+  loading: () => <TableSkeleton label="strategy analytics" rows={6} />
+});
+
 type BackendStatus = "checking" | "online" | "offline";
 
 const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "automation", "pnl"];
@@ -53,7 +57,7 @@ const OFFLINE_TABS: Tab[] = ["builder", "market"];
  * navigation, not authorization.
  */
 function tabsFor(base: Tab[], isOwner: boolean): Tab[] {
-  return isOwner && base.includes("pnl") ? [...base, "users"] : base;
+  return isOwner && base.includes("pnl") ? [...base, "analytics", "users"] : base;
 }
 
 /**
@@ -131,7 +135,7 @@ export default function Home() {
   useEffect(() => {
     const url = new URL(window.location.href);
     const requested = url.searchParams.get("tab");
-    const known = [...CONNECTED_TABS, ...UNCONNECTED_TABS].find(item => item === requested);
+    const known = TAB_ORDER.find(item => item === requested);
     if (!requested) return;
     if (known) setTab(known);
     url.searchParams.delete("tab");
@@ -308,6 +312,7 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "market" && <BtcMarketChart />}
       {tab === "automation" && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
       {tab === "pnl" && backendOnline && <PnlView />}
+      {tab === "analytics" && backendOnline && user.userType === "owner" && <StrategyAnalytics userId={userId} />}
       {tab === "users" && backendOnline && user.userType === "owner" && <OwnerUsers onNotice={onNotice} />}
     </PageEnter>
   );
