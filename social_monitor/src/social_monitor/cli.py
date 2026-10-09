@@ -7,7 +7,7 @@ import sys
 import warnings
 from contextlib import closing
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from getpass import GetPassWarning, getpass
 from pathlib import Path
 
@@ -61,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("validate", help="validate configuration without network or state changes")
     commands.add_parser("status", help="show local poll health and pending alerts")
     commands.add_parser("export", help="export public evidence as JSONL, never session cookies")
+    stats = commands.add_parser("stats", help="collection reliability and measured alert delay")
+    stats.add_argument("--hours", type=int, default=24, choices=range(1, 721), metavar="1-720")
     auth = commands.add_parser("auth", help="save your X session through hidden local prompts")
     auth.add_argument("--name", default="monitor")
     run = commands.add_parser("run", help="poll configured targets and print JSON alerts")
@@ -77,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             output({"valid": True, "targets": len(config.targets), "state_dir": str(config.state_dir)})
             return 0
         database = config.state_dir / "monitor.sqlite"
-        if args.command in {"status", "export"} and not database.exists():
+        if args.command in {"status", "export", "stats"} and not database.exists():
             output({"event": "not_started", "targets": [], "posts": 0, "pending_alerts": 0})
             return 0
         if args.command == "auth":
@@ -98,10 +100,12 @@ def main(argv: list[str] | None = None) -> int:
                 asyncio.run(add_session(config.state_dir / "accounts.sqlite", args.name, auth_token, ct0))
             output({"event": "session_saved", "live_access_verified": False})
             return 0
-        if args.command in {"status", "export"}:
+        if args.command in {"status", "export", "stats"}:
             with closing(Store(database, read_only=True)) as store:
                 if args.command == "export":
                     store.export(output)
+                elif args.command == "stats":
+                    output(store.statistics(datetime.now(UTC) - timedelta(hours=args.hours)))
                 else:
                     status = store.status()
                     now = datetime.now(UTC)

@@ -1,7 +1,9 @@
 """Local evidence and durable stdout alert outbox, independent of trading storage."""
 
 import json
+import math
 import sqlite3
+import statistics
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +34,12 @@ CREATE TABLE IF NOT EXISTS polls (
 );
 CREATE INDEX IF NOT EXISTS polls_target_id ON polls(target, id DESC);
 CREATE TABLE IF NOT EXISTS baselines (target TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS poll_details (
+    poll_id INTEGER PRIMARY KEY REFERENCES polls(id),
+    details_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS polls_completed_at ON polls(completed_at);
+CREATE INDEX IF NOT EXISTS alerts_pending ON alerts(id) WHERE delivered_at IS NULL;
 """
 
 
@@ -64,6 +72,8 @@ class Store:
         alerts: dict[str, dict],
         status: str,
         error_code: str | None = None,
+        *,
+        details: dict | None = None,
     ) -> int:
         inserted = 0
         with self.connection:
@@ -79,11 +89,15 @@ class Store:
                             "INSERT INTO alerts(post_id, payload) VALUES (?, ?)",
                             (post.id, json.dumps(alerts[post.id])),
                         )
-            self.connection.execute(
+            cursor = self.connection.execute(
                 "INSERT INTO polls(target,started_at,completed_at,status,fetched,inserted,error_code) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (target, started.isoformat(), completed.isoformat(), status, len(posts), inserted, error_code),
             )
+            if details is not None:
+                self.connection.execute(
+                    "INSERT INTO poll_details VALUES (?, ?)", (cursor.lastrowid, json.dumps(details))
+                )
             if status in {"ok", "empty"}:
                 self.connection.execute("INSERT OR IGNORE INTO baselines VALUES (?)", (target,))
         return inserted
@@ -108,11 +122,53 @@ class Store:
                 "SELECT count(*) FROM alerts WHERE delivered_at IS NULL"
             ).fetchone()[0],
         }
-        rows = self.connection.execute(
-            "SELECT target, started_at, completed_at, status, fetched, inserted, error_code FROM polls "
-            "WHERE id IN (SELECT max(id) FROM polls GROUP BY target) ORDER BY target"
+        details_available = (
+            self.connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='poll_details'").fetchone()
+            is not None
         )
-        return {**counts, "targets": [dict(row) for row in rows]}
+        rows = self.connection.execute(
+            "SELECT id, target, started_at, completed_at, status, fetched, inserted, error_code FROM polls "
+            "WHERE id IN (SELECT max(id) FROM polls GROUP BY target) ORDER BY target"
+        ).fetchall()
+        targets = []
+        for row in rows:
+            item = dict(row)
+            if details_available:
+                detail = self.connection.execute(
+                    "SELECT details_json FROM poll_details WHERE poll_id = ?", (item["id"],)
+                ).fetchone()
+                item["details"] = json.loads(detail[0]) if detail else {}
+            success = self.connection.execute(
+                "SELECT completed_at FROM polls WHERE target = ? AND status IN ('ok','empty') ORDER BY id DESC LIMIT 1",
+                (item["target"],),
+            ).fetchone()
+            item["last_success_at"] = success[0] if success else None
+            item.pop("id")
+            targets.append(item)
+        return {**counts, "targets": targets}
+
+    def statistics(self, since: datetime) -> dict:
+        rows = self.connection.execute(
+            "SELECT target, status, count(*) AS attempts, sum(inserted) AS new_posts "
+            "FROM polls WHERE completed_at >= ? GROUP BY target, status ORDER BY target, status",
+            (since.isoformat(),),
+        )
+        alerts = self.connection.execute(
+            "SELECT a.payload FROM alerts a JOIN posts p ON p.id = a.post_id WHERE p.first_seen_at >= ?",
+            (since.isoformat(),),
+        )
+        delays = sorted(json.loads(row[0])["publication_to_receipt_seconds"] for row in alerts)
+        latency = (
+            {
+                "samples": len(delays),
+                "median": statistics.median(delays),
+                "p95": delays[math.ceil(len(delays) * 0.95) - 1],
+                "max": max(delays),
+            }
+            if delays
+            else {"samples": 0}
+        )
+        return {"since": since.isoformat(), "collections": [dict(row) for row in rows], "alert_delay_seconds": latency}
 
     def export(self, emit) -> None:
         for row in self.connection.execute("SELECT post_json, first_seen_at FROM posts ORDER BY first_seen_at, id"):
