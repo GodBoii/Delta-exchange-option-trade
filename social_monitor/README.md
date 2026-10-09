@@ -9,7 +9,9 @@ This is a separate read-only process for watching X accounts, lists and Latest s
 - Candidate cashtag, EVM address and 32-byte Solana address extraction. Addresses are candidates, not verified token contracts.
 - JSON alerts on stdout, diagnostics on stderr. Posts without token mentions also produce alerts so new memes are retained.
 - Persistent deduplication across targets and restarts, a durable alert outbox and one writer per state directory.
-- First-poll baselines, stale-post filtering, per-target timeout and exponential retry backoff.
+- First-poll baselines, stale-post filtering, independent target schedules and bounded retries.
+- Incremental first-page checks using persisted post IDs, with bounded deeper reconciliation every 15 minutes.
+- Quota reset protection, safe warning categories and automatic stop on blocked or invalid authentication.
 - Local status, JSONL export and a replay command that needs no account or network.
 
 This version collects evidence. It does not yet perform semantic meme interpretation, token verification, price tracking, Reddit collection or trading. Those can consume the evidence later without changing the collector or the existing trading system.
@@ -26,7 +28,9 @@ Copy-Item config.example.toml config.local.toml
 .\.venv\Scripts\python.exe -m social_monitor --config config.local.toml validate
 ```
 
-Edit `config.local.toml` to select accounts. State paths are relative to the configuration file. The example watches two accounts at a two-minute interval; this is a starting setting, not a promise of subsecond collection. More accounts increase requests and the duration of a collection cycle. Targets run sequentially to bound load.
+Edit `config.local.toml` to select accounts. State paths are relative to the configuration file. Version 0.2 defaults to a 15-second interval, 20 posts per returned page, four pages maximum, and a 15-second timeout. Existing configurations with an explicit 120-second interval retain that setting until edited. A target can override `poll_seconds` independently.
+
+Targets share one session through a deadline-first scheduler. Poll starts are spaced by at least two seconds; scheduling from the start of a poll prevents collection duration from accumulating as drift. Collection remains sequential because the upstream account pool locks each endpoint while it is in use. More accounts to watch, slow requests or quota cooldowns can increase actual intervals.
 
 ### Check the pipeline without X
 
@@ -59,6 +63,13 @@ Keep the foreground process running for continuous monitoring. Stop with Ctrl+C.
 
 The first successful poll of each new target saves its current posts without historical alerts. Later fresh posts produce alerts. Set `alert_on_first_poll = true` to alert for recent posts on startup too. Deduplication persists, so changing that option does not re-alert stored posts. Renew expired cookies with `auth` after stopping the writer.
 
+To inspect reliability and measured publication-to-alert delay for the last day:
+
+```powershell
+.\.venv\Scripts\python.exe -m social_monitor --config config.local.toml stats --hours 24
+.\.venv\Scripts\python.exe -m social_monitor --config config.local.toml status --check
+```
+
 ## Linux or standalone Docker
 
 For Linux, the same CLI works after `python3 -m venv .venv` and `.venv/bin/python -m pip install -e .`.
@@ -81,10 +92,12 @@ docker compose -f compose.yaml down
 ## Health and coverage limits
 
 - `run --once` returns 0 when all target collections complete, 2 for a failed/partial collection, and 130 on interruption. Missing authorization fails before collection.
-- `status` shows the latest attempt per target, failure code, stale status, unpolled targets and pending alerts. It reads evidence without accessing X or exposing account data. `healthy` requires a recent successful attempt for every configured target. It does not prove complete X coverage.
+- `status` shows the latest attempt, last success, collection duration, returned page count, quota headers, warning codes, newest returned post age and pending alerts. It reads evidence without accessing X or exposing account data. `status --check` exits 2 when unhealthy and is used by the Docker health check. Recent successful collection does not prove complete coverage or that an author has posted recently.
 - Twscrape can end an iterator on both an empty timeline and an upstream failure. This monitor records no-post results as `empty_unverified`, not verified healthy coverage. A genuinely quiet or inaccessible account may therefore remain unhealthy.
-- A full batch produces `batch_limit_reached` in diagnostics. Increase the batch or narrow a noisy target if it regularly fills; bounded polling can miss posts during high volume or outages. Search indexing and timeline ordering also affect coverage.
-- Timeouts and failures are retried at increasing intervals up to one hour. No account purchase, CAPTCHA bypass or rate-limit evasion is implemented. X can restrict automated sessions or change its internal endpoints.
+- Routine polls stop after a complete page contains at least three known IDs. A single known pinned post is insufficient. Bursts with no overlap continue until the configured batch or page bound. Every 15 minutes, a deeper read ignores overlap and checks older pages within those same bounds. Its attempt time persists even after a partially useful read, preventing one failing deep page from forcing historical pagination on every fast cycle.
+- `stop_reason` distinguishes overlap, batch limit, page limit and quota reserve. These bounds and reconciliation reduce work but do not prove exhaustive coverage. Nonchronological timelines, outages and late indexing can still cause missed posts. User timelines may contain conversation context by other authors; those posts are filtered.
+- Timeouts and transient failures back off up to one hour. The collector waits for reported quota resets, reserves five remaining requests, and honors `Retry-After` on returned 429 responses. Blocked access and invalid authentication stop the process for review. The Docker restart policy remains `no`.
+- Unsupported card or media types are recorded as cosmetic warnings while usable post text is kept. Parser, pagination and upstream transport failures still mark partial or failed collection. Upstream warning message bodies are never stored or printed.
 - Receipt time is measured at batch completion, not an exact per-post network arrival time. The collector does not promise a trading lead or an exhaustive historical backfill.
 - Outbox delivery is at least once. A crash between stdout flush and acknowledgement can repeat an alert; consumers should deduplicate by `alert_id` within this database or by post ID across databases.
 - Evidence is retained until you manage the state directory. Monitor disk usage for a long-running installation.
@@ -98,6 +111,8 @@ docker compose -f compose.yaml down
 ```
 
 Tests exercise real SQLite persistence, deduplication, baseline behavior, failed delivery recovery, timeout/cancellation, credential-safe failures, process locking, configuration validation, replay/export and the installed collector's missing-session behavior. Authenticated collection must be verified after you supply your own session.
+
+Version 0.2 adds tests for existing database upgrades with pending alerts, restart-safe known-ID lookups, bounded burst reads, pinned-post overlap, quota cooldowns, authentication stops and scheduling under a virtual clock. Schema changes add tables and indexes without changing the existing post, alert or poll formats.
 
 The Windows test suite and replay were verified during implementation. On 8 October 2026, the standalone Docker image was built on Ubuntu and live collection was verified for both configured accounts using a dedicated authorized session. The monitor runs in its own Compose project and volume. No deployment or restart commands were run for the existing trading services.
 
