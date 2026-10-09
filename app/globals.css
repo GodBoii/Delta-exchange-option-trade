@@ -6480,6 +6480,16 @@ time,
   gap: var(--s-2);
 }
 
+.automation-asset-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.automation-asset-controls .automation-switch-text > span:first-child {
+  display: inline;
+}
+
 .automation-switch {
   display: inline-flex;
   align-items: center;

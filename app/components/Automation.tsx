@@ -40,6 +40,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
   // Each asset agent runs independently, so one agent's request never blocks the other.
   const [runningAssets, setRunningAssets] = useState<readonly AgentAsset[]>([]);
   const [saving, setSaving] = useState(false);
+  const [savingAsset, setSavingAsset] = useState<AgentAsset | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async (quiet = false) => {
@@ -103,6 +104,26 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
     setRunningAssets(current => current.filter(asset => !queued.includes(asset)));
   }
 
+  async function updateAssetEnabled(asset: AgentAsset, enabled: boolean) {
+    if (!overview?.assetAutomation || savingAsset) return;
+    setSavingAsset(asset);
+    try {
+      const saved = await requestJson<{ assetAutomation: Record<AgentAsset, boolean> }>(`/api/automation/assets/${asset}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled })
+      });
+      setOverview(current => current && { ...current, assetAutomation: saved.assetAutomation });
+      onNotice({ tone: "ok", text: enabled
+        ? `${asset} automation resumed for all accounts.`
+        : `${asset} automation paused for all accounts. Pending entries were cancelled. Open trades keep their exit rules.` });
+      await load(true);
+    } catch (saveError) {
+      onNotice({ tone: "error", text: errorMessage(saveError) });
+    } finally {
+      setSavingAsset(null);
+    }
+  }
+
   const slots = useMemo(() => groupScheduleSlots(overview?.upcomingRuns ?? []), [overview?.upcomingRuns]);
   const latestDecision = overview?.runs.find(run => run.outcome || run.report);
   const enabled = overview?.settings.enabled ?? false;
@@ -139,6 +160,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
             {isOwner && (
               <RunAnalysisMenu
                 runningAssets={runningAssets}
+                pausedAssets={AGENT_ASSETS.filter(asset => overview?.assetAutomation?.[asset] === false)}
                 disabled={!overview?.enabledStrategies}
                 onRun={assets => void runAnalysis(assets)}
               />
@@ -148,6 +170,28 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
       />
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
+
+      {isOwner && overview && (
+        <Panel>
+          <PanelHeader icon={<ShieldCheck />} title="Asset automation" meta="Owner controls · All accounts" />
+          <p className="field-hint">
+            Pause BTC or ETH analysis and new automated entries independently. Open trades keep their exit and risk rules.
+          </p>
+          <div className="automation-asset-controls">
+            {AGENT_ASSETS.map(asset => (
+              <AutomationSwitch
+                key={asset}
+                label={asset}
+                ariaLabel={`${asset} analysis and automated entries for all accounts`}
+                enabled={overview.assetAutomation?.[asset] ?? false}
+                busy={savingAsset === asset}
+                disabled={!overview.assetAutomation || savingAsset !== null}
+                onChange={next => void updateAssetEnabled(asset, next)}
+              />
+            ))}
+          </div>
+        </Panel>
+      )}
 
       {firstLoad ? <TileSkeleton count={4} /> : overview && <AutomationStats overview={overview} nextSlot={slots[0]} />}
 
@@ -170,11 +214,14 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
  * The account's own opt-in to shared decisions. Compact on purpose: it sits in
  * the heading row beside the run command instead of filling a panel.
  */
-function AutomationSwitch({ enabled, busy, disabled, onChange }: {
+function AutomationSwitch({ enabled, busy, disabled, onChange, label = "Automation",
+  ariaLabel = "Trade shared agent decisions on my account" }: {
   enabled: boolean;
   busy: boolean;
   disabled: boolean;
   onChange: (enabled: boolean) => void;
+  label?: string;
+  ariaLabel?: string;
 }) {
   const [interacted, setInteracted] = useState(false);
   return (
@@ -183,7 +230,7 @@ function AutomationSwitch({ enabled, busy, disabled, onChange }: {
       role="switch"
       aria-checked={enabled}
       aria-busy={busy || undefined}
-      aria-label="Trade shared agent decisions on my account"
+      aria-label={ariaLabel}
       data-on={enabled}
       disabled={disabled}
       className={`automation-switch t-toggle${enabled ? " on" : ""}${interacted ? " is-init" : ""}`}
@@ -191,7 +238,7 @@ function AutomationSwitch({ enabled, busy, disabled, onChange }: {
     >
       <i aria-hidden="true"><span className="t-toggle-thumb" /></i>
       <span className="automation-switch-text" aria-hidden="true">
-        <span>Automation</span>
+        <span>{label}</span>
         <SwapText>{enabled ? "Live" : "Paused"}</SwapText>
       </span>
     </button>
@@ -199,20 +246,23 @@ function AutomationSwitch({ enabled, busy, disabled, onChange }: {
 }
 
 /** Owner-only manual run. One command with the asset choice behind it. */
-function RunAnalysisMenu({ runningAssets, disabled, onRun }: {
+function RunAnalysisMenu({ runningAssets, pausedAssets, disabled, onRun }: {
   runningAssets: readonly AgentAsset[];
+  pausedAssets: readonly AgentAsset[];
   disabled: boolean;
   onRun: (assets: readonly AgentAsset[]) => void;
 }) {
   const busy = runningAssets.length > 0;
-  const allBusy = AGENT_ASSETS.every(asset => runningAssets.includes(asset));
+  const availableAssets = AGENT_ASSETS.filter(asset => !pausedAssets.includes(asset));
+  const allBusy = availableAssets.every(asset => runningAssets.includes(asset));
   const items: RowMenuItem[] = [
     ...AGENT_ASSETS.map(asset => ({
       id: asset,
       label: `Run ${asset} analysis`,
-      hint: runningAssets.includes(asset) ? "Already running" : `Manual review by the ${asset} agent`,
+      hint: pausedAssets.includes(asset) ? "Resume asset automation first"
+        : runningAssets.includes(asset) ? "Already running" : `Manual review by the ${asset} agent`,
       icon: <Play />,
-      disabled: runningAssets.includes(asset),
+      disabled: pausedAssets.includes(asset) || runningAssets.includes(asset),
       onSelect: () => onRun([asset])
     })),
     {
@@ -220,7 +270,7 @@ function RunAnalysisMenu({ runningAssets, disabled, onRun }: {
       label: "Run both",
       hint: allBusy ? "Both agents are running" : "BTC and ETH agents in parallel",
       icon: <Workflow />,
-      disabled: allBusy,
+      disabled: allBusy || pausedAssets.length > 0,
       onSelect: () => onRun(AGENT_ASSETS)
     }
   ];

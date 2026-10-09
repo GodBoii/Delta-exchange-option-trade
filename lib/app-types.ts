@@ -218,6 +218,7 @@ export type StrategyProposal = {
 
 export type AutomationOverview = {
   success: boolean;
+  assetAutomation?: Record<AgentAsset, boolean>;
   settings: {
     enabled: boolean;
     maximumConcurrentStrategies?: number | null;
