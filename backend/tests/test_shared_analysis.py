@@ -46,6 +46,7 @@ async def test_reservation_uses_the_same_wallet_and_policy_as_sizing():
     )
     assert db.rpc.call_args.args[1]["p_budget"] == "50"
     assert db.rpc.call_args.args[1]["p_total_balance"] == "200"
+    assert db.rpc.call_args.args[1]["p_max_entry_lateness_seconds"] == 180
 
 
 async def test_three_users_produce_one_fixed_review_per_session():

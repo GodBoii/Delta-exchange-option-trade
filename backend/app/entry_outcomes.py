@@ -14,6 +14,8 @@ def entry_failure(error: Exception, occurred_at: str) -> dict[str, Any]:
         category = "slots_full"
     elif code == "capital_reserved":
         category = "capital_full"
+    elif code == "btc_entry_priority":
+        category = "asset_priority"
     elif code in {
         "automation_balance_unavailable", "insufficient_funds", "insufficient_balance", "insufficient_margin"
     }:

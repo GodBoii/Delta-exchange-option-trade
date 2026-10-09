@@ -43,6 +43,7 @@ class EntryDB:
     ("automation_balance_unavailable", "low_balance"), ("insufficient_margin", "low_balance"),
     ("automatic_lot_too_large", "capital_budget"), ("delta_unreachable", "network"),
     ("entry_window_expired", "window_expired"), ("delta_not_connected", "authorization"),
+    ("btc_entry_priority", "asset_priority"),
 ])
 def test_entry_reason_keeps_exchange_code_and_message(code, category):
     outcome = entry_failure(AppError(409, "Original reason", code), "now")
@@ -73,6 +74,25 @@ async def test_retry_failure_survives_window_expiry_without_attention(monkeypatc
     assert db.row["entry_outcome"]["lastFailure"] == failure
     assert failure["message"] in db.row["last_error"]
     engine.execute_entry.assert_awaited_once()
+
+
+async def test_eth_priority_wait_retries_and_can_enter_after_btc_is_dropped(monkeypatch):
+    now = datetime.now(UTC)
+    monkeypatch.setattr(engine_module, "utc_now", lambda: now)
+    db = EntryDB(now)
+    db.row["asset"] = "ETH"
+    engine = TradingEngine(db, settings())
+    engine.execute_entry = AsyncMock(side_effect=[AppError(409, "BTC has priority", "btc_entry_priority"), {}])
+    engine.write_audit = AsyncMock()
+    engine.notify_strategy = Mock()
+    try:
+        await engine.process_due_strategies()
+        assert db.row["status"] == "scheduled"
+        assert db.row["entry_outcome"]["category"] == "asset_priority"
+        await engine.process_due_strategies()
+        assert engine.execute_entry.await_count == 2
+    finally:
+        await engine.close()
 
 
 @pytest.mark.asyncio

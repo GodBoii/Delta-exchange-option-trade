@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from .assets import strategy_asset
 from .auth import credentials_for_user
 from .capital import (
     CapitalPolicy,
@@ -496,6 +497,7 @@ class TradingEngine:
                     capital_budget(available, total, policy.allocation_mode, policy.capital_amount), "f"
                 ),
                 "p_total_balance": format(total, "f"),
+                "p_max_entry_lateness_seconds": getattr(self.settings, "max_entry_lateness_seconds", 180),
             }
         reservation = await self.db.rpc(
             "reserve_strategy_capital_slot",
@@ -2547,7 +2549,7 @@ class TradingEngine:
         due_entries, due_exits = await asyncio.gather(
             self.strategy_pages(
                 {
-                    "select": "id,user_id,entry_at,entry_outcome",
+                    "select": "id,user_id,entry_at,entry_outcome,asset,definition_json",
                     "status": "eq.scheduled",
                     "entry_execution_at": "is.null",
                     "entry_at": f"lte.{now_iso}",
@@ -2622,6 +2624,8 @@ class TradingEngine:
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
                 await self.record_entry_retry(str(row["id"]), error)
 
+        # Keep each wallet serial, with BTC getting first access to scarce capital.
+        due_entries.sort(key=lambda row: (strategy_asset(row) != "BTC", row["entry_at"], row["id"]))
         await self._dispatch_accounts(due_entries, enter_one)
 
     async def activation_recheck_states(self, strategy_ids: list[str]) -> dict[str, str]:

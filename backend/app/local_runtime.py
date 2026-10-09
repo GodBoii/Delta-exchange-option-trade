@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from .assets import strategy_asset
 from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
@@ -490,7 +491,7 @@ class LocalRuntimeStore:
         if maximum < 1 or maximum > 100 or budget <= 0 or balance <= 0:
             raise AppError(422, "Invalid capital reservation", "capital_reservation_invalid")
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute("select owner_id from trade.strategies where id=%s", (strategy_id,))
+            await cursor.execute("select owner_id,data from trade.strategies where id=%s", (strategy_id,))
             strategy = await cursor.fetchone()
             if not strategy or strategy["owner_id"] != user_id:
                 raise AppError(404, "Strategy unavailable", "strategy_not_found")
@@ -518,6 +519,39 @@ class LocalRuntimeStore:
                 raise AppError(409, f"All {maximum} strategy slots are occupied", "capital_slots_full")
             if reserved + budget > balance:
                 raise AppError(409, "Account capital is already reserved", "capital_reserved")
+            if strategy_asset(strategy["data"]) == "ETH" and (
+                len(owned) == maximum - 1 or reserved + budget * 2 > balance
+            ):
+                # This check runs under the same wallet lock as the reservation, including aliases.
+                await cursor.execute(
+                    """select 1 from trade.strategies as candidate
+                       where candidate.owner_id=any(%s) and candidate.status='scheduled'
+                         and candidate.data->>'entry_execution_at' is null
+                         and candidate.entry_at<=now()
+                         and candidate.entry_at>=now()-make_interval(secs => %s)
+                         and coalesce(nullif(candidate.data#>>'{definition_json,instrument,underlying}', ''),
+                                      nullif(candidate.data->>'asset', ''), 'BTC')='BTC'
+                         and not exists (
+                             select 1 from trade.strategy_proposals as proposal
+                             join trade.users as account on account.user_id=proposal.owner_id
+                             where proposal.relation_id=candidate.id
+                               and not coalesce((account.automation->>'enabled')::boolean, false)
+                         )
+                         and not exists (
+                             select 1 from trade.strategy_proposals as proposal
+                             join trade.analysis_jobs as recheck
+                               on recheck.relation_id=coalesce(proposal.data->>'shared_decision_id', proposal.id)
+                             where proposal.relation_id=candidate.id
+                               and recheck.data->>'trigger'='activation_recheck'
+                               and (recheck.status in ('failed','cancelled')
+                                    or recheck.data->>'outcome'='strategy_dropped')
+                         ) limit 1""",
+                    (aliases, int(args.get("p_max_entry_lateness_seconds", 180))),
+                )
+                if await cursor.fetchone():
+                    raise AppError(
+                        409, "Waiting for a due BTC entry before using the last allocation", "btc_entry_priority"
+                    )
             await cursor.execute(
                 "select data from trade.strategy_capital_slots where owner_id=%s for update", (user_id,)
             )

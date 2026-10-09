@@ -219,6 +219,90 @@ async def test_capacity_counts_both_assets_and_alias_wallet_budgets(runtime: Loc
     }
 
 
+@pytest.mark.parametrize("maximum,occupied,budget", [(1, 0, "100"), (4, 3, "25"), (4, 0, "60")])
+@pytest.mark.parametrize("btc_timing,blocked", [("due", True), ("future", False), ("expired", False)])
+async def test_last_allocation_prefers_only_due_btc(runtime, maximum, occupied, budget, btc_timing, blocked):
+    user_id, wallet_id = str(uuid4()), str(uuid4())
+    now = datetime.now(UTC)
+    async with runtime.pool.connection() as connection:
+        await connection.execute(
+            "insert into trade.users (user_id,connection,automation,capital,record) values (%s,%s,%s,%s,%s)",
+            (user_id, Jsonb({"status": "connected", "delta_user_id": wallet_id}),
+             Jsonb({"enabled": True}), Jsonb({}), Jsonb({})),
+        )
+    for _ in range(occupied):
+        active_id = str(uuid4())
+        await runtime.write("strategies", {"id": active_id, "user_id": user_id, "status": "active", "asset": "ETH"})
+        await runtime.rpc("reserve_strategy_capital_slot", {
+            "p_user_id": user_id, "p_strategy_id": active_id, "p_maximum_slots": maximum,
+            "p_budget": budget, "p_total_balance": "100",
+        })
+    eth_id, btc_id = str(uuid4()), str(uuid4())
+    btc_at = now + {"due": timedelta(seconds=-1), "future": timedelta(minutes=1),
+                    "expired": timedelta(minutes=-10)}[btc_timing]
+    await runtime.write("strategies", {
+        "id": btc_id, "user_id": user_id, "status": "scheduled", "entry_at": btc_at.isoformat(),
+        "definition_json": {"instrument": {"underlying": "BTC"}},
+    })
+    await runtime.write("strategies", {
+        "id": eth_id, "user_id": user_id, "status": "scheduled", "entry_at": now.isoformat(), "asset": "ETH",
+    })
+    args = {"p_user_id": user_id, "p_strategy_id": eth_id, "p_maximum_slots": maximum,
+            "p_budget": budget, "p_total_balance": "100", "p_max_entry_lateness_seconds": 180}
+    if blocked:
+        with pytest.raises(AppError) as caught:
+            await runtime.rpc("reserve_strategy_capital_slot", args)
+        assert caught.value.code == "btc_entry_priority"
+        assert not await runtime.select("strategy_capital_slots", {"strategy_id": f"eq.{eth_id}"})
+        # BTC consumes the slot without touching any existing active ETH positions.
+        assert (await runtime.rpc("reserve_strategy_capital_slot", {**args, "p_strategy_id": btc_id}))["created"]
+    else:
+        assert (await runtime.rpc("reserve_strategy_capital_slot", args))["created"]
+
+
+@pytest.mark.parametrize("alias_wallet", [True, False])
+@pytest.mark.parametrize("recheck_status,outcome,blocked", [
+    ("scheduled", None, True), ("completed", "strategy_reconfirmed", True),
+    ("completed", "strategy_dropped", False), ("failed", None, False), ("cancelled", None, False),
+])
+async def test_btc_priority_respects_wallet_aliases_and_shared_rechecks(runtime, alias_wallet,
+                                                                     recheck_status, outcome, blocked):
+    eth_user, btc_user, wallet_id = str(uuid4()), str(uuid4()), str(uuid4())
+    now = datetime.now(UTC)
+    async with runtime.pool.connection() as connection:
+        for user, wallet in ((eth_user, wallet_id), (btc_user, wallet_id if alias_wallet else str(uuid4()))):
+            await connection.execute(
+                "insert into trade.users (user_id,connection,automation,capital,record) values (%s,%s,%s,%s,%s)",
+                (user, Jsonb({"status": "connected", "delta_user_id": wallet}),
+                 Jsonb({"enabled": True}), Jsonb({}), Jsonb({})),
+            )
+    eth_id, btc_id, proposal_id, decision_id, recheck_id = (str(uuid4()) for _ in range(5))
+    for strategy_id, user, asset in ((eth_id, eth_user, "ETH"), (btc_id, btc_user, "BTC")):
+        await runtime.write("strategies", {
+            "id": strategy_id, "user_id": user, "status": "scheduled", "asset": asset,
+            "entry_at": (now - timedelta(seconds=1)).isoformat(),
+        })
+    await runtime.write("strategy_proposals", {
+        "id": proposal_id, "user_id": btc_user, "strategy_id": btc_id,
+        "shared_decision_id": decision_id, "status": "scheduled",
+    })
+    await runtime.write("automation_agent_runs", {
+        "id": recheck_id, "user_id": "global", "status": recheck_status,
+        "trigger": "activation_recheck", "outcome": outcome, "strategy_proposal_id": decision_id,
+    })
+    args = {"p_user_id": eth_user, "p_strategy_id": eth_id, "p_maximum_slots": 1,
+            "p_budget": "100", "p_total_balance": "100"}
+    if blocked and alias_wallet:
+        with pytest.raises(AppError) as caught:
+            await runtime.rpc("reserve_strategy_capital_slot", args)
+        assert caught.value.code == "btc_entry_priority"
+        # A user's switch-off removes their BTC contender from wallet priority.
+        async with runtime.pool.connection() as connection:
+            await connection.execute("update trade.users set automation=%s where user_id=%s",
+                                     (Jsonb({"enabled": False}), btc_user))
+    assert (await runtime.rpc("reserve_strategy_capital_slot", args))["created"]
+
+
 @pytest.mark.asyncio
 async def test_four_quarter_allocations_skip_analysis_and_release_restores_capacity(runtime, monkeypatch):
     user_id = str(uuid4())
@@ -282,6 +366,49 @@ async def test_four_quarter_allocations_skip_analysis_and_release_restores_capac
             "p_budget": "25", "p_total_balance": "100",
         })
         assert reservation["slot"] == 1
+    finally:
+        await engine.close()
+        await db.close()
+
+
+@pytest.mark.parametrize("other_available,expected", [("100", True), ("0", False)])
+async def test_shared_capacity_uses_other_accounts_when_owner_is_full(runtime, other_available, expected):
+    owner, other = str(uuid4()), str(uuid4())
+    async with runtime.pool.connection() as connection:
+        for user in (owner, other):
+            await connection.execute(
+                "insert into trade.users (user_id,connection,automation,capital,record) values (%s,%s,%s,%s,%s)",
+                (user, Jsonb({"status": "connected", "delta_user_id": str(uuid4())}),
+                 Jsonb({"enabled": True}), Jsonb({"allocation_mode": "full_balance"}), Jsonb({})),
+            )
+    active_id = str(uuid4())
+    await runtime.write("strategies", {"id": active_id, "user_id": owner, "status": "active", "asset": "ETH"})
+    await runtime.rpc("reserve_strategy_capital_slot", {
+        "p_user_id": owner, "p_strategy_id": active_id, "p_maximum_slots": 1,
+        "p_budget": "100", "p_total_balance": "100",
+    })
+    db = Database(SimpleNamespace(
+        supabase_url="https://supabase.test", supabase_publishable_key="test", supabase_service_role_key="test",
+        analysis_service_secret="test-analysis-service-secret", chart_link_seconds=3600,
+    ), runtime.pool)
+    engine = TradingEngine(db, SimpleNamespace())
+    clients = []
+
+    async def client_for_user(user_id):
+        client = SimpleNamespace(user_id=user_id, close=AsyncMock())
+        clients.append(client)
+        return client
+
+    async def wallet(client):
+        return Decimal(other_available if client.user_id == other else "0"), Decimal("100")
+
+    engine.client_for_user = AsyncMock(side_effect=client_for_user)
+    engine.usd_capital = AsyncMock(side_effect=wallet)
+    try:
+        assert await automation.has_automation_trade_capacity(db, engine, "global") is expected
+        assert other in {client.user_id for client in clients}
+        assert owner not in {client.user_id for client in clients}
+        assert all(client.close.await_count == 1 for client in clients)
     finally:
         await engine.close()
         await db.close()
