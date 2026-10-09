@@ -37,6 +37,7 @@ AUTOMATION_ANALYSIS_TIMEOUT_SECONDS = 45 * 60
 MAX_AUTOMATION_RUN_RUNTIME = timedelta(seconds=AUTOMATION_ANALYSIS_TIMEOUT_SECONDS, minutes=5)
 MAX_PARALLEL_AUTOMATION_RUNS = 6
 MAX_PARALLEL_RECHECK_RUNS = 8
+MAX_PARALLEL_CAPACITY_CHECKS = 8
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
@@ -462,13 +463,30 @@ async def has_automation_trade_capacity(db: Database, engine: TradingEngine, use
         {"select": "user_id", "enabled": "eq.true", "user_id": f"neq.{SHARED_USER_ID}"},
     )
     unavailable = False
-    for account in accounts:
-        try:
-            if await engine.has_available_trade_slot(str(account["user_id"])):
+    account_iterator = iter(accounts)
+
+    async def check_accounts() -> bool:
+        nonlocal unavailable
+        for account in account_iterator:
+            try:
+                if await engine.has_available_trade_slot(str(account["user_id"])):
+                    return True
+            except Exception:
+                unavailable = True
+                logger.exception("Could not check trade capacity user_id=%s", account["user_id"])
+        return False
+
+    # A slow owner's wallet must not delay a healthy account. Keep exchange lookups bounded.
+    tasks = [asyncio.create_task(check_accounts()) for _ in range(min(len(accounts), MAX_PARALLEL_CAPACITY_CHECKS))]
+    try:
+        for task in asyncio.as_completed(tasks):
+            if await task:
                 return True
-        except Exception:
-            unavailable = True
-            logger.exception("Could not check trade capacity user_id=%s", account["user_id"])
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     if unavailable:
         # An unknown wallet must not be reported as a confirmed lack of capacity.
         raise AppError(503, "Trade slot availability could not be checked", "capital_capacity_unavailable")

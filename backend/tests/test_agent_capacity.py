@@ -133,6 +133,50 @@ async def test_unknown_account_capacity_does_not_block_another_account_with_room
         assert caught.value.code == "capital_capacity_unavailable"
 
 
+async def test_slow_owner_does_not_delay_shared_analysis_for_another_account():
+    owner_started = asyncio.Event()
+    owner_closed = asyncio.Event()
+
+    async def capacity(user_id):
+        if user_id == "owner":
+            owner_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                owner_closed.set()
+        await owner_started.wait()
+        return True
+
+    db = SimpleNamespace(select=AsyncMock(return_value=[{"user_id": "owner"}, {"user_id": "other"}]))
+    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(side_effect=capacity))
+    assert await asyncio.wait_for(automation.has_automation_trade_capacity(db, engine, SHARED_USER_ID), timeout=1)
+    assert owner_closed.is_set()
+
+
+async def test_shared_capacity_checks_all_accounts_with_bounded_wallet_concurrency():
+    active = 0
+    high_water = 0
+    checked = set()
+
+    async def capacity(user_id):
+        nonlocal active, high_water
+        active += 1
+        high_water = max(high_water, active)
+        try:
+            await asyncio.sleep(0)
+            checked.add(user_id)
+            return False
+        finally:
+            active -= 1
+
+    db = SimpleNamespace(select=AsyncMock(return_value=[{"user_id": str(i)} for i in range(250)]))
+    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(side_effect=capacity))
+    assert not await automation.has_automation_trade_capacity(db, engine, SHARED_USER_ID)
+    assert len(checked) == 250
+    assert 1 < high_water <= automation.MAX_PARALLEL_CAPACITY_CHECKS
+    assert active == 0
+
+
 class CapacityRunDatabase:
     def __init__(self, user_id, trigger):
         self.settings = SimpleNamespace(shared_analysis_enabled=user_id == SHARED_USER_ID)
@@ -207,6 +251,30 @@ async def test_new_review_can_start_after_a_slot_is_freed(monkeypatch, user_id):
     assert len(db.claims) == 1
     ready.assert_awaited_once()
     scheduler._execute.assert_awaited_once()
+
+
+@pytest.mark.parametrize("trigger", ["asia_session", "activation_recheck"])
+async def test_full_owner_does_not_cancel_shared_due_review_for_other_users(monkeypatch, trigger):
+    db = CapacityRunDatabase(SHARED_USER_ID, trigger)
+    original_select = db.select
+
+    async def select(table, params):
+        if table == "automation_settings" and params.get("user_id") == "neq.global":
+            return [{"user_id": "owner"}, {"user_id": "other"}]
+        return await original_select(table, params)
+
+    db.select = select
+    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(side_effect=lambda user: user == "other"))
+    ready = AsyncMock()
+    monkeypatch.setattr(automation, "require_analyzer_ready", ready)
+    scheduler = automation.AutomationScheduler(db, engine)
+    scheduler._execute = AsyncMock()
+    await scheduler._process_due_runs()
+    await asyncio.gather(*scheduler.running_tasks)
+    assert db.row["status"] == "running"
+    assert len(db.claims) == 1
+    scheduler._execute.assert_awaited_once()
+    ready.assert_awaited_once()
 
 
 async def test_capacity_lookup_failure_defers_scheduled_review(monkeypatch):
