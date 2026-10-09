@@ -125,6 +125,26 @@ class IncrementalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.error_code, "authentication_required")
         self.assertNotIn("secret", json.dumps(result.details))
 
+    async def test_swallowed_lookup_authentication_error_still_stops_collection(self):
+        source = PageSource([])
+        collector = self.collector(source)
+
+        async def rejected_lookup(handle):
+            collector._warning(
+                SimpleNamespace(
+                    record={
+                        "name": "twscrape.logger",
+                        "message": "API unknown error: (89) Invalid token secret",
+                    }
+                )
+            )
+            return None
+
+        source.user_by_login = rejected_lookup
+        result = await collector.fetch(self.target, 80)
+        self.assertEqual(result.error_code, "authentication_required")
+        self.assertEqual(source.reads, 0)
+
     async def test_quota_reserve_stops_future_network_calls_until_reset(self):
         reset = int(time.time()) + 120
         source = PageSource(

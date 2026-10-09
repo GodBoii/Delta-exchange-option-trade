@@ -22,6 +22,7 @@ class DiagnosticsTests(unittest.TestCase):
             ("twscrape.queue_client", "Blocked by Cloudflare: 403 secret", "access_blocked"),
             ("twscrape.queue_client", "API busy: (-1) LoadShed", "upstream_busy"),
             ("twscrape.logger", "API busy: (-1) LoadShed", "upstream_busy"),
+            ("twscrape.logger", "API unknown error: (89) Invalid or expired token secret", "authentication_required"),
         ]
         for module, message, code in cases:
             self.assertEqual(warning_code({"name": module, "message": message}), code)
