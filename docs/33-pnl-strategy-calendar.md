@@ -10,7 +10,7 @@ The selector lists distinct recorded strategy names from the signed-in account's
 
 Green and red show daily net profit and loss. Both signs share four magnitude levels relative to the largest absolute daily result in the visible calendar. No activity and settled break-even activity have separate neutral styles. Hover/focus details and a persistent readout expose amounts and counts without relying on color. Arrow keys move through the calendar, Home/End reach the period boundaries, and future dates are disabled.
 
-Period, asset, and strategy use the same report scope. Rolling periods retain the existing exact timestamp cutoff, so the first calendar day can represent a partial day. All-time reports show one calendar year at a time; the calendar subtotal covers that visible year while headline totals remain all-time. The calendar scrolls internally on small screens and initially reveals the latest available date.
+The calendar follows asset and strategy selection and reads complete history independently of the report period. Desktop screens show a complete January-to-December year with a year selector. Screens up to 767 pixels show a conventional monthly calendar with month and year selectors. The default is the current IST year and month; future months in the current year are disabled. The calendar subtotal covers only its selected year or month. Headline totals, the existing charts, and trade rows retain their separate report period.
 
 ## Compatibility
 

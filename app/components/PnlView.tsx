@@ -160,8 +160,8 @@ export default function PnlView() {
         )}
       </Panel>
 
-      <PnlHeatmap key={JSON.stringify(["calendar", range, asset, strategy])}
-        range={range} asset={asset} strategy={strategy} refreshToken={chartsToken} />
+      <PnlHeatmap key={JSON.stringify(["calendar", asset, strategy])}
+        asset={asset} strategy={strategy} refreshToken={chartsToken} />
 
       <PnlCharts key={JSON.stringify(["charts", range, asset, strategy])}
         range={range} asset={asset} strategy={strategy} refreshToken={chartsToken} />

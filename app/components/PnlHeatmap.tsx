@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { RefreshCw } from "@/app/components/icons";
 import { useCurrency } from "@/app/components/currency";
@@ -8,29 +8,44 @@ import { InlineMessage, Panel, PanelHeader, Select } from "@/app/components/ui";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import { pnlQuery, verifyReportAsset, verifyReportStrategy, type ReportAsset } from "@/lib/reporting";
-import { calendarDateLabel, calendarDates, calendarYears, dayTone, parsePnlCalendar } from "@/lib/pnl-calendar";
-import type { PnlCalendarResponse, PnlDay, ReportRange } from "@/lib/app-types";
+import { calendarBounds, calendarDateLabel, calendarDates, calendarYears, dayTone, parsePnlCalendar } from "@/lib/pnl-calendar";
+import type { PnlCalendarResponse, PnlDay } from "@/lib/app-types";
+
+const SMALL_CALENDAR_QUERY = "(max-width: 767px)";
+const MONTHS = Array.from({ length: 12 }, (_, month) => ({ value: String(month), label: new Intl.DateTimeFormat("en", {
+  month: "long", timeZone: "UTC"
+}).format(new Date(Date.UTC(2026, month, 1))) }));
+
+function subscribeToCalendarSize(onChange: () => void) {
+  const query = window.matchMedia(SMALL_CALENDAR_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+function isSmallCalendar() { return window.matchMedia(SMALL_CALENDAR_QUERY).matches; }
+function serverCalendarSize() { return false; }
 
 type CalendarState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "ready"; data: PnlCalendarResponse; refreshing: boolean; refreshError: string | null };
 
-export default function PnlHeatmap({ range, asset, strategy, refreshToken }: {
-  range: ReportRange; asset: ReportAsset; strategy: string | null; refreshToken: number;
+export default function PnlHeatmap({ asset, strategy, refreshToken }: {
+  asset: ReportAsset; strategy: string | null; refreshToken: number;
 }) {
   const [state, setState] = useState<CalendarState>({ kind: "loading" });
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  const compact = useSyncExternalStore(subscribeToCalendarSize, isSmallCalendar, serverCalendarSize);
   const generation = useRef(0);
   const load = useCallback(async () => {
     const current = ++generation.current;
     setState(previous => previous.kind === "ready"
       ? { ...previous, refreshing: true, refreshError: null } : { kind: "loading" });
     try {
-      const data = parsePnlCalendar(await requestJson<unknown>(`/api/me/pnl/calendar?${pnlQuery({ range, asset, strategy })}`));
+      const data = parsePnlCalendar(await requestJson<unknown>(`/api/me/pnl/calendar?${pnlQuery({ range: "all", asset, strategy })}`));
       verifyReportAsset(data, asset);
       verifyReportStrategy(data, strategy);
-      if (data.range !== range) throw new Error("The calendar did not return the selected period.");
+      if (data.range !== "all") throw new Error("The calendar did not return complete history.");
       if (current === generation.current) setState({ kind: "ready", data, refreshing: false, refreshError: null });
     } catch (error) {
       if (current !== generation.current) return;
@@ -38,7 +53,7 @@ export default function PnlHeatmap({ range, asset, strategy, refreshToken }: {
         ? { ...previous, refreshing: false, refreshError: errorMessage(error) }
         : { kind: "error", message: errorMessage(error) });
     }
-  }, [range, asset, strategy]);
+  }, [asset, strategy]);
 
   useEffect(() => {
     void load();
@@ -48,18 +63,26 @@ export default function PnlHeatmap({ range, asset, strategy, refreshToken }: {
   const data = state.kind === "ready" ? state.data : null;
   const years = data ? calendarYears(data.days, data.endDate) : [];
   const year = selectedYear !== null && years.includes(selectedYear) ? selectedYear : years[0];
-  const start = data ? range === "all" ? `${year}-01-01` : data.startDate ?? data.endDate : "";
-  const end = data ? range === "all" ? `${year}-12-31` : data.endDate : "";
+  const currentMonth = data ? Number(data.endDate.slice(5, 7)) - 1 : 0;
+  const currentYear = data ? Number(data.endDate.slice(0, 4)) : year;
+  const month = year === currentYear ? Math.min(selectedMonth ?? currentMonth, currentMonth) : selectedMonth ?? currentMonth;
+  const { start, end } = data ? calendarBounds(year, compact ? month : null) : { start: "", end: "" };
+  const periodLabel = compact ? `${MONTHS[month].label} ${year}` : String(year);
   const visibleDays = useMemo(() => data?.days.filter(day => day.date >= start && day.date <= end) ?? [], [data, start, end]);
   const { formatMoney } = useCurrency();
   const net = visibleDays.reduce((sum, day) => sum + Number(day.netRealizedPnl), 0);
   const settled = visibleDays.reduce((sum, day) => sum + day.settledRuns, 0);
 
-  return <Panel className="report-panel pnl-calendar-panel">
+  return <Panel className={`report-panel pnl-calendar-panel${compact ? " is-monthly" : " is-yearly"}`}>
     <PanelHeader title="Daily P&L" meta="Net settled results after fees · IST"
-      actions={range === "all" && data ? <Select label="Calendar year" value={String(year)}
+      actions={data ? <div className="pnl-calendar-controls">
+        {compact && <Select label="Calendar month" value={String(month)}
+          options={MONTHS.map(option => ({ ...option, disabled: year === currentYear && Number(option.value) > currentMonth }))}
+          onChange={value => setSelectedMonth(Number(value))} />}
+        <Select label="Calendar year" value={String(year)}
         options={years.map(value => ({ value: String(value), label: String(value) }))}
-        onChange={value => setSelectedYear(Number(value))} /> : undefined} />
+        onChange={value => setSelectedYear(Number(value))} />
+      </div> : undefined} />
     {state.kind === "loading" ? <div className="skeleton pnl-calendar-skeleton" role="status" aria-label="Loading daily P&L" />
       : state.kind === "error" ? <div className="report-error">
         <InlineMessage tone="error">{state.message}</InlineMessage>
@@ -68,12 +91,13 @@ export default function PnlHeatmap({ range, asset, strategy, refreshToken }: {
         <div className="pnl-calendar-summary" aria-busy={state.refreshing}>
           <strong className={net > 0 ? "up" : net < 0 ? "down" : ""}>{formatMoney(net, { signed: true })}</strong>
           <span>{settled} settled {settled === 1 ? "trade" : "trades"} · {visibleDays.length} trading {visibleDays.length === 1 ? "day" : "days"}
-            {range === "all" ? ` in ${year}` : " in this period"}</span>
+            {` in ${periodLabel}`}</span>
           {state.refreshing && <small role="status">Refreshing…</small>}
         </div>
         {state.refreshError && <InlineMessage tone="error">Calendar refresh failed. Showing the previous results. {state.refreshError}</InlineMessage>}
         {!state.data.historyComplete && <p className="pnl-chart-note">Earlier runs are still being imported. Some days may be missing.</p>}
-        <CalendarGrid key={`${start}:${end}`} start={start} end={end} today={state.data.endDate} days={visibleDays} />
+        <CalendarGrid key={`${start}:${end}:${compact}`} start={start} end={end} today={state.data.endDate} days={visibleDays} compact={compact} />
+        <p className="pnl-chart-note">Calendar selection is independent of the report period above.</p>
         {!settled && <p className="pnl-chart-note">No settled trades in this calendar period. Days fill in once trades close with final fills and fees.</p>}
       </>}
   </Panel>;
@@ -93,7 +117,9 @@ function DayDetails({ date, day }: { date: string; day?: PnlDay }) {
   </>;
 }
 
-function CalendarGrid({ start, end, today, days }: { start: string; end: string; today: string; days: PnlDay[] }) {
+function CalendarGrid({ start, end, today, days, compact }: {
+  start: string; end: string; today: string; days: PnlDay[]; compact: boolean;
+}) {
   const dates = useMemo(() => calendarDates(start, end), [start, end]);
   const byDate = useMemo(() => new Map(days.map(day => [day.date, day])), [days]);
   const maximum = Math.max(0, ...days.map(day => Math.abs(Number(day.netRealizedPnl))));
@@ -136,10 +162,11 @@ function CalendarGrid({ start, end, today, days }: { start: string; end: string;
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, date: string) {
     const index = dates.indexOf(date);
-    const offset = event.key === "ArrowLeft" ? -7 : event.key === "ArrowRight" ? 7
-      : event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : null;
+    const offset = event.key === "ArrowLeft" ? compact ? -1 : -7 : event.key === "ArrowRight" ? compact ? 1 : 7
+      : event.key === "ArrowUp" ? compact ? -7 : -1 : event.key === "ArrowDown" ? compact ? 7 : 1 : null;
     if (event.key === "Escape") { setTooltip(null); return; }
-    if ((event.key === "ArrowUp" && index % 7 === 0) || (event.key === "ArrowDown" && index % 7 === 6)) {
+    if ((!compact && ((event.key === "ArrowUp" && index % 7 === 0) || (event.key === "ArrowDown" && index % 7 === 6)))
+      || (compact && ((event.key === "ArrowLeft" && index % 7 === 0) || (event.key === "ArrowRight" && index % 7 === 6)))) {
       event.preventDefault();
       return;
     }
@@ -163,16 +190,17 @@ function CalendarGrid({ start, end, today, days }: { start: string; end: string;
 
   return <>
     <div className="pnl-calendar-scroll" ref={scroll} onScroll={() => setTooltip(null)}>
-      <div className="pnl-calendar-months" style={{ gridTemplateColumns: `32px repeat(${weeks}, var(--calendar-cell))` }} aria-hidden="true">
-        <span />{monthLabels.map((label, index) => <span key={dates[index * 7]}>{label}</span>)}
+      <div className="pnl-calendar-months" style={{ gridTemplateColumns: compact ? "repeat(7, minmax(0, 1fr))" : `32px repeat(${weeks}, minmax(0, 1fr))` }} aria-hidden="true">
+        {compact ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(day => <span key={day}>{day}</span>)
+          : <><span />{monthLabels.map((label, index) => <span key={dates[index * 7]}>{label}</span>)}</>}
       </div>
       <div ref={grid} role="grid" aria-label="Daily settled P&L in IST. Arrow keys move between days and weeks."
-        aria-rowcount={7} aria-colcount={weeks} className="pnl-calendar-grid" onPointerLeave={() => setTooltip(null)}>
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((weekday, row) => <div role="row" key={weekday}
-          className="pnl-calendar-row" style={{ gridTemplateColumns: `32px repeat(${weeks}, var(--calendar-cell))` }}>
-          <span className="pnl-calendar-weekday" aria-hidden="true">{row % 2 === 0 ? weekday : ""}</span>
-          {Array.from({ length: weeks }, (_, week) => {
-            const date = dates[week * 7 + row];
+        aria-rowcount={compact ? weeks : 7} aria-colcount={compact ? 7 : weeks} className="pnl-calendar-grid" onPointerLeave={() => setTooltip(null)}>
+        {Array.from({ length: compact ? weeks : 7 }, (_, row) => <div role="row" key={row}
+          className="pnl-calendar-row" style={{ gridTemplateColumns: compact ? "repeat(7, minmax(0, 1fr))" : `32px repeat(${weeks}, minmax(0, 1fr))` }}>
+          {!compact && <span className="pnl-calendar-weekday" aria-hidden="true">{row % 2 === 0 ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][row] : ""}</span>}
+          {Array.from({ length: compact ? 7 : weeks }, (_, column) => {
+            const date = dates[compact ? row * 7 + column : column * 7 + row];
             const padding = date < start || date > end;
             const future = date > today;
             const day = byDate.get(date);
@@ -180,7 +208,7 @@ function CalendarGrid({ start, end, today, days }: { start: string; end: string;
             const label = `${calendarDateLabel(date)}, IST. ${future ? "Future date" : day
               ? `${formatMoney(day.netRealizedPnl, { signed: true })} net P&L, ${day.settledRuns} settled trades, ${day.wins} won, ${day.losses} lost, ${day.breakEven} even`
               : "No settled trades"}`;
-            return <div role="gridcell" key={date} aria-colindex={week + 1} aria-selected={selected === date}>
+            return <div role="gridcell" key={date} aria-colindex={column + 1} aria-selected={selected === date}>
               <button type="button" data-date={date} data-tone={tone}
                 className={`pnl-calendar-cell${padding ? " is-padding" : ""}${future ? " is-future" : ""}${selected === date ? " is-selected" : ""}`}
                 disabled={padding || future} tabIndex={date === focused && !padding && !future ? 0 : -1}
@@ -188,7 +216,7 @@ function CalendarGrid({ start, end, today, days }: { start: string; end: string;
                 onPointerEnter={event => inspect(date, event.currentTarget)}
                 onFocus={event => { setFocused(date); inspect(date, event.currentTarget); }}
                 onBlur={() => setTooltip(null)} onKeyDown={event => onKeyDown(event, date)}
-                onClick={event => { setFocused(date); inspect(date, event.currentTarget); }} />
+                onClick={event => { setFocused(date); inspect(date, event.currentTarget); }}>{compact && !padding ? Number(date.slice(8, 10)) : null}</button>
             </div>;
           })}
         </div>)}
