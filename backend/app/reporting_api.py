@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
@@ -51,6 +52,7 @@ RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 OwnerUser = Annotated[dict[str, Any], Depends(require_owner_user)]
 RangeQuery = Annotated[RangeKey, Query(alias="range")]
 PageLimit = Annotated[int, Query(ge=1, le=50)]
+StrategyQuery = Annotated[str | None, Query(min_length=1, max_length=500)]
 
 
 class AutomationSwitch(BaseModel):
@@ -156,15 +158,20 @@ async def _history(ledger: OwnerLedger) -> dict[str, Any]:
 
 @router.get("/api/me/pnl")
 async def my_pnl(
-    request: Request, user: RequiredUser, range_key: RangeQuery = "all", asset: AssetFilter | None = None
+    request: Request, user: RequiredUser, range_key: RangeQuery = "all", asset: AssetFilter | None = None,
+    strategy: StrategyQuery = None,
 ) -> dict[str, Any]:
     ledger = _ledger(request)
-    summary = await ledger.summary(str(user["id"]), deleted="exclude", since=_since(range_key), asset=asset)
+    filters = {"strategy": strategy} if strategy is not None else {}
+    summary = await ledger.summary(
+        str(user["id"]), deleted="exclude", since=_since(range_key), asset=asset, **filters
+    )
     return {
         "success": True,
         "scope": "personal",
         "range": range_key,
         "asset": asset or "all",
+        "strategy": strategy,
         "asOf": datetime.now(UTC).isoformat(),
         **await _history(ledger),
         "summary": summary,
@@ -180,14 +187,40 @@ async def my_trades(
     cursor: str | None = None,
     limit: PageLimit = 25,
     asset: AssetFilter | None = None,
+    strategy: StrategyQuery = None,
 ) -> dict[str, Any]:
     page = await _ledger(request).trades(
         str(user["id"]), deleted="exclude", since=_since(range_key), state=state, cursor=cursor,
-        limit=limit, asset=asset
+        limit=limit, asset=asset, **({"strategy": strategy} if strategy is not None else {})
     )
     return {
-        "success": True, "asset": asset or "all",
+        "success": True, "asset": asset or "all", "strategy": strategy,
         "items": [trade_item(row) for row in page["items"]], "nextCursor": page["nextCursor"],
+    }
+
+
+@router.get("/api/me/pnl/strategies")
+async def my_pnl_strategies(request: Request, user: RequiredUser) -> dict[str, Any]:
+    return {"success": True, "names": await _ledger(request).strategy_names(str(user["id"]))}
+
+
+@router.get("/api/me/pnl/calendar")
+async def my_pnl_calendar(
+    request: Request, user: RequiredUser, range_key: RangeQuery = "30d", asset: AssetFilter | None = None,
+    strategy: StrategyQuery = None,
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    window = RANGES.get(range_key)
+    since = now - window if window else None
+    ledger = _ledger(request)
+    days = await ledger.daily_pnl(str(user["id"]), since=since, asset=asset, strategy=strategy)
+    timezone = ZoneInfo("Asia/Kolkata")
+    return {
+        "success": True, "range": range_key, "asset": asset or "all", "strategy": strategy,
+        "timezone": "Asia/Kolkata", "asOf": now.isoformat(),
+        "startDate": since.astimezone(timezone).date().isoformat() if since else None,
+        "endDate": now.astimezone(timezone).date().isoformat(),
+        **await _history(ledger), "days": days,
     }
 
 

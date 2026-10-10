@@ -323,7 +323,8 @@ class OwnerLedger:
             await self.backfill()
 
     async def summary(
-        self, user_id: str, *, deleted: DeletedFilter, since: datetime | None, asset: AssetFilter | None = None
+        self, user_id: str, *, deleted: DeletedFilter, since: datetime | None, asset: AssetFilter | None = None,
+        strategy: str | None = None,
     ) -> dict[str, Any]:
         """Totals over ``settled`` runs plus a count of every other accounting state."""
         state_counts = ",".join(
@@ -347,8 +348,9 @@ class OwnerLedger:
                    where owner_user_id=%s
                      and (%s = 'include' or (%s = 'exclude') = (deleted_by_user_at is null))
                      and (%s::timestamptz is null or activity_at >= %s)
-                     and (%s::text is null or coalesce(asset, 'BTC') = %s)""",
-                (user_id, deleted, deleted, since, since, asset, asset),
+                     and (%s::text is null or coalesce(asset, 'BTC') = %s)
+                     and (%s::text is null or strategy_name = %s)""",
+                (user_id, deleted, deleted, since, since, asset, asset, strategy, strategy),
             )
             totals = await cursor.fetchone()
         settled = int(totals["settled"])
@@ -379,6 +381,7 @@ class OwnerLedger:
         cursor: str | None,
         limit: int,
         asset: AssetFilter | None = None,
+        strategy: str | None = None,
     ) -> dict[str, Any]:
         after = decode_cursor(cursor)
         after_time, after_id = after if after else (None, None)
@@ -390,9 +393,10 @@ class OwnerLedger:
                      and (%s::timestamptz is null or activity_at >= %s)
                      and (%s::text is null or accounting_state = %s)
                      and (%s::text is null or coalesce(asset, 'BTC') = %s)
+                     and (%s::text is null or strategy_name = %s)
                      and (%s::timestamptz is null or (activity_at, run_id) < (%s, %s))
                    order by activity_at desc, run_id desc limit %s""",
-                (user_id, deleted, deleted, since, since, state, state, asset, asset,
+                (user_id, deleted, deleted, since, since, state, state, asset, asset, strategy, strategy,
                  after_time, after_time, after_id, limit + 1),
             )
             rows = await query.fetchall()
@@ -401,6 +405,47 @@ class OwnerLedger:
             "items": [_row(item) for item in page],
             "nextCursor": encode_cursor(page[-1]["activity_at"], page[-1]["run_id"]) if len(rows) > limit else None,
         }
+
+    async def strategy_names(self, user_id: str) -> list[str]:
+        """Historical names across every visible run, independent of report filters."""
+        async with self.pool.connection() as connection:
+            records = await (await connection.execute(
+                """select distinct strategy_name from owner_reporting.trade_ledger
+                   where owner_user_id=%s and deleted_by_user_at is null order by strategy_name""",
+                (user_id,),
+            )).fetchall()
+        return [item[0] for item in records]
+
+    async def daily_pnl(
+        self, user_id: str, *, since: datetime | None, asset: AssetFilter | None = None,
+        strategy: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Complete settled totals, grouped by settlement day in IST, with decimal money."""
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                """select (activity_at at time zone 'Asia/Kolkata')::date as day,
+                          sum(realized_pnl) as net, sum(exchange_fees) as fees,
+                          coalesce(sum(realized_pnl) filter (where realized_pnl > 0), 0) as gains,
+                          coalesce(sum(realized_pnl) filter (where realized_pnl < 0), 0) as losses,
+                          count(*) as runs,
+                          count(*) filter (where realized_pnl > 0) as wins,
+                          count(*) filter (where realized_pnl < 0) as lost,
+                          count(*) filter (where realized_pnl = 0) as break_even
+                     from owner_reporting.trade_ledger
+                    where owner_user_id=%s and deleted_by_user_at is null and accounting_state='settled'
+                      and (%s::timestamptz is null or activity_at >= %s)
+                      and (%s::text is null or coalesce(asset, 'BTC') = %s)
+                      and (%s::text is null or strategy_name = %s)
+                    group by (activity_at at time zone 'Asia/Kolkata')::date order by day""",
+                (user_id, since, since, asset, asset, strategy, strategy),
+            )
+            rows = await cursor.fetchall()
+        return [{
+            "date": row["day"].isoformat(), "netRealizedPnl": _text(row["net"]),
+            "grossGains": _text(row["gains"]), "grossLosses": _text(row["losses"]),
+            "exchangeFees": _text(row["fees"] or Decimal("0")), "settledRuns": row["runs"],
+            "wins": row["wins"], "losses": row["lost"], "breakEven": row["break_even"],
+        } for row in rows]
 
     async def trade(self, user_id: str, run_id: str) -> dict[str, Any] | None:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:

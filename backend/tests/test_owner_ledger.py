@@ -62,6 +62,43 @@ async def settled_run(
     return run_id
 
 
+async def test_strategy_calendar_reconciles_with_totals_and_filters_before_paging(runtime):
+    user_id, other_id = str(uuid4()), str(uuid4())
+    before_midnight = datetime(2026, 9, 10, 18, 29, tzinfo=UTC)
+    after_midnight = datetime(2026, 9, 10, 18, 31, tzinfo=UTC)
+    # settled_run exits one hour before `when`.
+    first = await settled_run(runtime, user_id, when=before_midnight + timedelta(hours=1), asset="ETH")
+    second = await settled_run(runtime, user_id, exit_price="1800",
+                               when=after_midnight + timedelta(hours=1), asset="ETH")
+    btc = await settled_run(runtime, user_id, asset="BTC")
+    hidden = await settled_run(runtime, user_id, asset="ETH")
+    await settled_run(runtime, other_id, asset="ETH")
+    for run_id in (first, second, hidden):
+        await runtime.update("strategies", {"name": "ETH strategy & profit"}, {"id": f"eq.{run_id}"})
+    await runtime.update("strategies", {"name": "BTC strategy"}, {"id": f"eq.{btc}"})
+    await runtime.update("strategies", {}, {"id": f"eq.{hidden}"}, remove=True)
+    ledger = runtime.ledger
+    assert await ledger.strategy_names(user_id) == ["BTC strategy", "ETH strategy & profit"]
+    days = await ledger.daily_pnl(user_id, since=None, asset="ETH", strategy="ETH strategy & profit")
+    assert [day["date"] for day in days] == ["2026-09-10", "2026-09-11"]
+    assert [day["settledRuns"] for day in days] == [1, 1]
+    assert Decimal(days[0]["netRealizedPnl"]) > 0
+    assert Decimal(days[1]["netRealizedPnl"]) < 0
+    summary = await ledger.summary(user_id, deleted="exclude", since=None,
+                                   asset="ETH", strategy="ETH strategy & profit")
+    assert sum(Decimal(day["netRealizedPnl"]) for day in days) == Decimal(summary["netRealizedPnl"])
+    assert sum(Decimal(day["exchangeFees"]) for day in days) == Decimal(summary["exchangeFees"])
+    assert summary["totalRuns"] == 2
+    page = await ledger.trades(user_id, deleted="exclude", since=None, state="settled", cursor=None,
+                               limit=1, strategy="ETH strategy & profit")
+    assert page["items"][0]["run_id"] == second
+    next_page = await ledger.trades(user_id, deleted="exclude", since=None, state="settled",
+                                    cursor=page["nextCursor"], limit=1, strategy="ETH strategy & profit")
+    assert next_page["items"][0]["run_id"] == first
+    assert next_page["nextCursor"] is None
+    assert await ledger.daily_pnl(user_id, since=None, strategy="Missing") == []
+
+
 async def ledger_row(runtime: LocalRuntimeStore, run_id: str):
     async with runtime.pool.connection() as connection:
         cursor = await connection.execute(
