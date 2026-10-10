@@ -262,6 +262,7 @@ export type PnlResponse = {
   scope: "personal";
   range: ReportRange;
   asset?: AgentAsset | "all";
+  strategy?: string | null;
   asOf: string;
   historyComplete: boolean;
   historyVerifiedAt: string | null;
@@ -292,7 +293,27 @@ export type TradeItem = {
   capturedAt: string;
 };
 
-export type TradePage = { success: boolean; asset?: AgentAsset | "all"; items: TradeItem[]; nextCursor: string | null };
+export type TradePage = {
+  success: boolean; asset?: AgentAsset | "all"; strategy?: string | null; items: TradeItem[]; nextCursor: string | null;
+};
+
+export type PnlDay = Pick<PnlSummary,
+  "netRealizedPnl" | "grossGains" | "grossLosses" | "exchangeFees" | "settledRuns" | "wins" | "losses" | "breakEven"
+> & { date: string };
+
+export type PnlCalendarResponse = {
+  success: boolean;
+  range: ReportRange;
+  asset: AgentAsset | "all";
+  strategy: string | null;
+  timezone: "Asia/Kolkata";
+  asOf: string;
+  startDate: string | null;
+  endDate: string;
+  historyComplete: boolean;
+  historyVerifiedAt: string | null;
+  days: PnlDay[];
+};
 
 export type OwnerAccount = {
   initialized: boolean;

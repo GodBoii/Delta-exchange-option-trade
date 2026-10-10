@@ -26,9 +26,16 @@ export const REPORT_ASSET_OPTIONS: readonly { value: ReportAsset; label: string 
   { value: "ETH", label: "ETH" }
 ];
 
-export function pnlQuery(params: { range: ReportRange; asset: ReportAsset }): string {
+/** Reject stale backend deployments that silently ignore a requested strategy. */
+export function verifyReportStrategy(response: { strategy?: string | null }, requested: string | null): void {
+  if ((response.strategy ?? null) === requested) return;
+  throw new Error("The server did not return the selected strategy. Refresh after the backend is updated.");
+}
+
+export function pnlQuery(params: { range: ReportRange; asset: ReportAsset; strategy?: string | null }): string {
   const query = new URLSearchParams({ range: params.range });
   if (params.asset !== "all") query.set("asset", params.asset);
+  if (params.strategy != null) query.set("strategy", params.strategy);
   return query.toString();
 }
 
@@ -77,6 +84,7 @@ export function tradeQuery(params: {
   range: ReportRange;
   state: AccountingState | "all";
   asset?: ReportAsset;
+  strategy?: string | null;
   cursor?: string | null;
   deleted?: "include" | "exclude" | "only";
   limit?: number;
@@ -84,6 +92,7 @@ export function tradeQuery(params: {
   const query = new URLSearchParams({ range: params.range, limit: String(params.limit ?? 25) });
   if (params.state !== "all") query.set("state", params.state);
   if (params.asset && params.asset !== "all") query.set("asset", params.asset);
+  if (params.strategy != null) query.set("strategy", params.strategy);
   if (params.deleted) query.set("deleted", params.deleted);
   if (params.cursor) query.set("cursor", params.cursor);
   return query.toString();

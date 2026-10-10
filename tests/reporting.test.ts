@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  exclusionText, observationLabel, pnlQuery, runStub, tradeQuery, verifyReportAsset, walletUnavailableText, winRateText
+  exclusionText, observationLabel, pnlQuery, runStub, tradeQuery, verifyReportAsset, verifyReportStrategy, walletUnavailableText, winRateText
 } from "../lib/reporting";
 import type { CapitalObservation, TradeItem } from "../lib/app-types";
 
@@ -43,6 +43,22 @@ test("a backend that ignores an asset filter cannot display combined data as BTC
 test("win rate reads as missing, not zero, before anything settles", () => {
   expect(winRateText(null)).toBe("No settled runs");
   expect(winRateText(0.5)).toBe("50.0%");
+});
+
+test("strategy names are encoded exactly and preserved through trade pagination", () => {
+  const strategy = "ETH / Short & ATM + profit";
+  const summary = new URLSearchParams(pnlQuery({ range: "all", asset: "ETH", strategy }));
+  const trades = new URLSearchParams(tradeQuery({ range: "all", state: "open", strategy, cursor: "page-2" }));
+  expect(summary.get("strategy")).toBe(strategy);
+  expect(trades.get("strategy")).toBe(strategy);
+  expect(trades.get("cursor")).toBe("page-2");
+});
+
+test("ignored strategy filters cannot present combined results under a strategy name", () => {
+  expect(() => verifyReportStrategy({}, null)).not.toThrow();
+  expect(() => verifyReportStrategy({ strategy: "all" }, "all")).not.toThrow();
+  expect(() => verifyReportStrategy({}, "Short call")).toThrow(/selected strategy/);
+  expect(() => verifyReportStrategy({ strategy: "Short put" }, "Short call")).toThrow(/selected strategy/);
 });
 
 test("open positions explain that premium is not profit", () => {
