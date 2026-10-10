@@ -2,6 +2,13 @@ import type { PnlCalendarResponse, PnlDay } from "@/lib/app-types";
 
 const DAY_MS = 86_400_000;
 
+/** A null month means the full year; month values follow JavaScript's 0–11 convention. */
+export function calendarBounds(year: number, month: number | null): { start: string; end: string } {
+  const start = new Date(Date.UTC(year, month ?? 0, 1)).toISOString().slice(0, 10);
+  const end = new Date(Date.UTC(year, month === null ? 12 : month + 1, 0)).toISOString().slice(0, 10);
+  return { start, end };
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid daily P&L response.");
   return Object.fromEntries(Object.entries(value));

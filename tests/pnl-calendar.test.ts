@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { calendarDateLabel, calendarDates, calendarYears, dayTone, parsePnlCalendar } from "../lib/pnl-calendar";
+import { calendarBounds, calendarDateLabel, calendarDates, calendarYears, dayTone, parsePnlCalendar } from "../lib/pnl-calendar";
 import type { PnlDay } from "../lib/app-types";
 
 const day: PnlDay = {
@@ -45,4 +45,13 @@ test("profit and loss use symmetric intensity levels and zero differs from no ac
 test("year options include empty intervening years and the current year", () => {
   expect(calendarYears([], "2026-10-10")).toEqual([2026]);
   expect(calendarYears([{ ...day, date: "2023-12-31" }], "2026-10-10")).toEqual([2026, 2025, 2024, 2023]);
+});
+
+test("calendar selection covers a complete year or exactly one month, including leap years", () => {
+  expect(calendarBounds(2026, null)).toEqual({ start: "2026-01-01", end: "2026-12-31" });
+  expect(calendarBounds(2024, 1)).toEqual({ start: "2024-02-01", end: "2024-02-29" });
+  expect(calendarBounds(2026, 1)).toEqual({ start: "2026-02-01", end: "2026-02-28" });
+  expect(calendarBounds(2025, 11)).toEqual({ start: "2025-12-01", end: "2025-12-31" });
+  const { start, end } = calendarBounds(2026, 9);
+  expect(calendarDates(start, end).filter(date => date >= start && date <= end)).toHaveLength(31);
 });
