@@ -6,7 +6,7 @@ import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { EM_DASH, errorMessage, formatDateTime, relativeTime, toNumber } from "@/lib/format";
 import {
-  RANGE_OPTIONS, STATE_LABELS, STATE_TONES, exclusionText, verifyReportAsset, winRateText, type ReportAsset
+  RANGE_OPTIONS, STATE_LABELS, STATE_TONES, exclusionText, verifyReportAsset, verifyReportStrategy, winRateText, type ReportAsset
 } from "@/lib/reporting";
 import type { AccountingState, PnlSummary, ReportRange, TradeItem, TradePage } from "@/lib/app-types";
 import {
@@ -29,7 +29,9 @@ function pnlTone(value: number | null) {
  * Headline figures over settled runs only, plus what was left out and why.
  * `scopeNote` says whose view this is, because personal and owner totals differ by design.
  */
-export function PnlTiles({ summary, scopeNote }: { summary: PnlSummary; scopeNote: ReactNode }) {
+export function PnlTiles({ summary, scopeNote, showTotalRuns = false }: {
+  summary: PnlSummary; scopeNote: ReactNode; showTotalRuns?: boolean;
+}) {
   const { currencyCode, formatMoneyNumber } = useCurrency();
   const net = toNumber(summary.netRealizedPnl);
   const unresolved = summary.states.open + summary.states.incomplete + summary.states.attention;
@@ -38,6 +40,7 @@ export function PnlTiles({ summary, scopeNote }: { summary: PnlSummary; scopeNot
       <div className="detail-tiles pnl-tiles">
         <Tile label="Net realized P&L" value={formatMoneyNumber(summary.netRealizedPnl, { digits: 2, signed: true })}
           suffix={currencyCode} tone={pnlTone(net)} emphasis />
+        {showTotalRuns && <Tile label="Total trades" value={String(summary.totalRuns)} detail="One trade per strategy run" />}
         <Tile label="Winning runs total" value={formatMoneyNumber(summary.grossGains, { digits: 2, signed: true })}
           suffix={currencyCode} tone={pnlTone(toNumber(summary.grossGains))} />
         <Tile label="Losing runs total" value={formatMoneyNumber(summary.grossLosses, { digits: 2, signed: true })}
@@ -49,7 +52,7 @@ export function PnlTiles({ summary, scopeNote }: { summary: PnlSummary; scopeNot
       </div>
       <p className="pnl-scope-note">
         {scopeNote}{" "}
-        {summary.excludedRuns > 0
+        {summary.totalRuns === 0 ? "No runs in this period." : summary.excludedRuns > 0
           ? `${summary.excludedRuns} ${summary.excludedRuns === 1 ? "run is" : "runs are"} not counted: ${summary.states.scheduled} scheduled, ${summary.states.open} open, ${summary.states.cancelled} cancelled, ${summary.states.incomplete} incomplete, ${summary.states.attention} need attention.`
           : "Every run in this period is counted."}
         {unresolved > 0 && " Open positions and runs with incomplete fills or fees are left out until they settle."}
@@ -105,6 +108,14 @@ export function StateSelect({ value, onChange }: { value: StateFilter; onChange:
   );
 }
 
+export function StrategySelect({ value, names, onChange, disabled = false }: {
+  value: string | null; names: string[]; onChange: (value: string | null) => void; disabled?: boolean;
+}) {
+  return <Select label="Strategy" value={value ?? ""} disabled={disabled}
+    options={[{ value: "", label: "All strategies" }, ...names.map(name => ({ value: name, label: name }))]}
+    onChange={next => onChange(next === "" ? null : next)} />;
+}
+
 type ListState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
@@ -114,7 +125,7 @@ type ListState =
  * Cursor-paged trade list. `path` must already include every filter; changing it
  * restarts from the first page. Older requests are ignored once a newer one starts.
  */
-export function useTradePages(path: string | null, asset: ReportAsset = "all") {
+export function useTradePages(path: string | null, asset: ReportAsset = "all", strategy: string | null = null) {
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const generation = useRef(0);
 
@@ -125,13 +136,14 @@ export function useTradePages(path: string | null, asset: ReportAsset = "all") {
     try {
       const page = await requestJson<TradePage>(path);
       verifyReportAsset(page, asset);
+      verifyReportStrategy(page, strategy);
       if (current === generation.current) {
         setState({ kind: "ready", items: page.items, nextCursor: page.nextCursor, more: "idle" });
       }
     } catch (error) {
       if (current === generation.current) setState({ kind: "error", message: errorMessage(error) });
     }
-  }, [path, asset]);
+  }, [path, asset, strategy]);
 
   useEffect(() => {
     setState({ kind: "loading" });
@@ -146,6 +158,7 @@ export function useTradePages(path: string | null, asset: ReportAsset = "all") {
     try {
       const page = await requestJson<TradePage>(`${path}&cursor=${encodeURIComponent(cursor)}`);
       verifyReportAsset(page, asset);
+      verifyReportStrategy(page, strategy);
       if (current !== generation.current) return;
       setState(previous => previous.kind === "ready"
         ? { kind: "ready", items: [...previous.items, ...page.items], nextCursor: page.nextCursor, more: "idle" }
@@ -153,7 +166,7 @@ export function useTradePages(path: string | null, asset: ReportAsset = "all") {
     } catch {
       if (current === generation.current) setState(previous => previous.kind === "ready" ? { ...previous, more: "error" } : previous);
     }
-  }, [path, asset, state]);
+  }, [path, asset, strategy, state]);
 
   return { state, reload: load, loadMore };
 }

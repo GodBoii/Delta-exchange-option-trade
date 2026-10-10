@@ -8,7 +8,7 @@ import { BarChart3, RefreshCw, TrendingUp } from "@/app/components/icons";
 import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
-import { tradeQuery, verifyReportAsset, type ReportAsset } from "@/lib/reporting";
+import { tradeQuery, verifyReportAsset, verifyReportStrategy, type ReportAsset } from "@/lib/reporting";
 import {
   bucketSizeFor, bucketize, niceTicks, settledSeries, type BucketSize, type PnlBucket, type PnlPoint
 } from "@/lib/pnl-series";
@@ -32,7 +32,7 @@ type ChartData =
  * the trade table. Older requests are ignored once a newer one starts, and a
  * refresh keeps the current charts on screen until the new data arrives.
  */
-function useSettledTrades(range: ReportRange, asset: ReportAsset, refreshToken: number) {
+function useSettledTrades(range: ReportRange, asset: ReportAsset, strategy: string | null, refreshToken: number) {
   const [data, setData] = useState<ChartData>({ kind: "loading" });
   const generation = useRef(0);
 
@@ -44,10 +44,11 @@ function useSettledTrades(range: ReportRange, asset: ReportAsset, refreshToken: 
       let cursor: string | null = null;
       let pages = 0;
       do {
-        const query = tradeQuery({ range, asset, state: "settled", limit: PAGE_SIZE, cursor });
+        const query = tradeQuery({ range, asset, strategy, state: "settled", limit: PAGE_SIZE, cursor });
         const page: TradePage = await requestJson<TradePage>(`/api/me/trades?${query}`);
         if (current !== generation.current) return;
         verifyReportAsset(page, asset);
+        verifyReportStrategy(page, strategy);
         trades.push(...page.items);
         cursor = page.nextCursor;
         pages += 1;
@@ -56,11 +57,11 @@ function useSettledTrades(range: ReportRange, asset: ReportAsset, refreshToken: 
     } catch (error) {
       if (current === generation.current) setData({ kind: "error", message: errorMessage(error) });
     }
-  }, [range, asset]);
+  }, [range, asset, strategy]);
 
   useEffect(() => {
     setData({ kind: "loading" });
-  }, [range, asset]);
+  }, [range, asset, strategy]);
 
   useEffect(() => { void load(); }, [load, refreshToken]);
 
@@ -132,10 +133,10 @@ function stepIndex(event: ReactKeyboardEvent, current: number | null, first: num
  * and winnings against losses per day, week or month. Both count only settled
  * runs, so the line ends on the same net figure as the Performance tiles.
  */
-export default function PnlCharts({ range, asset, refreshToken }: {
-  range: ReportRange; asset: ReportAsset; refreshToken: number;
+export default function PnlCharts({ range, asset, strategy = null, refreshToken }: {
+  range: ReportRange; asset: ReportAsset; strategy?: string | null; refreshToken: number;
 }) {
-  const { data, reload } = useSettledTrades(range, asset, refreshToken);
+  const { data, reload } = useSettledTrades(range, asset, strategy, refreshToken);
   const points = useMemo(() => data.kind === "ready" ? settledSeries(data.trades) : [], [data]);
   const size = bucketSizeFor(points);
   const buckets = useMemo(() => bucketize(points, size), [points, size]);

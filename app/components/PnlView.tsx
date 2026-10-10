@@ -4,12 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw } from "@/app/components/icons";
 import { requestJson } from "@/lib/api";
 import { errorMessage, formatTimestamp, relativeTime } from "@/lib/format";
-import { REPORT_ASSET_OPTIONS, pnlQuery, runStub, tradeQuery, verifyReportAsset, type ReportAsset } from "@/lib/reporting";
+import {
+  REPORT_ASSET_OPTIONS, pnlQuery, runStub, tradeQuery, verifyReportAsset, verifyReportStrategy, type ReportAsset
+} from "@/lib/reporting";
 import type { PnlResponse, ReportRange, TradeItem } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
 import PnlCharts from "@/app/components/PnlCharts";
+import PnlHeatmap from "@/app/components/PnlHeatmap";
 import {
-  PnlTiles, RangeControl, StateSelect, TradeTable, useTradePages, type StateFilter
+  PnlTiles, RangeControl, StateSelect, StrategySelect, TradeTable, useTradePages, type StateFilter
 } from "@/app/components/TradeReport";
 import {
   IconSwap, InlineMessage, Panel, PanelHeader, SectionHeading, Segmented, TileSkeleton
@@ -30,18 +33,37 @@ export default function PnlView() {
   const [range, setRange] = useState<ReportRange>("30d");
   const [asset, setAsset] = useState<ReportAsset>("all");
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
+  const [strategy, setStrategy] = useState<string | null>(null);
+  const [strategyOptions, setStrategyOptions] = useState<
+    { kind: "loading" } | { kind: "ready"; names: string[] } | { kind: "error"; message: string }
+  >({ kind: "loading" });
   const [summary, setSummary] = useState<SummaryState>({ kind: "loading" });
   const [inspecting, setInspecting] = useState<TradeItem | null>(null);
   const [chartsToken, setChartsToken] = useState(0);
   const generation = useRef(0);
-  const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, asset, state: stateFilter })}`, asset);
+  const trades = useTradePages(`/api/me/trades?${tradeQuery({ range, asset, strategy, state: stateFilter })}`, asset, strategy);
+
+  const loadStrategies = useCallback(async () => {
+    try {
+      const data = await requestJson<{ names?: unknown }>("/api/me/pnl/strategies");
+      if (!Array.isArray(data.names) || !data.names.every((name): name is string => typeof name === "string" && name.length > 0)) {
+        throw new Error("The server did not return valid strategy names.");
+      }
+      setStrategyOptions({ kind: "ready", names: data.names });
+    } catch (error) {
+      setStrategyOptions({ kind: "error", message: errorMessage(error) });
+    }
+  }, []);
+
+  useEffect(() => { void loadStrategies(); }, [loadStrategies]);
 
   const loadSummary = useCallback(async (refresh = false) => {
     const current = ++generation.current;
     setSummary(previous => refresh && previous.kind === "ready" ? { ...previous, refresh: "loading" } : { kind: "loading" });
     try {
-      const data = await requestJson<PnlResponse>(`/api/me/pnl?${pnlQuery({ range, asset })}`);
+      const data = await requestJson<PnlResponse>(`/api/me/pnl?${pnlQuery({ range, asset, strategy })}`);
       verifyReportAsset(data, asset);
+      verifyReportStrategy(data, strategy);
       if (current === generation.current) setSummary({ kind: "ready", data, refresh: "idle" });
     } catch (error) {
       if (current !== generation.current) return;
@@ -50,7 +72,7 @@ export default function PnlView() {
         ? { ...previous, refresh: "failed" }
         : { kind: "error", message: errorMessage(error) });
     }
-  }, [range, asset]);
+  }, [range, asset, strategy]);
 
   useEffect(() => { void loadSummary(); }, [loadSummary]);
 
@@ -59,6 +81,7 @@ export default function PnlView() {
   function refresh() {
     void loadSummary(true);
     void trades.reload();
+    void loadStrategies();
     setChartsToken(token => token + 1);
   }
 
@@ -88,6 +111,18 @@ export default function PnlView() {
         />
       </div>
 
+      <div className="report-filters pnl-strategy-filters">
+        <StateSelect value={stateFilter} onChange={setStateFilter} />
+        <StrategySelect value={strategy}
+          names={strategyOptions.kind === "ready" ? [...new Set([...strategyOptions.names, ...(strategy ? [strategy] : [])])] : strategy ? [strategy] : []}
+          onChange={setStrategy} disabled={strategyOptions.kind === "loading"} />
+        <p className="pnl-filter-note">Strategy applies to the whole report. Accounting state filters the trades below.</p>
+      </div>
+      {strategyOptions.kind === "error" && <div className="report-error">
+        <InlineMessage tone="error">Could not load strategy names. {strategyOptions.message}</InlineMessage>
+        <button type="button" className="button secondary small" onClick={() => void loadStrategies()}>Try again</button>
+      </div>}
+
       {summary.kind === "ready" && !summary.data.historyComplete && (
         <p className="callout tone-warning" role="status">
           <AlertTriangle aria-hidden="true" />
@@ -100,7 +135,7 @@ export default function PnlView() {
 
       <Panel className="report-panel">
         <PanelHeader
-          title="Performance"
+          title={strategy ? `${strategy} performance` : "Performance"}
           meta={summary.kind === "ready"
             ? summary.refresh === "failed"
               ? `Could not refresh. Showing figures from ${formatTimestamp(summary.data.asOf)}.`
@@ -108,7 +143,7 @@ export default function PnlView() {
             : undefined}
         />
         {summary.kind === "loading" ? (
-          <TileSkeleton count={6} />
+          <TileSkeleton count={7} />
         ) : summary.kind === "error" ? (
           <div className="report-error">
             <InlineMessage tone="error">{summary.message}</InlineMessage>
@@ -119,26 +154,29 @@ export default function PnlView() {
         ) : (
           <PnlTiles
             summary={summary.data.summary}
+            showTotalRuns
             scopeNote="Only fully closed runs with final fills and fees count. Runs you deleted from your history are not included."
           />
         )}
       </Panel>
 
-      <PnlCharts key={`${range}:${asset}`} range={range} asset={asset} refreshToken={chartsToken} />
+      <PnlHeatmap key={JSON.stringify(["calendar", range, asset, strategy])}
+        range={range} asset={asset} strategy={strategy} refreshToken={chartsToken} />
+
+      <PnlCharts key={JSON.stringify(["charts", range, asset, strategy])}
+        range={range} asset={asset} strategy={strategy} refreshToken={chartsToken} />
 
       <Panel className="report-panel">
-        <PanelHeader title="Software trades" meta="Newest first. Open a trade to see its fills and settlement." />
-        <div className="report-filters">
-          <StateSelect value={stateFilter} onChange={setStateFilter} />
-        </div>
+        <PanelHeader title={strategy ? `${strategy} trades` : "Software trades"}
+          meta="Newest first. Open a trade to see its fills and settlement." />
         <TradeTable
           state={trades.state}
           onInspect={setInspecting}
           onRetry={() => void trades.reload()}
           onLoadMore={() => void trades.loadMore()}
-          emptyText={asset === "all"
-            ? "Runs this software places for you will appear here with their results."
-            : `No ${asset} runs match this period and accounting state.`}
+          emptyText={strategy || asset !== "all" || stateFilter !== "all"
+            ? "No runs match this strategy, asset, period and accounting state. Try changing the filters."
+            : "Runs this software places for you will appear here with their results."}
         />
       </Panel>
 
