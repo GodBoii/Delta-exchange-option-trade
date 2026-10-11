@@ -29,8 +29,8 @@ type CalendarState =
   | { kind: "error"; message: string }
   | { kind: "ready"; data: PnlCalendarResponse; refreshing: boolean; refreshError: string | null };
 
-export default function PnlHeatmap({ asset, strategy, refreshToken }: {
-  asset: ReportAsset; strategy: string | null; refreshToken: number;
+export default function PnlHeatmap({ asset, strategy, refreshToken, endpoint = "/api/me/pnl/calendar" }: {
+  asset: ReportAsset; strategy: string | null; refreshToken: number; endpoint?: string;
 }) {
   const [state, setState] = useState<CalendarState>({ kind: "loading" });
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -42,7 +42,7 @@ export default function PnlHeatmap({ asset, strategy, refreshToken }: {
     setState(previous => previous.kind === "ready"
       ? { ...previous, refreshing: true, refreshError: null } : { kind: "loading" });
     try {
-      const data = parsePnlCalendar(await requestJson<unknown>(`/api/me/pnl/calendar?${pnlQuery({ range: "all", asset, strategy })}`));
+      const data = parsePnlCalendar(await requestJson<unknown>(`${endpoint}?${pnlQuery({ range: "all", asset, strategy })}`));
       verifyReportAsset(data, asset);
       verifyReportStrategy(data, strategy);
       if (data.range !== "all") throw new Error("The calendar did not return complete history.");
@@ -53,7 +53,7 @@ export default function PnlHeatmap({ asset, strategy, refreshToken }: {
         ? { ...previous, refreshing: false, refreshError: errorMessage(error) }
         : { kind: "error", message: errorMessage(error) });
     }
-  }, [asset, strategy]);
+  }, [asset, strategy, endpoint]);
 
   useEffect(() => {
     void load();

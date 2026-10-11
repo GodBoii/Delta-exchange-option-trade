@@ -125,7 +125,7 @@ type ListState =
  * Cursor-paged trade list. `path` must already include every filter; changing it
  * restarts from the first page. Older requests are ignored once a newer one starts.
  */
-export function useTradePages(path: string | null, asset: ReportAsset = "all", strategy: string | null = null) {
+export function useTradePages(path: string | null, asset: ReportAsset = "all", strategy: string | null = null, refreshToken = 0) {
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const generation = useRef(0);
 
@@ -148,7 +148,8 @@ export function useTradePages(path: string | null, asset: ReportAsset = "all", s
   useEffect(() => {
     setState({ kind: "loading" });
     void load();
-  }, [load]);
+    return () => { generation.current += 1; };
+  }, [load, refreshToken]);
 
   const loadMore = useCallback(async () => {
     if (!path || state.kind !== "ready" || !state.nextCursor || state.more === "loading") return;

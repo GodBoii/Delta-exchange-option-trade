@@ -32,7 +32,7 @@ type ChartData =
  * the trade table. Older requests are ignored once a newer one starts, and a
  * refresh keeps the current charts on screen until the new data arrives.
  */
-function useSettledTrades(range: ReportRange, asset: ReportAsset, strategy: string | null, refreshToken: number) {
+function useSettledTrades(range: ReportRange, asset: ReportAsset, strategy: string | null, refreshToken: number, endpoint: string) {
   const [data, setData] = useState<ChartData>({ kind: "loading" });
   const generation = useRef(0);
 
@@ -45,7 +45,7 @@ function useSettledTrades(range: ReportRange, asset: ReportAsset, strategy: stri
       let pages = 0;
       do {
         const query = tradeQuery({ range, asset, strategy, state: "settled", limit: PAGE_SIZE, cursor });
-        const page: TradePage = await requestJson<TradePage>(`/api/me/trades?${query}`);
+        const page: TradePage = await requestJson<TradePage>(`${endpoint}?${query}`);
         if (current !== generation.current) return;
         verifyReportAsset(page, asset);
         verifyReportStrategy(page, strategy);
@@ -57,13 +57,16 @@ function useSettledTrades(range: ReportRange, asset: ReportAsset, strategy: stri
     } catch (error) {
       if (current === generation.current) setData({ kind: "error", message: errorMessage(error) });
     }
-  }, [range, asset, strategy]);
+  }, [range, asset, strategy, endpoint]);
 
   useEffect(() => {
     setData({ kind: "loading" });
   }, [range, asset, strategy]);
 
-  useEffect(() => { void load(); }, [load, refreshToken]);
+  useEffect(() => {
+    void load();
+    return () => { generation.current += 1; };
+  }, [load, refreshToken]);
 
   return { data, reload: load };
 }
@@ -133,10 +136,10 @@ function stepIndex(event: ReactKeyboardEvent, current: number | null, first: num
  * and winnings against losses per day, week or month. Both count only settled
  * runs, so the line ends on the same net figure as the Performance tiles.
  */
-export default function PnlCharts({ range, asset, strategy = null, refreshToken }: {
-  range: ReportRange; asset: ReportAsset; strategy?: string | null; refreshToken: number;
+export default function PnlCharts({ range, asset, strategy = null, refreshToken, endpoint = "/api/me/trades" }: {
+  range: ReportRange; asset: ReportAsset; strategy?: string | null; refreshToken: number; endpoint?: string;
 }) {
-  const { data, reload } = useSettledTrades(range, asset, strategy, refreshToken);
+  const { data, reload } = useSettledTrades(range, asset, strategy, refreshToken, endpoint);
   const points = useMemo(() => data.kind === "ready" ? settledSeries(data.trades) : [], [data]);
   const size = bucketSizeFor(points);
   const buckets = useMemo(() => bucketize(points, size), [points, size]);

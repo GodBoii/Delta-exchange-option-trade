@@ -51,4 +51,28 @@ accessible. No new animation or chart dependency is needed.
 
 ## Verification results
 
-To be recorded after implementation.
+- 78 backend tests passed against an isolated PostgreSQL 17 database, covering
+  owner authorization, mixed-asset reporting, archive inclusion, asset-specific
+  cancellation, stale claims, future sessions, allocation and entry checks.
+- 40 frontend tests passed. TypeScript, focused ESLint and Ruff passed.
+- The production Next.js build passed. The shared chart components retain their
+  personal-report endpoint defaults and now support explicit owner endpoints.
+- Local fixture browser checks covered 1440px desktop and 390px mobile, dark and
+  light themes, account selection, keyboard switches, failed saves, reload,
+  All/BTC/ETH chart changes, search with no matches and capital-history filters
+  and pagination. Both viewports had no horizontal page overflow. Charts and
+  calendar cells rendered; browser logs contained no errors or warnings.
+- Mobile accounts use a horizontal ribbon, profile details use two columns, and
+  each asset control is about 111px wide. Desktop controls are about 145px wide.
+- Existing runtime fixtures now explicitly enable account participation. Two
+  research fixtures failed on the unchanged baseline because they omitted their
+  underlying and used an expired session date. Their setup now supplies BTC and
+  an upcoming session expiry, allowing their transaction checks to run.
+
+## Rollout
+
+Deploy the trading backend from main alongside the frontend. The new account-asset
+endpoint and owner calendar require the updated API; no schema migration is needed.
+Browser checks used synthetic local accounts and did not change real automation
+preferences or submit exchange orders. Production rollout is not part of the local
+verification described above.

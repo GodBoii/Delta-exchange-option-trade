@@ -392,11 +392,12 @@ export type OwnerUserDetail = {
   success: boolean;
   asOf: string;
   range: ReportRange;
+  asset: AgentAsset | "all";
   historyComplete: boolean;
   historyVerifiedAt: string | null;
   profile: OwnerProfile;
   account: OwnerAccount;
-  automation: { enabled: boolean };
+  automation: { enabled: boolean; assetEnabled: Record<AgentAsset, boolean> };
   capitalPolicy: { allocationMode: string | null; capitalAmount: string | null };
   /** Per-strategy budget under the saved policy. Null when the live wallet could not be read. */
   budgetPreview: {

@@ -7,18 +7,22 @@ import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { EM_DASH, errorMessage, formatDateTime, formatTimestamp, relativeTime, toNumber } from "@/lib/format";
 import {
-  allocationModeText, observationLabel, runStub, tradeQuery, walletUnavailableText
+  allocationModeText, runStub, tradeQuery, walletUnavailableText
 } from "@/lib/reporting";
 import type {
   CapitalAllocationMode, OwnerTradeDetail, OwnerUserDetail, OwnerUserRow, OwnerUsersResponse, ReportRange, TradeItem
 } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
+import PnlCharts from "@/app/components/PnlCharts";
+import PnlHeatmap from "@/app/components/PnlHeatmap";
+import CapitalHistory from "@/app/components/OwnerCapitalHistory";
+import { REPORT_ASSET_OPTIONS, pnlQuery, verifyReportAsset, type ReportAsset } from "@/lib/reporting";
 import {
   PnlTiles, RangeControl, StateSelect, TradeTable, useTradePages, type StateFilter
 } from "@/app/components/TradeReport";
 import {
   DetailList, EmptyState, InlineMessage, NumberField, Panel, PanelHeader, SectionHeading, Select, StatusChip,
-  StatusDot, TableSkeleton, TileSkeleton, Toggle, type NoticeHandler
+  StatusDot, TableSkeleton, TileSkeleton, Segmented, type NoticeHandler
 } from "@/app/components/ui";
 
 const PAGE_SIZE = 20;
@@ -90,7 +94,8 @@ export default function OwnerUsers({ onNotice }: { onNotice: NoticeHandler }) {
     setSelected(id);
     // On a single column the detail sits below the list, so bring it into view.
     if (window.matchMedia("(max-width: 1080px)").matches) {
-      window.requestAnimationFrame(() => detailRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
+      window.requestAnimationFrame(() => detailRef.current?.scrollIntoView({ block: "start", behavior }));
     }
   }
 
@@ -110,7 +115,7 @@ export default function OwnerUsers({ onNotice }: { onNotice: NoticeHandler }) {
       />
 
       {data ? (
-        <div className="detail-tiles owner-summary" aria-label="Account summary">
+        <div className="owner-summary" aria-label="Account summary">
           <SummaryTile label="Registered users" value={data.summary.registeredUsers} />
           <SummaryTile label="Delta connected" value={data.summary.connectedAccounts} />
           <SummaryTile label="Automation on" value={data.summary.automationEnabledAccounts} />
@@ -177,6 +182,7 @@ export default function OwnerUsers({ onNotice }: { onNotice: NoticeHandler }) {
               userId={selected}
               onNotice={onNotice}
               onAutomationSaved={() => setListToken(token => token + 1)}
+              refreshToken={listToken}
             />
           ) : data ? (
             <Panel><EmptyState icon={<Profile />} title="Select an account" description="Choose an account to see its capital, automation and trades." /></Panel>
@@ -201,7 +207,12 @@ function UserRow({ user, selected, onSelect }: { user: OwnerUserRow; selected: b
   const { currencyCode, formatMoneyNumber } = useCurrency();
   const net = toNumber(user.performance.netRealizedPnl);
   return (
-    <button type="button" className="owner-user-row" aria-pressed={selected} onClick={onSelect}>
+    <button type="button" className="owner-user-row" aria-pressed={selected} onClick={event => {
+      if (window.matchMedia("(max-width: 720px)").matches) {
+        event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      }
+      onSelect();
+    }}>
       <span className="avatar" aria-hidden="true">{displayName(user).slice(0, 2).toUpperCase()}</span>
       <span className="owner-user-text">
         <strong>
@@ -229,34 +240,39 @@ function UserRow({ user, selected, onSelect }: { user: OwnerUserRow; selected: b
   );
 }
 
-function UserDetail({ userId, onNotice, onAutomationSaved }: {
+function UserDetail({ userId, onNotice, onAutomationSaved, refreshToken }: {
   userId: string;
   onNotice: NoticeHandler;
   onAutomationSaved: () => void;
+  refreshToken: number;
 }) {
   const { currencyCode, formatMoneyNumber } = useCurrency();
   const [range, setRange] = useState<ReportRange>("all");
+  const [asset, setAsset] = useState<ReportAsset>("all");
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [deleted, setDeleted] = useState<DeletedFilter>("include");
   const [detail, setDetail] = useState<Load<OwnerUserDetail>>({ kind: "loading" });
   const [token, setToken] = useState(0);
-  const [switching, setSwitching] = useState<"idle" | "saving">("idle");
+  const [switching, setSwitching] = useState<"all" | "BTC" | "ETH" | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState<TradeItem | null>(null);
+  const reportToken = token + refreshToken;
   const trades = useTradePages(
-    `/api/owner/users/${encodeURIComponent(userId)}/trades?${tradeQuery({ range, state: stateFilter, deleted })}`
+    `/api/owner/users/${encodeURIComponent(userId)}/trades?${tradeQuery({ range, asset, state: stateFilter, deleted })}`,
+    asset, null, reportToken
   );
+  const reportBase = `/api/owner/users/${encodeURIComponent(userId)}`;
 
   useEffect(() => {
     let active = true;
     setDetail(previous => previous.kind === "ready" ? previous : { kind: "loading" });
-    requestJson<OwnerUserDetail>(`/api/owner/users/${encodeURIComponent(userId)}?range=${range}`, {
+    requestJson<OwnerUserDetail>(`${reportBase}?${pnlQuery({ range, asset })}`, {
       signal: AbortSignal.timeout(20_000)
     })
-      .then(data => { if (active) setDetail({ kind: "ready", data }); })
+      .then(data => { verifyReportAsset(data, asset); if (active) setDetail({ kind: "ready", data }); })
       .catch(error => { if (active) setDetail({ kind: "error", message: errorMessage(error) }); });
     return () => { active = false; };
-  }, [range, token, userId]);
+  }, [range, asset, reportToken, reportBase]);
 
   const loadArchived = useCallback(async (): Promise<OwnerTradeDetail["run"]> => {
     if (!inspecting) throw new Error("No trade selected");
@@ -266,30 +282,29 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
     return data.run;
   }, [inspecting, userId]);
 
-  async function setAutomation(enabled: boolean) {
-    if (detail.kind !== "ready" || switching === "saving") return;
-    setSwitching("saving");
+  async function setAutomation(enabled: boolean, target: "all" | "BTC" | "ETH") {
+    if (detail.kind !== "ready" || switching !== null) return;
+    setSwitching(target);
     setSwitchError(null);
     try {
-      const saved = await requestJson<{ automation: { enabled: boolean } }>(
-        `/api/owner/users/${encodeURIComponent(userId)}/automation`,
+      const saved = await requestJson<{ automation: OwnerUserDetail["automation"] }>(
+        `${reportBase}/automation${target === "all" ? "" : `/assets/${target}`}`,
         { method: "PUT", body: JSON.stringify({ enabled }) }
       );
       // The switch shows the state the server saved, never the one that was requested.
       setDetail(current => current.kind === "ready"
         ? { kind: "ready", data: { ...current.data, automation: saved.automation } }
         : current);
+      const savedEnabled = target === "all" ? saved.automation.enabled : saved.automation.assetEnabled[target];
       onNotice({
         tone: "ok",
-        text: saved.automation.enabled
-          ? `Automation turned on for ${displayName(detail.data.profile)}.`
-          : `Automation turned off for ${displayName(detail.data.profile)}. Scheduled work was cancelled; open positions keep their exit rules.`
+        text: `${target === "all" ? "Account" : target} automation ${savedEnabled ? "enabled" : "paused"} for ${displayName(detail.data.profile)}.${savedEnabled ? "" : " Pending entries were cancelled. Open positions keep their exit rules."}`
       });
       onAutomationSaved();
     } catch (error) {
       setSwitchError(errorMessage(error));
     } finally {
-      setSwitching("idle");
+      setSwitching(null);
     }
   }
 
@@ -297,6 +312,7 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
   if (detail.kind === "error") {
     return (
       <Panel>
+        <OwnerReportControls asset={asset} range={range} onAssetChange={setAsset} onRangeChange={setRange} />
         <div className="report-error">
           <InlineMessage tone="error">{detail.message}</InlineMessage>
           <button type="button" className="button secondary small" onClick={() => setToken(value => value + 1)}>
@@ -310,6 +326,7 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
   const { profile, account, wallet, capitalPolicy, budgetPreview, capitalHistory, performance } = detail.data;
   const walletNote = walletUnavailableText(wallet);
   const userScope = performance.userScope;
+  const scopeReady = (detail.data.asset ?? "all") === asset && detail.data.range === range;
 
   return (
     <>
@@ -334,14 +351,25 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
           { label: "Delta account", value: account.accountName ? `${account.accountName}${account.email ? ` · ${account.email}` : ""}` : EM_DASH }
         ]} />
         <div className="owner-automation">
-          <Toggle
-            label="Automation for this account"
-            description={switching === "saving"
-              ? "Saving…"
-              : "Off cancels scheduled agent runs and entries for this account. Open positions keep their exit and risk rules."}
-            checked={detail.data.automation.enabled}
-            onChange={next => void setAutomation(next)}
-          />
+          <div className="owner-control-heading"><h3>Automation</h3><span>Account preferences</span></div>
+          <div className="owner-automation-track" aria-label="Account automation controls" aria-busy={switching !== null}>
+            {(["all", "BTC", "ETH"] as const).map(target => {
+              const checked = target === "all" ? detail.data.automation.enabled : detail.data.automation.assetEnabled?.[target];
+              const available = typeof checked === "boolean";
+              const label = target === "all" ? "Account" : target;
+              return <button key={target} type="button" role="switch" aria-checked={checked ?? false}
+                aria-label={`${label} automation`} className={`owner-automation-switch${target === "all" ? " is-master" : ""}`}
+                disabled={switching !== null || !available || (target !== "all" && !account.initialized)}
+                onClick={() => void setAutomation(!checked, target)}>
+                <span className="owner-asset-symbol" aria-hidden="true">{target === "BTC" ? "₿" : target === "ETH" ? "Ξ" : "◎"}</span>
+                <span className="owner-switch-copy"><strong>{label}</strong>
+                  <small>{switching === target ? "Saving…" : !available ? "Update API" : !checked ? "Paused"
+                    : target !== "all" && !detail.data.automation.enabled ? "Standby" : "Enabled"}</small></span>
+                <span className="owner-switch-knob" aria-hidden="true" />
+              </button>;
+            })}
+          </div>
+          <p className="field-hint">Pausing cancels pending automated entries. Open positions keep their exit rules. Global asset pauses still apply.</p>
           {!account.initialized || account.connectionStatus !== "connected" ? (
             <small className="field-hint">This account cannot trade until Delta is connected, even with automation on.</small>
           ) : null}
@@ -349,6 +377,11 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
         </div>
       </Panel>
 
+      <details className="owner-capital-disclosure">
+        <summary><span>Capital &amp; audit trail<small>{wallet.state === "live"
+          ? `${formatMoneyNumber(wallet.totalBalance)} ${currencyCode} in wallet · ${formatMoneyNumber(wallet.availableBalance)} available`
+          : "Wallet, strategy budget and recorded observations"}</small></span>
+          <span className="owner-disclosure-action">Inspect capital <span aria-hidden="true">↗</span></span></summary>
       <Panel className="owner-capital-panel">
         <PanelHeader title="Capital" meta="Balances in USD on Delta, shown in your display currency" />
         <div className="detail-tiles">
@@ -392,42 +425,31 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
           onNotice={onNotice}
           onSaved={() => setToken(value => value + 1)}
         />
-        <h3 className="owner-subheading">Recorded capital history</h3>
-        {capitalHistory.length ? (
-          <ul className="capital-history">
-            {capitalHistory.map((item, index) => (
-              <li key={`${item.kind}:${item.observedAt}:${item.runId ?? index}`}>
-                <span className="cell-stack">
-                  <strong>{observationLabel(item)}</strong>
-                  <small>{formatTimestamp(item.observedAt)}</small>
-                </span>
-                <span className="capital-history-value">
-                  {item.kind === "wallet" && `${formatMoneyNumber(item.totalBalance)} ${currencyCode}${item.availableBalance ? ` · ${formatMoneyNumber(item.availableBalance)} available` : ""}`}
-                  {item.kind === "run_allocation" && `${formatMoneyNumber(item.allocatedBudget)} ${currencyCode}`}
-                  {item.kind === "policy" && allocationModeText(item.allocationMode)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="detail-note">No capital values have been recorded for this account yet. Older balances that were never recorded are not estimated.</p>
-        )}
+        <CapitalHistory observations={capitalHistory} />
       </Panel>
+
+      </details>
 
       <Panel className="report-panel">
         <PanelHeader title="Software trade performance" meta={`As of ${relativeTime(detail.data.asOf)}`} />
-        <RangeControl value={range} onChange={setRange} />
+        <OwnerReportControls asset={asset} range={range} onAssetChange={setAsset} onRangeChange={setRange} />
         {!detail.data.historyComplete && (
           <p className="callout tone-warning" role="status">
             <AlertTriangle aria-hidden="true" />
             <span>Earlier runs are still being imported. Totals may grow once the import is verified.</span>
           </p>
         )}
-        <PnlTiles
+        {scopeReady ? <PnlTiles
           summary={performance.ownerScope}
+          showTotalRuns
           scopeNote={`Owner view: includes ${performance.ownerScope.deletedByUserRuns} ${performance.ownerScope.deletedByUserRuns === 1 ? "run" : "runs"} the user deleted. The user's own P&L shows ${formatMoneyNumber(userScope.netRealizedPnl, { signed: true })} ${currencyCode} across ${userScope.settledRuns} settled ${userScope.settledRuns === 1 ? "run" : "runs"}.`}
-        />
+        /> : <TileSkeleton count={7} />}
       </Panel>
+
+      <PnlCharts key={`${userId}:${asset}:${range}`} range={range} asset={asset} refreshToken={reportToken}
+        endpoint={`${reportBase}/trades`} />
+      <PnlHeatmap key={`${userId}:${asset}:calendar`} asset={asset} strategy={null} refreshToken={reportToken}
+        endpoint={`${reportBase}/pnl/calendar`} />
 
       <Panel className="report-panel">
         <PanelHeader title="Software trades" meta="Deleted runs stay here, marked, after the user removes them." />
@@ -478,6 +500,22 @@ function UserDetail({ userId, onNotice, onAutomationSaved }: {
  * can still change it from Portfolio; whichever change is saved last applies to
  * the next entry. Runs already open keep the budget they entered with.
  */
+function OwnerReportControls({ asset, range, onAssetChange, onRangeChange }: {
+  asset: ReportAsset;
+  range: ReportRange;
+  onAssetChange: (value: ReportAsset) => void;
+  onRangeChange: (value: ReportRange) => void;
+}) {
+  return <div className="owner-report-controls">
+    <Segmented label="Performance asset" value={asset} options={REPORT_ASSET_OPTIONS.map(option => ({ ...option }))}
+      onChange={value => {
+        const match = REPORT_ASSET_OPTIONS.find(option => option.value === value);
+        if (match) onAssetChange(match.value);
+      }} />
+    <RangeControl value={range} onChange={onRangeChange} />
+  </div>;
+}
+
 function CapitalPolicyEditor({ userId, name, policy, onNotice, onSaved }: {
   userId: string;
   name: string;
