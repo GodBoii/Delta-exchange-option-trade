@@ -2,7 +2,7 @@
 
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -11,6 +11,7 @@ import pytest
 from agno.run.agent import RunOutput
 from test_curated_input import fixture
 
+from app import automation_schedule
 from automation_agent import recheck, team, tools
 from automation_agent.assets import PROFILES
 from automation_agent.curated import assigned_option_overview
@@ -240,3 +241,70 @@ def test_initial_recheck_evidence_failure_never_invokes_model(monkeypatch, curat
             settings=SimpleNamespace(), user_id="global", agent_run_id=str(uuid4()), session_id="test",
             recheck_context={"proposalId": str(uuid4()), "selectedStrategy": strategy},
         )
+
+
+@pytest.mark.parametrize("fault", [None, "arguments", "version", "snapshot", "recalculation"])
+def test_compact_selection_uses_validated_schedule_and_rejects_changed_evidence(monkeypatch, fault):
+    raw, strategy = assigned()
+    frozen_datetime = freeze(monkeypatch, raw["observedAt"])
+    monkeypatch.setattr(automation_schedule, "datetime", frozen_datetime)
+    saved_id, snapshot_id = str(uuid4()), str(uuid4())
+    row = {
+        "id": saved_id, "version": 1, "enabled_for_ai": True, "name": strategy["name"],
+        "definition_json": strategy["definition"], "user_id": None,
+    }
+    snapshot = {
+        "id": snapshot_id, "market_json": {"executionOptionContext": {"underlying": "BTC", "options": [raw]}},
+    }
+    published = []
+
+    def request(path, args, *, mutation=False):
+        if path == "runtimeAutomation:context":
+            assert not mutation
+            return {"snapshot": snapshot, "occupied": 0}
+        assert path == "sharedAnalysis:publish" and mutation
+        published.append(args)
+        return {"outcome": "strategy_selected"}
+
+    monkeypatch.setattr(tools, "runtime_data", lambda _: SimpleNamespace(request_sync=request))
+    monkeypatch.setattr(tools, "LocalResearchClient", lambda *_: SimpleNamespace(
+        selection_context=lambda *_: ([row], {"allocation_mode": "half_balance"}),
+    ))
+    toolkit = tools.AutomationStrategyTools(
+        SimpleNamespace(trade_backend_internal_url="http://writer.test", analysis_service_secret="secret"),
+        user_id="global", agent_run_id=str(uuid4()), market_snapshot_id=snapshot_id, curated=True,
+    )
+    toolkit.starting_catalogue()
+    choice = {"kind": "specific_time", "exit_at": strategy["exitTime"]}
+    calculation = json.loads(toolkit.calculate_exit_time("S01", strategy["activationTime"], choice))
+    assert calculation["valid"] is True
+    activation = strategy["activationTime"]
+    errors = {"arguments": "calculate_exit_time", "version": "changed", "snapshot": "snapshot",
+              "recalculation": "calculate_exit_time"}
+    if fault == "arguments":
+        activation = (datetime.fromisoformat(activation) + timedelta(minutes=1)).isoformat()
+    elif fault == "version":
+        row["version"] += 1
+    elif fault == "snapshot":
+        snapshot["id"] = str(uuid4())
+    elif fault == "recalculation":
+        snapshot["market_json"]["executionOptionContext"]["options"] = []
+        assert json.loads(toolkit.calculate_exit_time("S01", activation, choice))["valid"] is False
+
+    def select():
+        return toolkit._select_strategy_and_time(
+            saved_id=saved_id, saved_strategy_version=1, activation_time=activation,
+            ai_confidence=0.7, reasoning_summary="Spot setup holds", supporting_signals=["spot"],
+            invalidation_signals=["range break"], exit_choice=choice,
+        )
+
+    if fault:
+        with pytest.raises(ValueError, match=errors[fault]):
+            select()
+        assert published == []
+    else:
+        assert json.loads(select())["outcome"] == "strategy_selected"
+        assert published[0]["exit"] == strategy["exitTime"]
+        live = json.loads(published[0]["definitionJson"])
+        assert live["legs"] == strategy["definition"]["legs"]
+        assert live["stopLossPercent"] == strategy["definition"]["stopLossPercent"]
