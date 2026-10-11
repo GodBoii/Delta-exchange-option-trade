@@ -10,6 +10,7 @@ import {
 import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
 import { NotificationSettings } from "@/app/components/NotificationSettings";
+import { ProfileAvatar } from "@/app/components/ProfileAvatar";
 import {
   Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
@@ -54,7 +55,7 @@ const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
 /** Reading order of the sections, so a transition knows which way it travelled. */
 export const TAB_ORDER: readonly Tab[] = NAV_ITEMS.map(item => item.id);
 
-export type AccountIdentity = { name: string; detail: string; role: "owner" | "user" };
+export type AccountIdentity = { name: string; detail: string; role: "owner" | "user"; avatarUrl?: string | null };
 
 export type ConnectionState = {
   label: string;
@@ -400,7 +401,6 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const initials = account.name.trim().slice(0, 2).toUpperCase() || "TC";
 
   return (
     <div className="account-menu">
@@ -412,7 +412,7 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
       >
-        <span className="avatar" aria-hidden="true">{initials}</span>
+        <ProfileAvatar name={account.name} avatarUrl={account.avatarUrl} />
         <span className="account-trigger-text">
           <strong>{account.name}</strong>
           <small>{account.detail}</small>
@@ -423,7 +423,6 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
       {open && (
         <AccountPanel
           account={account}
-          initials={initials}
           connection={connection}
           pages={pages}
           current={current}
@@ -442,9 +441,8 @@ function AccountWindow({ account, connection, pages, current, onNavigate, onDisc
  * measure bars that already exist. Choosing a page, disconnecting or signing
  * out closes the window at once, since the user has already picked where to go.
  */
-function AccountPanel({ account, initials, connection, pages, current, onClose, onNavigate, onDisconnect, onSignOut }: {
+function AccountPanel({ account, connection, pages, current, onClose, onNavigate, onDisconnect, onSignOut }: {
   account: AccountIdentity;
-  initials: string;
   connection: ConnectionState;
   pages: NavItem[];
   current: Tab;
@@ -470,7 +468,7 @@ function AccountPanel({ account, initials, connection, pages, current, onClose, 
       onClose={onClose}
     >
       <div className="account-window-profile">
-        <span className="avatar avatar-xl" aria-hidden="true">{initials}</span>
+        <ProfileAvatar name={account.name} avatarUrl={account.avatarUrl} large />
         <div className="account-window-identity">
           <span className="account-section-label">Signed in as</span>
           <strong>{account.name}</strong>
