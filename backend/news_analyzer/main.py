@@ -168,7 +168,7 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
         )
         if not state or not state.get("outcome"):
             for call in result.tool_calls:
-                if call.get("name") != "preview_strategy":
+                if call.get("name") not in {"calculate_exit_time", "preview_selected_strategy"}:
                     continue
                 try:
                     preview = json.loads(call.get("result") or "{}")

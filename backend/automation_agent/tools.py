@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
 
-import httpx
 from agno.tools import Toolkit
 
 from app.assets import DEFAULT_ASSET, Asset
@@ -23,16 +21,14 @@ from app.automation_schedule import (
     utc_text,
 )
 from app.capital import percentage_concurrency_limit
-from app.errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE, AppError
+from app.errors import AppError
 from app.exit_schedule import ExitChoice, maximum_hold_hours, resolve_exit_schedule, template_from_definition
 from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
 
-from .assets import PROFILES
-from .curated import dumps
 from .local_client import LocalResearchClient
-from .preview import build_preview, resolve_contracts
+from .preview import resolve_contracts
 from .report_data import ResearchData
 
 RECHECK_LEAD_TIME = timedelta(seconds=RECHECK_LEAD_SECONDS)
@@ -53,7 +49,6 @@ class AutomationStrategyTools(Toolkit):
         news_analysis_id: str | None = None,
         asset: Asset = DEFAULT_ASSET,
         curated: bool = False,
-        option_context: dict[str, Any] | None = None,
         trigger: str | None = None,
         review_at: datetime | None = None,
         **kwargs: Any,
@@ -64,7 +59,6 @@ class AutomationStrategyTools(Toolkit):
         self.trigger = trigger
         self.review_at = review_at
         self._previews: dict[tuple, tuple[dict, dict]] = {}
-        self._initial_options = (option_context or {}).get("options") or []
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
@@ -78,7 +72,7 @@ class AutomationStrategyTools(Toolkit):
             name="automation_strategy_tools",
             tools=(
                 [
-                    self.preview_strategy,
+                    self.calculate_exit_time,
                     self.select_strategy_and_time,
                     self.scheduled_next_agent_run,
                 ]
@@ -91,8 +85,8 @@ class AutomationStrategyTools(Toolkit):
                 ]
             ),
             instructions=(
-                "Use the starting strategy catalogue. Call preview_strategy before selecting with identical "
-                "strategyRef, activation_time and exit_choice. Preview liquidity is advisory. "
+                "Use the starting strategy catalogue. Call calculate_exit_time before selecting with identical "
+                "strategyRef, activation_time and exit_choice. Option valuation happens during activation recheck. "
                 "Once an action commits, do not schedule another action."
                 if curated
                 else "Call show_available_strategy before selecting. "
@@ -107,7 +101,7 @@ class AutomationStrategyTools(Toolkit):
         if curated:
             self.functions["select_strategy_and_time"].description = (
                 "Commit one previously previewed starting strategyRef and time. Use the identical "
-                "activation_time and exit_choice from preview_strategy. No order is placed by this call."
+                "activation_time and exit_choice from calculate_exit_time. No order is placed by this call."
             )
 
     def starting_catalogue(self) -> dict:
@@ -115,11 +109,9 @@ class AutomationStrategyTools(Toolkit):
         rows = []
         for strategy in source["strategies"]:
             definition = strategy.pop("definition")
-            comparison = self.indicative_comparison(definition)
             rows.append(
                 {
                     **strategy,
-                    "comparison": comparison,
                     "rules": {
                         k: definition[k]
                         for k in (
@@ -163,148 +155,7 @@ class AutomationStrategyTools(Toolkit):
                 "intradayHours": [7, 11] if maximum_hold_hours(self.trigger) == 11 else [7],
                 "other": ["specific_time within the session maximum"],
             },
-            "comparisonBasis": "Indicative normalized leg ratio at the upcoming session expiry; "
-            "use this for ranking, then preview the chosen holding period once.",
         }
-
-    def indicative_comparison(self, template: dict) -> dict:
-        from functools import reduce
-        from math import gcd
-
-        from .preview import number
-
-        try:
-            now = datetime.now(UTC)
-            definition, schedule = resolve_exit_schedule(
-                template,
-                entry_at=now + timedelta(minutes=8),
-                choice=ExitChoice(kind="specific_time", exit_at=now + timedelta(hours=1)),
-                options=self._initial_options,
-                trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
-            )
-            legs = resolve_contracts(definition, self._initial_options)
-            divisor = reduce(gcd, (leg["lots"] for leg in legs))
-            quotes = {o["symbol"]: o for o in self._initial_options}
-            credit, distances, spreads = 0.0, [], []
-            for leg in legs:
-                row = quotes[leg["productSymbol"]]
-                bid, ask = number(row.get("bestBid")), number(row.get("bestAsk"))
-                multiplier = number(row.get("contractValue"))
-                if not 0 <= bid <= ask or multiplier <= 0:
-                    raise ValueError("Unavailable indicative quote")
-                price = ask if leg["position"] == "buy" else bid
-                if price <= 0:
-                    raise ValueError("Unavailable indicative price")
-                credit += float(price * multiplier) * (leg["lots"] // divisor) * (-1 if leg["position"] == "buy" else 1)
-                if ask + bid:
-                    spreads.append(float((ask - bid) / ((ask + bid) / 2) * 100))
-                if leg["position"] == "sell":
-                    spot, strike = number(row.get("spot")), number(row["strike"])
-                    distances.append(float((strike - spot) / spot * 100) * (1 if leg["optionType"] == "call" else -1))
-            return {
-                "expiry": schedule["contractExpiryUtc"],
-                "netCreditUsd": credit,
-                "nearestShortDistancePercent": min(distances) if distances else None,
-                "maximumQuoteSpreadPercent": max(spreads) if spreads else None,
-            }
-        except (ValueError, AppError, KeyError, ZeroDivisionError):
-            return {}
-
-    def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
-        """Preview one saved strategy's exact schedule, legs, payoff and fresh advisory liquidity.
-
-        Use the starting strategyRef. This reads public data and never schedules or places an order.
-        The same strategy_ref, activation_time and exit_choice must be used when selecting.
-        exit_choice uses kind: {kind: intraday, hours: 7}, or hours: 11 for the evening review only,
-        or {kind: specific_time, exit_at: aware ISO timestamp} within the session maximum.
-        Only the upcoming 17:30 IST expiry is eligible. Preset holds shorten at its safety cutoff.
-        """
-        try:
-            reference = strategy_ref.strip().upper()
-            selection = self.strategy_references.get(reference)
-            if selection is None:
-                raise ValueError("Unknown starting strategy reference")
-            activation = _aware_datetime(activation_time, "activation_time")
-            choice = ExitChoice.model_validate(exit_choice)
-            saved_id, version = selection
-            key = (saved_id, version, activation.isoformat(), choice.model_dump_json())
-            self._previews.pop(key, None)
-            rows, _ = self.application_data.selection_context(self.user_id, saved_id)
-            if not rows or not rows[0]["enabled_for_ai"] or rows[0]["version"] != version:
-                raise ValueError("Saved strategy is unavailable or changed")
-            profile = PROFILES[self.asset]
-            route = f"{profile.market_base_url}/api/market/{profile.market_route}"
-            with httpx.Client(timeout=httpx.Timeout(20, connect=3)) as client:
-                response = client.get(f"{route}/option-catalogue")
-                response.raise_for_status()
-                catalogue = response.json()
-                if catalogue.get("underlying") != self.asset:
-                    raise ValueError("Option asset mismatch")
-                options = catalogue.get("options") or []
-                definition, schedule = resolve_exit_schedule(
-                    rows[0]["definition_json"], entry_at=activation, choice=choice, options=options,
-                    trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
-                )
-                resolved = resolve_contracts(definition, options)
-                response = client.post(
-                    f"{route}/selected-contracts", json={"symbols": [leg["productSymbol"] for leg in resolved]}
-                )
-                response.raise_for_status()
-                selected = response.json()
-                if selected.get("asset") != self.asset:
-                    raise ValueError("Selected option asset mismatch")
-                result = build_preview(
-                    definition, resolved, selected.get("contracts") or [], int(datetime.now(UTC).timestamp() * 1000)
-                )
-                hours = schedule["durationMinutes"] / 60
-                result["selectedLegMoveScales"] = {
-                    "hours": hours,
-                    "expiryUtc": schedule["contractExpiryUtc"],
-                    "basis": "Each selected leg's IV times sqrt(actual holding hours / 8760); "
-                    "a movement scale, not a forecast or an early-exit profit threshold.",
-                    "legs": [
-                        {
-                            "symbol": leg["symbol"], "ivPercent": leg["ivPercent"],
-                            "impliedScaledMovePercent": leg["ivPercent"] * math.sqrt(hours / 8760)
-                            if leg["ivPercent"] is not None else None,
-                        }
-                        for leg in result["legs"]
-                    ],
-                }
-                if self.settings.analysis_service_secret:
-                    watch = client.post(
-                        f"{route}/watch-expiries",
-                        json={"expiries": [schedule["contractExpiryUtc"]]},
-                        headers={"X-Analysis-Secret": self.settings.analysis_service_secret},
-                    )
-                    watch.raise_for_status()
-            self._previews[key] = (definition, schedule)
-            return dumps({"valid": True, "schedule": schedule, **result})
-        except httpx.HTTPError as error:
-            status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
-            path = error.request.url.path if error.request is not None else "unknown"
-            logger.warning(
-                "Strategy preview service failed run_id=%s asset=%s path=%s status=%s",
-                self.agent_run_id, self.asset, path, status,
-            )
-            authentication_failed = status in {401, 403}
-            return json.dumps({
-                "valid": False,
-                "errorCode": (
-                    MARKET_AUTH_ERROR_CODE if authentication_failed else "market_service_unavailable"
-                ),
-                "reason": (
-                    MARKET_AUTH_ERROR_MESSAGE
-                    if authentication_failed else "Selected public option evidence is unavailable"
-                ),
-            })
-        except (ValueError, AppError) as error:
-            return json.dumps(
-                {
-                    "valid": False,
-                    "reason": str(error),
-                }
-            )
 
     def show_available_strategy(self) -> str:
         """Return enabled strategies with descriptions, run-local references, and complete definitions."""
@@ -533,7 +384,7 @@ class AutomationStrategyTools(Toolkit):
         if self.curated:
             key = (saved_id, saved_strategy_version, activation.isoformat(), choice.model_dump_json())
             if key not in self._previews:
-                raise ValueError("Call preview_strategy with these exact selection arguments first")
+                raise ValueError("Call calculate_exit_time with these exact selection arguments first")
             rows, _ = self.application_data.selection_context(self.user_id, saved_id)
             if not rows or not rows[0]["enabled_for_ai"] or rows[0]["version"] != saved_strategy_version:
                 raise ValueError("Saved strategy is unavailable or changed")
@@ -615,26 +466,30 @@ class AutomationStrategyTools(Toolkit):
         option_context = market.get("executionOptionContext") or market.get("deltaOptionContext") or {}
         if option_context.get("underlying") != self.asset:
             raise ValueError("Option chain does not match the selected asset")
-        return resolve_exit_schedule(
+        definition, schedule = resolve_exit_schedule(
             strategy["definition_json"],
             entry_at=activation,
             choice=choice,
             options=option_context.get("options") or [],
             trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
         )
+        if self.curated:
+            # Retain the former preview's private saved-policy validation without exposing quotes.
+            resolve_contracts(definition, option_context.get("options") or [])
+        return definition, schedule
 
-    def calculate_exit_time(self, strategy_ref: str, activation_time: str, exit_choice: dict[str, Any]) -> str:
+    def calculate_exit_time(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
         """Preview the exact holding duration, option expiry and safety cutoff without scheduling."""
         try:
             selection = self.strategy_references.get(strategy_ref.strip().upper())
             if selection is None:
                 raise ValueError("Unknown strategyRef. Call show_available_strategy first")
-            _, schedule = self._resolve_selection(
-                selection[0],
-                selection[1],
-                _aware_datetime(activation_time, "activation_time"),
-                ExitChoice.model_validate(exit_choice),
-            )
+            activation = _aware_datetime(activation_time, "activation_time")
+            choice = ExitChoice.model_validate(exit_choice)
+            key = (*selection, activation.isoformat(), choice.model_dump_json())
+            self._previews.pop(key, None)
+            definition, schedule = self._resolve_selection(*selection, activation, choice)
+            self._previews[key] = (definition, schedule)
             return json.dumps({"valid": True, "schedule": schedule})
         except (ValueError, AppError) as error:
             return json.dumps({"valid": False, "reason": str(error)})

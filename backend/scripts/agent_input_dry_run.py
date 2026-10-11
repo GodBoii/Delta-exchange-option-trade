@@ -21,10 +21,11 @@ from agno.run.agent import RunOutput
 
 from app.default_strategies import builtin_strategy_definitions
 from app.exit_schedule import ExitChoice, resolve_exit_schedule, template_from_definition
+from automation_agent import recheck as recheck_module
 from automation_agent import team
 from automation_agent.assets import PROFILES
 from automation_agent.market import MarketIntelligenceTools
-from automation_agent.preview import build_preview, resolve_contracts
+from automation_agent.preview import resolve_contracts
 from automation_agent.storage import StoredChart
 from automation_agent.tools import AutomationStrategyTools
 from news_agent.config import NewsAgentSettings
@@ -146,33 +147,6 @@ def run_case(
                 )
             )
 
-        def preview_strategy(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
-            """Preview one saved strategy with frozen evidence and the production expiry/payoff calculations.
-
-            exit_choice uses kind: intraday with seven hours, eleven for evening only, or specific_time with exit_at.
-            Only the upcoming session expiry is eligible. Use starting comparisons before previewing.
-            """
-            try:
-                saved_id, version = self.strategy_references[strategy_ref.strip().upper()]
-                saved = next(r for r in rows if r["id"] == saved_id)
-                activation = datetime.fromisoformat(activation_time.replace("Z", "+00:00")).astimezone(UTC)
-                choice = ExitChoice.model_validate(exit_choice)
-                definition, schedule = resolve_exit_schedule(
-                    saved["definition_json"], entry_at=activation, choice=choice, options=options,
-                    trigger=self.trigger, review_at=self.review_at,
-                )
-                resolved = resolve_contracts(definition, options)
-                selected = [o for o in options if o["symbol"] in {leg["productSymbol"] for leg in resolved}]
-                self._previews[(saved_id, version, activation.isoformat(), choice.model_dump_json())] = (
-                    definition,
-                    schedule,
-                )
-                return json.dumps(
-                    {"valid": True, "schedule": schedule, **build_preview(definition, resolved, selected, frozen_now)}
-                )
-            except (ValueError, KeyError, StopIteration) as error:
-                return json.dumps({"valid": False, "reason": str(error)})
-
     class RecordingAgent(Agent):
         def __init__(self, **kwargs):
             if reasoning and not recheck:
@@ -257,6 +231,8 @@ def run_case(
     )
 
     def public_response(request):
+        if request.url.path.endswith("option-catalogue"):
+            return httpx.Response(200, json={"underlying": asset, "options": options})
         if request.url.path.endswith("selected-contracts"):
             symbols = json.loads(request.content)["symbols"]
             return httpx.Response(
@@ -293,20 +269,14 @@ def run_case(
         ),
         patch.object(team, "Agent", RecordingAgent),
         patch.object(
-            team,
+            recheck_module,
             "httpx",
             SimpleNamespace(
                 Timeout=httpx.Timeout,
                 Client=lambda **kwargs: original_client(transport=httpx.MockTransport(public_response), **kwargs),
             ),
         ),
-        patch.object(
-            team,
-            "build_preview",
-            side_effect=lambda definition, resolved, selected, now: build_preview(
-                definition, resolved, selected, frozen_now
-            ),
-        ),
+        patch.object(recheck_module, "datetime", FrozenDatetime),
     ):
         if recheck:
             result = team.run_activation_recheck(

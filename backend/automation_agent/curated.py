@@ -1,12 +1,12 @@
 """One numerical starting input, without market arrays or repeated chart statistics."""
 
 import json
-import math
 import os
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
+from app.automation_schedule import IST
 from app.exit_schedule import maximum_hold_hours, session_expiry
 
 from .market import compact_btc_market_packet
@@ -44,29 +44,6 @@ def market_input(packet: dict, asset: str, trigger: str | None = None) -> dict:
         if packet.get("capturedAt") else datetime.now(UTC)
     )
     expiry = session_expiry(captured)
-    option_rows = []
-    for row in enrichment.get("options", []):
-        try:
-            observed_expiry = datetime.fromisoformat(str(row.get("expiry", "")).replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if observed_expiry == expiry:
-            option_rows.append(row)
-    holding_scales = []
-    for preset in ([7, 11] if maximum_hold_hours(trigger) == 11 else [7]):
-        hours = max(0, min(preset, (expiry.timestamp() - captured.timestamp() - 300) / 3600))
-        factor = math.sqrt(hours / (365 * 24))
-        reference = option_rows[0] if option_rows and option_rows[0].get("atmIvPercent") is not None else None
-        rv = volatility.get("annualizedPercent")
-        holding_scales.append(
-            {
-                "hours": hours,
-                "presetHours": preset,
-                "realizedScaledMovePercent": rv * factor if rv is not None else None,
-                "impliedScaledMovePercent": reference["atmIvPercent"] * factor if reference else None,
-                "referenceExpiry": reference["expiry"] if reference else None,
-            }
-        )
     trade_times = [r["time"] for r in packet.get("recentTrades") or [] if isinstance(r.get("time"), (int, float))]
     realtime = packet.get("realtime") or {}
     spot = {
@@ -95,11 +72,7 @@ def market_input(packet: dict, asset: str, trigger: str | None = None) -> dict:
         "asOf": packet.get("capturedAt"),
         "units": {
             "spot": "USDT",
-            "optionPremium": "USD per base asset",
-            "optionCost": "USD",
             "volumeAndOi": "base asset unless explicitly contracts/quote",
-            "iv": "annualized percent",
-            "ivScaledMove": "IV times sqrt(days/365), a scale estimate, not a price forecast",
             "rvWindow": "120 one-minute returns",
             "sidewaysWindow": "60 minute closes; score, not forecast",
             "cvdWindowSeconds": cvd.get("windowSeconds", 900),
@@ -124,15 +97,9 @@ def market_input(packet: dict, asset: str, trigger: str | None = None) -> dict:
         },
         "liquidity": {"current": liquidity, "lastBucket": enrichment.get("previousLiquidityBucket", {})},
         "futures": enrichment.get("futures", {}),
-        "options": option_rows,
         "sessionPolicy": {
             "expiryUtc": expiry.isoformat(), "maximumHoldHours": maximum_hold_hours(trigger),
             "remainingMinutes": max(0, (expiry.timestamp() - captured.timestamp()) / 60),
-        },
-        "holdingMoveScales": {
-            "basis": "Indicative ATM scale for the upcoming expiry; duration uses snapshot time and a five-minute "
-            "buffer. Preview supplies the actual selected-leg scales and saved buffer. Not forecasts or probabilities.",
-            "rows": holding_scales,
         },
     }
 
@@ -146,3 +113,16 @@ def chart_notes(context: dict[str, dict]) -> dict[str, dict]:
         }
         for key, row in context.items()
     }
+
+
+def assigned_option_overview(packet: dict, expiry_dates: list[str]) -> list[dict]:
+    """Keep recheck overview history tied to the assigned legs, including existing legacy expiries."""
+    rows = []
+    for row in (packet.get("enrichment") or {}).get("options", []):
+        try:
+            expiry = datetime.fromisoformat(str(row.get("expiry", "")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if expiry.utcoffset() is not None and expiry.astimezone(IST).date().isoformat() in expiry_dates:
+            rows.append(deepcopy(row))
+    return rows

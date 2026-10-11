@@ -121,12 +121,14 @@ def test_market_tool_and_charts_exclude_delta():
     "## Decision\n\nInconclusive. Fresh evidence is limited.",
     '{"decision": "go", "report": "unfinished',
 ])
-def test_recheck_without_drop_uses_plain_report(monkeypatch, report):
+@pytest.mark.parametrize("evidence_valid", [True, False])
+def test_recheck_without_drop_uses_plain_report(monkeypatch, report, evidence_valid):
     captured = {}
     packet = {"source": "Binance Spot", "timeframes": {}}
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
         collect_market_packet=lambda: packet,
         market_packet_json=lambda: json.dumps(packet),
+        assigned_expiries=[],
     ))
     charts = [StoredChart("btc-1-minute", "Fresh price", "Fresh Binance chart", RUN_ID, b"png-bytes")]
     monkeypatch.setattr(team, "_recheck_chart_artifacts", lambda *_: [
@@ -135,6 +137,10 @@ def test_recheck_without_drop_uses_plain_report(monkeypatch, report):
     monkeypatch.setattr(team, "ChartStorage", lambda _: SimpleNamespace(save_run_charts=lambda **_: charts))
     monkeypatch.setattr(team, "save_market_snapshot", lambda *_, **__: "snapshot")
     monkeypatch.setattr(team, "run_news_pipeline", lambda *_, **__: pytest.fail("Recheck researched news"))
+    monkeypatch.setattr(team, "RecheckOptionTools", lambda **_: SimpleNamespace(
+        collect_evidence=lambda: {"valid": True, "netCreditUsd": 1.25},
+        evidence_valid=evidence_valid, functions={"preview_selected_strategy": None},
+    ))
 
     class Agent:
         def __init__(self, **kwargs):
@@ -154,6 +160,10 @@ def test_recheck_without_drop_uses_plain_report(monkeypatch, report):
                          "selectedStrategy": {"name": "Short strangle", "activationTime": ACTIVATION.isoformat()},
                          "originalSelection": {"finalResponse": "Exact original report"}},
     )
+    if not evidence_valid:
+        with pytest.raises(RuntimeError, match="cannot approve"):
+            team.run_activation_recheck(**kwargs)
+        return
     result = team.run_activation_recheck(**kwargs)
     assert captured["model"].reasoning_effort == "low"
     assert "max_tokens" not in captured["model"].get_request_params()
@@ -161,8 +171,11 @@ def test_recheck_without_drop_uses_plain_report(monkeypatch, report):
     assert captured["model"].timeout == 240
     assert "Exact original report" in captured["additional_context"]
     assert "Recheck chart instructions" in captured["additional_context"]
-    assert len(captured["tools"]) == 1
+    assert len(captured["tools"]) == 3
     assert set(captured["tools"][0].functions) == {"drop_strategy"}
+    assert set(captured["tools"][1].functions) == {"preview_selected_strategy"}
+    assert captured["tool_call_limit"] == 16
+    assert "netCreditUsd" in captured["additional_context"]
     assert "output_schema" not in captured
     assert captured["input"]["images"][0].content == b"png-bytes"
     assert captured["input"]["images"][0].url is None

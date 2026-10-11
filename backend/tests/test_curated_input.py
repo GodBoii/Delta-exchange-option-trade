@@ -68,7 +68,7 @@ def test_curated_input_owns_numbers_and_has_no_market_arrays():
     assert chart_notes({"a": {"values": {"price": 100}, "readingNotes": ["read"]}}) == {"a": {"readingNotes": ["read"]}}
 
 
-def test_holding_scales_use_only_upcoming_expiry_and_shorten_at_cutoff():
+def test_main_input_excludes_live_options_but_keeps_spot_and_session_policy():
     now = datetime(2026, 10, 7, 10, 0, tzinfo=UTC)
     packet = {
         "capturedAt": int(now.timestamp() * 1000),
@@ -77,18 +77,15 @@ def test_holding_scales_use_only_upcoming_expiry_and_shorten_at_cutoff():
         "enrichment": {"options": [
             {"expiry": "2026-10-07T12:00:00Z", "daysRemaining": 2/24, "atmIvPercent": 26},
             {"expiry": "2026-10-08T12:00:00Z", "daysRemaining": 26/24, "atmIvPercent": 31},
-        ]},
+        ], "futures": {"funding": 0.01}},
     }
     data = market_input(packet, "BTC", "pre_expiry")
-    assert len(data["options"]) == 1
-    row, = data["holdingMoveScales"]["rows"]
-    assert row["referenceExpiry"] == "2026-10-07T12:00:00Z"
-    assert row["hours"] == pytest.approx(115/60)
-    assert row["impliedScaledMovePercent"] == pytest.approx(26 * (row["hours"] / 8760)**0.5)
-    packet["enrichment"]["options"].pop(0)
-    assert market_input(packet, "BTC")["holdingMoveScales"]["rows"][0]["impliedScaledMovePercent"] is None
-
-
+    assert "options" not in data and "holdingMoveScales" not in data
+    assert "optionPremium" not in data["units"] and "iv" not in data["units"]
+    assert data["history"]["realizedVolatilityAnnualizedPercent"] == 40
+    assert data["sessionPolicy"]["expiryUtc"] == "2026-10-07T12:00:00+00:00"
+    assert data["futures"] == {"funding": 0.01}
+    assert packet["enrichment"]["options"][0]["atmIvPercent"] == 26
 
 
 def test_exact_call_payoff_units_greeks_and_advisory_fill():
@@ -216,12 +213,12 @@ def test_curated_tools_require_matching_preview_without_scheduling(monkeypatch):
         market_snapshot_id=str(uuid4()),
         curated=True,
     )
-    assert set(toolkit.functions) == {"preview_strategy", "select_strategy_and_time", "scheduled_next_agent_run"}
-    toolkit.functions["preview_strategy"].process_entrypoint()
-    schema = toolkit.functions["preview_strategy"].parameters["properties"]["exit_choice"]
+    assert set(toolkit.functions) == {"calculate_exit_time", "select_strategy_and_time", "scheduled_next_agent_run"}
+    toolkit.functions["calculate_exit_time"].process_entrypoint()
+    schema = toolkit.functions["calculate_exit_time"].parameters["properties"]["exit_choice"]
     assert "kind" in str(schema)
     activation = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
-    with pytest.raises(ValueError, match="preview_strategy"):
+    with pytest.raises(ValueError, match="calculate_exit_time"):
         toolkit._select_strategy_and_time(
             saved_id=str(uuid4()),
             saved_strategy_version=1,
@@ -248,8 +245,10 @@ def test_paired_dry_run_constructs_inputs_without_provider_or_actions(monkeypatc
         for recheck in (False, True):
             result = run_case(case, "Same existing news summary", curated=curated, recheck=recheck, offline=True)
             assert result["simulatedActions"] == []
-            expected_limit = (16 if curated else 1) if recheck else 48
+            expected_limit = 16 if recheck else 48
             assert result["toolCallLimit"] == expected_limit
+            assert ("preview_selected_strategy" in result["registeredTools"]) is recheck
+            assert "preview_strategy" not in result["registeredTools"]
             if curated:
                 assert "get_btc_market_packet" not in result["registeredTools"]
                 assert "show_available_strategy" not in result["registeredTools"]

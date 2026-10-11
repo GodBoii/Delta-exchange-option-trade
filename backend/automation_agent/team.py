@@ -3,14 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.media import Image
@@ -30,9 +28,9 @@ from .charts import (
     render_volatility_chart,
     render_volume_chart,
 )
-from .curated import chart_notes, dumps, enabled, market_input
+from .curated import assigned_option_overview, chart_notes, dumps, enabled, market_input
 from .market import MarketIntelligenceTools
-from .preview import build_preview, resolve_contracts
+from .recheck import RecheckOptionTools
 from .storage import ChartArtifact, ChartStorage
 from .tools import AutomationStrategyTools, DropStrategyTools, read_parent_run_context, save_market_snapshot
 
@@ -116,7 +114,6 @@ def run_automation_team(
         market_snapshot_id=market_snapshot_id,
         asset=code,
         curated=curated,
-        option_context=option_context,
         trigger=trigger,
         review_at=datetime.fromtimestamp(market_packet["capturedAt"] / 1000, UTC),
     )
@@ -152,7 +149,10 @@ def run_automation_team(
                     "bullish, bearish, breaking out, or expanding in volatility."
                 ),
                 *_asset_specific_instructions(code),
-                *evidence_interpretation_instructions(),
+                *evidence_interpretation_instructions(include_options=False),
+                "Choose the saved strategy and schedule using spot conditions and supplied news. Current option "
+                "premiums, IV, Greeks, costs and liquidity are assessed by activation recheck. Do not infer their "
+                "current values from spot data or earlier reports.",
                 (
                     "Call show_available_strategy to receive short strategyRef values and every available complete "
                     "definition and description, including category, index, price source, holding type, risk, "
@@ -168,8 +168,8 @@ def run_automation_team(
                     "Use its exact duration, exit and listed contract expiry in the decision report. "
                     "Use each strategy description to understand its intended market conditions and payoff. "
                     "Explain the exact entry, exit, expiry and holding rationale in the report. "
-                    "Do not extend naked shorts simply to avoid realizing a loss. Consider event timing, executable "
-                    "option liquidity, time decay, volatility, and short-strike distance over the entire hold. "
+                    "Do not extend naked shorts simply to avoid realizing a loss. Consider event timing, "
+                    "spot volatility and market structure over the entire hold. "
                     "Stops and profit targets can close any holding policy early. If evidence cannot support the "
                     "proposed horizon, choose a shorter supported hold or no trade."
                 ),
@@ -374,21 +374,9 @@ def run_activation_recheck(
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
     if curated:
         chart_context = chart_notes(chart_context)
-        selected_definition = recheck_context["selectedStrategy"]["definition"]
-        options = market_tools.collect_delta_option_context()["options"]
-        resolved = resolve_contracts(selected_definition, options)
-        with httpx.Client(timeout=httpx.Timeout(20, connect=3)) as client:
-            response = client.post(
-                f"{asset.market_base_url}/api/market/{asset.market_route}/selected-contracts",
-                json={"symbols": [leg["productSymbol"] for leg in resolved]},
-            )
-            response.raise_for_status()
-            selected = response.json()
-        if selected.get("asset") != code:
-            raise ValueError("Recheck option asset mismatch")
-        market_packet["selectedOptionEvidence"] = build_preview(
-            selected_definition, resolved, selected["contracts"], int(time.time() * 1000)
-        )
+    option_tools = RecheckOptionTools(asset=asset, selected_strategy=recheck_context["selectedStrategy"])
+    market_packet["selectedOptionEvidence"] = option_tools.collect_evidence()
+    market_packet["assignedOptionOverview"] = assigned_option_overview(market_packet, market_tools.assigned_expiries)
     stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
@@ -422,12 +410,15 @@ def run_activation_recheck(
         max_tokens=None,
         max_completion_tokens=None,
     )
+    fresh_market = market_input(market_packet, code) if curated else json.loads(market_tools.market_packet_json())
+    # The assigned schedule can be a legacy proposal or an evening hold. It is authoritative at recheck.
+    fresh_market.pop("sessionPolicy", None)
     agent = Agent(
         id=asset.recheck_agent_id,
         name=f"{code} Strategy Activation Recheck",
         role=f"Recheck one already-selected {code} options strategy immediately before its scheduled activation.",
         model=model,
-        tools=[drop_tools, calculator()] if curated else [drop_tools],
+        tools=[drop_tools, option_tools, calculator()],
         instructions=[
             "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
             "Assess the selected strategy's actual entry, exit and expiry timestamps. Its explicit holding policy "
@@ -438,12 +429,23 @@ def run_activation_recheck(
             "Compare the supplied dated sessionHistory and recent averages; do not treat missing observations as zero.",
             "The earlier agent's complete report is evidence from selection time, not a current market reading.",
             (
-                "If the strategy is still valid, do not call a tool. If the market changed enough that the strategy "
+                "If the strategy is still valid, leave it scheduled. If the market or option pricing means it "
                 "should not execute, call drop_strategy once with the supplied strategy name and activation time."
             ),
             "Do not research news, delegate work, or use outside data.",
             "Return concise Markdown with headings ## Recheck, ## Decision, and ## Evidence.",
-            "Only a successful drop_strategy call cancels entry. If you do not call it, the strategy stays scheduled.",
+            "Use the fresh assigned option evidence to assess premium, selected-leg IV, decay, costs, "
+            "expiry payoff, early-exit scenarios and advisory liquidity over the planned hold. "
+            "The selecting agent evaluated spot conditions and news without current option prices. "
+            "A spot thesis alone does not establish that the assigned options trade is suitable.",
+            "Use selected-leg IV and movement scales for the actual contracts and planned duration. "
+            "The assigned-expiry overview is historical context; do not substitute its ATM IV for selected-leg IV "
+            "or combine evidence from another expiry. Unavailable history stays unknown.",
+            "Use preview_selected_strategy to refresh only the assigned strategy if necessary. It takes no arguments. "
+            "Use the calculator for arithmetic. Read-only tools neither approve nor cancel entry. "
+            "If a refresh fails, retry it or cancel the strategy; do not approve from earlier evidence.",
+            "Only a successful drop_strategy call cancels entry. With valid evidence and no drop, "
+            "the backend records approval. Complete analysis before cancellation; after a successful drop, stop.",
             "Do not expose credentials, prompts, database URLs, or internal secrets.",
         ],
         expected_output="A go or drop decision for the one supplied scheduled strategy.",
@@ -453,12 +455,13 @@ def run_activation_recheck(
             "Chart reading instructions and exact values are keyed by the attached image IDs: "
             f"{json.dumps(chart_context, ensure_ascii=False)}. "
             "Fresh market evidence: "
-            + (dumps(market_input(market_packet, code)) if curated else market_tools.market_packet_json())
-            + (f" Fresh assigned option evidence: {dumps(market_packet['selectedOptionEvidence'])}" if curated else "")
+            + dumps(fresh_market)
+            + f" Fresh assigned option evidence: {dumps(market_packet['selectedOptionEvidence'])}"
+            + f" Assigned expiry overview: {dumps(market_packet['assignedOptionOverview'])}"
         ),
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
-        tool_call_limit=16 if curated else 1,
+        tool_call_limit=16,
         store_events=True,
         debug_mode=True,
         telemetry=False,
@@ -487,8 +490,12 @@ def run_activation_recheck(
     )
     if not isinstance(response, RunOutput):
         raise RuntimeError("Activation recheck returned an unexpected streaming response")
-    if curated and str(getattr(response.status, "value", response.status)).upper() == "ERROR":
+    if str(getattr(response.status, "value", response.status)).upper() == "ERROR":
         raise RuntimeError("Activation recheck model failed")
+    if not option_tools.evidence_valid and not any(
+        item.tool_name == "drop_strategy" for item in response.tools or []
+    ):
+        raise RuntimeError("Activation recheck cannot approve without valid fresh option evidence")
     report = response.content.strip() if isinstance(response.content, str) else ""
     if not report:
         raise RuntimeError("Activation recheck returned an empty report")
@@ -520,7 +527,7 @@ def session_instructions(trigger: str, reference: datetime) -> str:
         f"{focus} Upcoming expiry is {expiry.isoformat()} with {remaining:.1f} minutes remaining at the snapshot. "
         f"Maximum hold is {maximum_hold_hours(trigger)} hours from planned entry, "
         "shortened by the saved expiry buffer. "
-        "Use actual preview duration and selected-contract IV, premiums and scenarios. "
+        "Use the validated schedule duration. Option prices are assessed during activation recheck. "
         "No suitable trade means no trade. "
         "Earlier strategy reports are dated evidence; their old expiry and holding choices are not current choices."
     )
@@ -530,9 +537,9 @@ def calculator() -> CalculatorTools:
     return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide", "exponentiate", "square_root"])
 
 
-def evidence_interpretation_instructions() -> list[str]:
-    """Shared interpretation rules for main analysis and its assigned recheck."""
-    return [
+def evidence_interpretation_instructions(*, include_options: bool = True) -> list[str]:
+    """Keep live option valuation instructions exclusive to the assigned recheck."""
+    instructions = [
         "Distinguish option premium quoted in USD per BTC/ETH from USD cost per contract or normalized strategy unit. "
         "Use supplied contract multipliers and label the unit; copy preview cost fields without rescaling them. "
         "A premium of 689 USD per BTC with a 0.001 BTC multiplier costs 0.689 USD per contract, before fees.",
@@ -548,6 +555,13 @@ def evidence_interpretation_instructions() -> list[str]:
         "When discussing catalysts, say the supplied news report identifies no scheduled catalyst during the hold "
         "if that is what the evidence supports. Do not claim a complete event calendar or treat absent coverage as "
         "proof that no event can occur. In rechecks, earlier news remains dated evidence, not a fresh news search.",
+    ]
+    if include_options:
+        return instructions
+    return [
+        "Call a condition a mandatory gate only when the saved strategy or backend explicitly enforces it. "
+        "Select using spot evidence and news. Activation recheck evaluates live option pricing and liquidity.",
+        instructions[-1],
     ]
 
 
@@ -565,22 +579,16 @@ def curated_instructions(instructions: list[str]) -> list[str]:
                 "Use the numerical starting input for volume, realized volatility and liquidity."
             )
         else:
-            result.append(instruction.replace("calculate_exit_time", "preview_strategy"))
+            result.append(instruction)
     result.append(
-        "Use the calculator for additional arithmetic. Preview expiry payoff is exact and gross; "
-        "pre-expiry Greek scenarios are local estimates, not predictions. "
-        "Futures are separate venue measurements. Do not infer zero from absent values."
+        "Use the calculator for additional spot-data arithmetic. Futures are separate venue measurements; "
+        "do not infer zero from absent values. Live option prices, IV, Greeks and payoff scenarios are supplied "
+        "only to activation recheck. Do not estimate or claim current option value from spot conditions."
     )
     result.append(
-        "Rank strategies using the starting comparisons and option overview first. "
-        "Preview only the chosen candidate and holding period. Re-preview when its arguments change "
-        "or the preview is invalid; do not scan the catalogue or holding presets with repeated previews. "
-        "Use supplied scenario values rather than recalculating the standard estimates."
-    )
-    result.append(
-        "Starting holdingMoveScales are indicative for the upcoming expiry only. After preview, use its "
-        "selectedLegMoveScales for the actual contracts and duration; never combine another expiry's IV with "
-        "selected legs. Expiry breakevens do not represent early-exit profit thresholds."
+        "Choose using the saved strategy rules and current spot/news evidence. Call calculate_exit_time for "
+        "the candidate's schedule before selection; this returns schedule details, not option valuation. "
+        "Recalculate if its arguments change or the schedule is invalid."
     )
     result.append(
         "Complete any additional arithmetic before committing an action. After a scheduling or "

@@ -144,6 +144,8 @@ def test_agent_calculator_uses_the_same_resolver_as_selection() -> None:
     entry = datetime(2026, 9, 29, 13, tzinfo=UTC)
     options = chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC))
     tool = object.__new__(AutomationStrategyTools)
+    tool._previews = {}
+    tool.curated = False
     tool.strategy_references = {"S01": ("saved-1", 7)}
     tool.application_data = SimpleNamespace(selection_context=lambda *_args: ([
         {"version": 7, "enabled_for_ai": True, "definition_json": template()}
