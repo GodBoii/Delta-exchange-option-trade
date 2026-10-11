@@ -74,5 +74,16 @@ accessible. No new animation or chart dependency is needed.
 Deploy the trading backend from main alongside the frontend. The new account-asset
 endpoint and owner calendar require the updated API; no schema migration is needed.
 Browser checks used synthetic local accounts and did not change real automation
-preferences or submit exchange orders. Production rollout is not part of the local
-verification described above.
+preferences or submit exchange orders.
+
+On October 12, 2026, the production trading API was rebuilt from main and only the
+Delta-exchange container was recreated. The previous image is retained as
+`delta-exchange-delta-exchange:before-owner-users-20261012` for rollback. Its health
+check passed; the scheduler is running with no last error and both private account
+streams reconnected. Public OpenAPI confirms the account-asset switch, owner
+calendar and asset parameters on owner detail and trades. The public site returns
+200 and serves the redesigned Users stylesheet. The final production frontend build
+completed without warnings. The disposable database and test network were removed.
+
+Signed-in production user interactions were not exercised. Interaction checks above
+used the local fixture preview, which was removed before the final build.
