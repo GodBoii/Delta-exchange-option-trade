@@ -40,25 +40,25 @@ stored trades still need to be read and reconstructed.
 
 ## Analysis evidence
 
-The default market-service option overview contains only the upcoming expiry,
-with no one/three/seven/thirty-day selection. Explicit assigned expiries remain
-available for rechecks of pre-existing proposals. The backend also filters the
-main agent's option overview defensively by its snapshot's session boundary.
-The stored/private catalogue and historical collection keep their wider data
-for contract resolution, existing exposure, audit and replay; this is not
-additional data passed into new strategy analysis.
+The October 11 stage split moves live options analysis to activation recheck. See
+[Options evidence at activation recheck](34-recheck-option-evidence.md).
 
-The strategy catalogue strips stale entry, holding and expiry fields from saved
-definitions before showing them to the agent. Numerical starting comparisons
-resolve at the upcoming expiry. Starting movement scales use that same expiry;
-after preview, `selectedLegMoveScales` identifies each selected symbol, IV,
-expiry and actual holding duration. The instructions require the agent to use
-those selected-leg values rather than mix them with another maturity. These
-are movement scales, not profit forecasts or early-exit breakevens.
+Main analysis retains the upcoming-session policy, actual schedule duration, saved rules,
+Spot indicators, session history, futures, news, no-trade and follow-up scheduling.
+Its catalogue strips stale entry, holding and expiry fields. It receives no live option
+overview, premium comparisons, IV movement scales or payoff preview tool.
+Private option collection remains available for contract and schedule validation and audit.
 
-Existing Spot indicators, session history, futures, news research, calculator
-tools, no-trade behavior and follow-up scheduling continue. No active-position
-thesis monitor or new account-equity loss rule is introduced by this change.
+The market service still supplies the upcoming expiry by default. Explicit assigned
+expiries support rechecks of existing proposals. Recheck gets fresh selected-contract
+IV, premiums, Greeks, payoff/cost scenarios and advisory liquidity. Its movement scales
+use assigned contracts and actual planned duration. Assigned-expiry overview history
+is additional context on the compact path. It must not substitute another maturity's IV.
+
+Stored catalogues and historical collection retain wider data for existing exposure,
+resolution, audit and replay. Saved risk controls, sizing, allocation, stops, targets,
+active positions and historical reports are preserved. There is no new active-position
+thesis monitor or account-equity loss rule.
 
 ## Validation and rollout
 

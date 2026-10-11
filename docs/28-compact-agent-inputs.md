@@ -7,45 +7,59 @@ and order execution policies remain unchanged. There is no event-calendar integr
 
 ## Input and tools
 
-The starting input contains compact JSON for Spot indicators, dated session history, historical
-baselines when at least 144 observations exist, windowed flow, liquidity, separate Delta/Binance
-futures context, an option-expiry overview, and the saved-strategy catalogue. It includes three
-price images for main analysis and two for recheck. Chart captions carry axes and reading notes;
-their numerical statistics are not copied into another market-data section.
+As of October 11, 2026, live option analysis belongs to activation recheck. Main analysis
+receives Spot indicators, dated session history, available historical baselines, flow,
+Spot liquidity, separate futures context on the compact path, news and saved strategy rules.
+It receives three price images on the compact path. Recheck receives two price images.
+Chart captions contain axes and reading notes without duplicating the numerical summary.
 
-The catalogue supplies run-local references and decision-relevant saved rules. Its indicative
-cost/spread/short-distance comparisons use one normalized saved-leg ratio and the first eligible
-upcoming session expiry. They help rank strategies before requesting a final preview.
-Account trade size is still calculated by the trading engine at entry.
-The starting input supplies indicative scales for the seven-hour preset, plus eleven hours only
-for the evening review. Both use the upcoming expiry and shorten near its default five-minute
-buffer. Missing IV stays unknown. The successful preview supplies selected-leg IV scales using
-the actual duration and saved buffer, which supersede these indicative starting comparisons.
+The main catalogue retains run-local references, descriptions, saved leg rules, stops,
+targets, size policies and order rules. It no longer contains indicative premium credits,
+quote spreads or short-strike-distance comparisons. Main market input has no option
+expiry overview, IV movement scales or option unit fields.
 
-`preview_strategy(strategy_ref, activation_time, exit_choice)` replaces the catalogue and exit
-lookup tools on the compact path. `exit_choice` is an Agno/Pydantic schema whose discriminator
-is `kind`, with hours or exit_at. Only intraday and bounded specific_time choices remain. The tool refreshes selected
-contracts, resolves the exact schedule and strikes, and provides gross expiry payoff, breakevens,
-bounded/unbounded outcomes, fee estimates excluding tax when available, and advisory depth fills.
-Limit-order fill estimates respect the saved limit price. The selection must match a successful
-preview and the current saved-strategy version and analysis snapshot.
+`calculate_exit_time(strategy_ref, activation_time, exit_choice)` returns only validity
+and the resolved schedule. It replaces `preview_strategy` on the compact main path.
+Contract availability, strike rules, asset, saved version and snapshot validation remain
+private backend checks. Compact selection requires a successful calculation for the same
+strategy version, activation and exit choice. Failed recalculation clears that cached result.
+The backend still collects and stores private option evidence for resolution and audit.
 
-Fixed pre-expiry estimates show separate Spot moves of ±0.5%/±1%, IV changes of ±5 points, and
-one hour of time decay. Delta/gamma are weighted by signed contract exposure. Vega and theta
-scaling is checked against Greek identities using the quoted IV and remaining time. Inconsistent
-or unavailable values remain unknown. These are local value-change estimates, not price forecasts.
-IV-scaled movement in the expiry overview is `IV × sqrt(days / 365)`, not a calibrated probability.
+Main action tools remain `select_strategy_and_time` and `scheduled_next_agent_run`.
+The legacy main path also retains `show_available_strategy` and its asset market tool.
+Calculator tools remain on the compact main path for general numerical analysis.
 
-The remaining action tools are `select_strategy_and_time`, `scheduled_next_agent_run`, and
-`drop_strategy` for the assigned recheck only. Agno CalculatorTools exposes add, subtract,
-multiply, divide, exponentiate, and square_root. Rechecks permit sixteen calls so calculation can
-precede cancellation; they cannot choose or schedule another strategy. Their lead time remains
-seven minutes. Provider-error responses fail the compact path rather than becoming a valid review.
+Both legacy and compact rechecks receive a fresh preview for their assigned strategy.
+It includes selected-contract premiums, multipliers, IV, spreads, depth fill estimates,
+normalized credit/debit, fees, Greeks, gross expiry payoff and local early-exit estimates.
+Selected-leg IV scales use the assigned entry-to-exit duration. The compact recheck also
+receives overview history restricted to its assigned expiry dates, including older proposals.
+It must use selected-leg IV for the actual trade rather than substitute overview ATM IV.
 
-Raw candles, trades, depth ladders, complete option chains, and complete saved definitions stay
-outside LLM context. Decision snapshots still retain the underlying evidence for audit/replay.
-There is no hard input-token cap; numerical displays use eight significant digits while stored
-evidence and private execution definitions retain their precision.
+`preview_selected_strategy()` refreshes that assigned preview. It has no arguments and
+cannot change strategy, asset, entry, exit or saved rules. It is available only to recheck.
+Fresh quotes must satisfy the existing 30-second observation limit and match asset,
+option type, strike and expiry. An initial evidence failure fails the recheck before a
+model runs. A failed refresh invalidates evidence until a successful retry; it cannot
+become automatic approval. The agent can cancel instead.
+
+Recheck tools are `preview_selected_strategy`, `drop_strategy`, and add, subtract,
+multiply, divide, exponentiate and square_root. Both input paths allow sixteen calls.
+Only `drop_strategy` is a cancellation attempt. Calculator and preview calls do not cancel
+or prevent backend approval when evidence is valid. A failed drop is never reconfirmed.
+Recheck cannot select a replacement strategy or alter the assigned schedule. Its seven-minute
+lead time, model, low reasoning effort and execution/allocation responsibilities stay the same.
+
+Payoff and scenario calculations retain their existing units and limitations. Normalized
+preview size is not account size. Expiry payoff is gross and does not describe an earlier
+exit. Greek scenarios are local estimates, not forecasts or calibrated probabilities.
+Missing depth remains an unknown advisory estimate, not a new mandatory liquidity gate.
+
+Raw candles, trades, books and complete chains stay outside model context. Private snapshots
+and tool records retain evidence for audit. Earlier reports remain intact as dated context;
+they can contain historical option commentary, but are not fresh option measurements.
+There is no hard token cap. Display numbers use eight significant digits while stored
+and execution definitions retain precision.
 
 ## Collection and retention
 
@@ -93,8 +107,9 @@ docker compose --env-file .env.local --env-file backend/.env up -d --no-deps bin
 ```
 
 Set the flag in backend/.env for the analysis service and restart that service after validation.
-The backend also needs the updated aggregate-watchlist publisher. Disabling the flag restores
-the original agent inputs/tool set without removing collected history or changing execution policy.
+The backend also needs the updated aggregate-watchlist publisher. Disabling the flag uses
+the legacy Spot input and catalogue tools. It does not restore
+live option analysis to the main agent; assigned option previews remain on recheck.
 
 ## Paired dry run
 
@@ -148,10 +163,8 @@ News responses no longer require six exact headings or reject content containing
 The completed-response, non-empty text, and provider-error checks remain. News instructions
 still ask for relevant sections and linked evidence, with flexible section names and order.
 Tool-call limits are 50 for news, 48 for main analysis, and 16 for compact rechecks.
-The legacy recheck keeps its one-call limit. Per-tool research budgets and deadlines are unchanged.
+Both recheck input paths now use sixteen calls. Per-tool research budgets and deadlines are unchanged.
 
-Main and recheck agents share five interpretation instructions: distinguish quoted premium from
-contract/strategy-unit cost; separate expiry payoff from early-exit valuation; treat realized/IV
-comparisons as evidence rather than guaranteed edge; reserve mandatory-gate language for enforced
-rules; and qualify catalyst statements by the supplied news coverage. These change interpretation
-and reporting, not strategy definitions, tool calculations, sizing, or execution policy.
+Option unit, payoff and IV interpretation instructions apply to recheck. Main analysis receives
+Spot/news guidance and is instructed not to infer current option value from those inputs.
+Saved mandatory-gate and news-coverage guidance remain applicable to both stages.
