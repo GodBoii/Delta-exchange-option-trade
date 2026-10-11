@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from .analysis_admission import Admission, evaluate
 from .assets import automation_asset_enabled, strategy_asset
 from .auth import credentials_for_user
 from .capital import (
@@ -297,6 +298,25 @@ class TradingEngine:
             return has_available_capital_slot(
                 available, total, policy, capacity["occupiedSlots"], Decimal(capacity["reservedBudget"])
             )
+        finally:
+            await client.close()
+
+    async def analysis_trade_capacity(self, user_id: str, run: dict[str, Any]) -> Admission:
+        snapshot = await self.db.rpc("get_analysis_capacity_snapshot", {
+            "p_user_id": user_id, "p_run": run,
+            "p_entry_lateness_seconds": getattr(self.settings, "max_entry_lateness_seconds", 180),
+            "p_shared": getattr(self.db.settings, "shared_analysis_enabled", True),
+        })
+        if not snapshot["eligible"]:
+            return "full"
+        policy = policy_from_row(snapshot["capital"])
+        maximum = percentage_concurrency_limit(policy.allocation_mode)
+        if maximum is not None and snapshot["occupied"] >= maximum:
+            return "full"
+        client = await self.client_for_user(user_id)
+        try:
+            available, total = await self.usd_capital(client)
+            return evaluate(snapshot, available, total)
         finally:
             await client.close()
 
