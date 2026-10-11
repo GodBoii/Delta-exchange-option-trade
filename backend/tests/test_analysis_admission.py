@@ -8,7 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
@@ -167,11 +170,32 @@ async def test_scheduler_starts_btc_first_and_reconsiders_eth_after_no_trade(mon
     assert started == ["BTC", "ETH"]
 
 
-@pytest.fixture
-async def runtime():
-    if not os.getenv("TEST_LOCAL_DATABASE_URL"):
+@pytest.fixture(scope="module")
+def admission_database():
+    source = os.getenv("TEST_LOCAL_DATABASE_URL")
+    if not source:
         pytest.skip("No isolated PostgreSQL URL")
-    async with AsyncConnectionPool(os.environ["TEST_LOCAL_DATABASE_URL"], open=False) as pool:
+    name = f"admission_{uuid4().hex}"
+    with psycopg.connect(source, autocommit=True) as connection:
+        try:
+            connection.execute(sql.SQL("create database {}").format(sql.Identifier(name)))
+        except psycopg.errors.InsufficientPrivilege:
+            pytest.skip("Admission integration tests require CREATEDB on the disposable server")
+    params = conninfo_to_dict(source)
+    params["dbname"] = name
+    target = make_conninfo(**params)
+    try:
+        from scripts.init_local_db import apply_migrations
+        apply_migrations(target)
+        yield target
+    finally:
+        with psycopg.connect(source, autocommit=True) as connection:
+            connection.execute(sql.SQL("drop database {}").format(sql.Identifier(name)))
+
+
+@pytest.fixture
+async def runtime(admission_database):
+    async with AsyncConnectionPool(admission_database, open=False) as pool:
         await pool.open()
         started = datetime.now(UTC)
         try:
