@@ -8,6 +8,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { requestJson, resetApiOrigin } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage } from "@/lib/format";
+import { resolveProfileAvatar } from "@/lib/profile-avatar";
 import type { Account, AppUser, SessionResponse, StrategyRun } from "@/lib/app-types";
 import { AppShell, TAB_ORDER, type ConnectionState, type Tab } from "@/app/components/AppShell";
 import AuthView from "@/app/components/AuthView";
@@ -101,19 +102,23 @@ export default function Home() {
       }
 
       const metadata = session.user.user_metadata ?? {};
-      setUser({
+      const authUser: AppUser = {
         id: session.user.id,
         email: session.user.email,
         displayName: String(metadata.full_name ?? metadata.name ?? session.user.email?.split("@")[0] ?? "Client"),
-        avatarUrl: typeof metadata.avatar_url === "string" ? metadata.avatar_url : null
-      });
+        avatarUrl: resolveProfileAvatar(metadata.avatar_url, metadata.picture)
+      };
+      setUser(authUser);
 
       try {
         resetApiOrigin();
         const data = await requestJson<SessionResponse>("/api/session", { signal: AbortSignal.timeout(12_000) });
         setBackendStatus("online");
         setAccount(data.connected ? data.account : null);
-        if (data.user) setUser(data.user);
+        if (data.user) setUser({
+          ...data.user,
+          avatarUrl: resolveProfileAvatar(authUser.avatarUrl, data.user.avatarUrl)
+        });
       } catch {
         setBackendStatus("offline");
         setAccount(null);
@@ -227,6 +232,7 @@ export default function Home() {
         account={{
           name: account?.accountName || user.displayName || "Account",
           detail: account?.email || user.email || "Signed in",
+          avatarUrl: user.avatarUrl,
           role: isOwner ? "owner" : "user"
         }}
         badges={{ runs: attention }}
