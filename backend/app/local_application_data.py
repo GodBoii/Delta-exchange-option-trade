@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from .assets import ASSETS
 from .errors import AppError
 from .exit_schedule import validate_template
 from .owner_ledger import record_policy
@@ -325,7 +326,7 @@ class LocalApplicationData:
             current = await cursor.fetchone()
             previous = current["automation"].get("enabled")
             value = {**DEFAULT_AUTOMATION, **current["automation"], "enabled": enabled, "model_id": model_id}
-            value = {key: value[key] for key in DEFAULT_AUTOMATION}
+            value = {key: value[key] for key in (*DEFAULT_AUTOMATION, "asset_enabled") if key in value}
             record = {**current["record"], "automation": value, "updatedAt": datetime.now(UTC).isoformat()}
             await cursor.execute(
                 "update trade.users set automation=%s,record=%s where user_id=%s",
@@ -351,6 +352,7 @@ class LocalApplicationData:
                           connection->>'email_masked' as email_masked,
                           connection->>'delta_user_id' as delta_user_id,
                           coalesce((automation->>'enabled')::boolean, false) as automation_enabled,
+                          automation->'asset_enabled' as asset_enabled,
                           capital->>'allocation_mode' as allocation_mode,
                           capital->>'capital_amount' as capital_amount
                      from trade.users where user_id = any(%s)""",
@@ -364,6 +366,7 @@ class LocalApplicationData:
                 "email": row["email_masked"],
                 "deltaAccountId": row["delta_user_id"],
                 "automationEnabled": row["automation_enabled"],
+                "assetAutomation": {asset: (row["asset_enabled"] or {}).get(asset, True) for asset in ASSETS},
                 "allocationMode": row["allocation_mode"],
                 "capitalAmount": row["capital_amount"],
             }

@@ -10,7 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
-from .assets import run_asset, strategy_asset
+from .assets import automation_asset_enabled, run_asset, strategy_asset
 from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
@@ -495,8 +495,14 @@ class LocalRuntimeStore:
             strategy = await cursor.fetchone()
             if not strategy or strategy["owner_id"] != user_id:
                 raise AppError(404, "Strategy unavailable", "strategy_not_found")
-            await cursor.execute("select connection from trade.users where user_id=%s", (user_id,))
+            await cursor.execute("select connection,automation from trade.users where user_id=%s for share", (user_id,))
             user = await cursor.fetchone()
+            await cursor.execute("select 1 from trade.strategy_proposals where relation_id=%s limit 1", (strategy_id,))
+            automated = await cursor.fetchone()
+            if automated and (
+                not user or not automation_asset_enabled(user["automation"], strategy_asset(strategy["data"]))
+            ):
+                raise AppError(409, "Account asset automation is paused", "automation_disabled")
             connection_record = user["connection"] if user else None
             if not connection_record or connection_record.get("status") != "connected":
                 raise AppError(409, "Delta account required", "delta_not_connected")
@@ -535,7 +541,8 @@ class LocalRuntimeStore:
                              select 1 from trade.strategy_proposals as proposal
                              join trade.users as account on account.user_id=proposal.owner_id
                              where proposal.relation_id=candidate.id
-                               and not coalesce((account.automation->>'enabled')::boolean, false)
+                               and (not coalesce((account.automation->>'enabled')::boolean, false)
+                                    or not coalesce((account.automation#>>'{asset_enabled,BTC}')::boolean, true))
                          )
                          and not exists (
                              select 1 from trade.strategy_proposals as proposal
@@ -606,6 +613,15 @@ class LocalRuntimeStore:
         # scheduled run from being claimed twice; another running run never blocks a claim.
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             await self.data.control.research.lock_asset_settings(cursor)
+            if user_id != "global":
+                await cursor.execute("select automation from trade.users where user_id=%s for share", (user_id,))
+                account = await cursor.fetchone()
+                await cursor.execute("select data from trade.analysis_jobs where id=%s", (args["p_run_id"],))
+                pending = await cursor.fetchone()
+                if pending and (
+                    not account or not automation_asset_enabled(account["automation"], run_asset(pending["data"]))
+                ):
+                    raise AppError(409, "Account automation disabled", "automation_disabled")
             await cursor.execute(
                 "select data from trade.analysis_jobs where id=%s and owner_id=%s and status='scheduled' for update",
                 (args["p_run_id"], user_id),
@@ -626,6 +642,13 @@ class LocalRuntimeStore:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             await self.data.control.research.lock_asset_settings(cursor)
             for item in runs:
+                if item["user_id"] != "global":
+                    await cursor.execute(
+                        "select automation from trade.users where user_id=%s for share", (item["user_id"],),
+                    )
+                    account = await cursor.fetchone()
+                    if not account or not automation_asset_enabled(account["automation"], run_asset(item)):
+                        continue
                 try:
                     await self.data.control.research.require_asset_enabled(cursor, run_asset(item))
                 except AppError as error:

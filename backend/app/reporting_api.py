@@ -18,8 +18,9 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool
 
+from .assets import ASSETS, Asset
 from .auth import require_owner, require_user
 from .automation import set_account_automation
 from .capital import capital_budget, maximum_concurrent_strategies
@@ -57,7 +58,11 @@ StrategyQuery = Annotated[str | None, Query(min_length=1, max_length=500)]
 
 class AutomationSwitch(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    enabled: bool
+    enabled: StrictBool
+
+
+def _automation_fields(enabled: bool, flags: dict[str, Any] | None) -> dict[str, Any]:
+    return {"enabled": enabled, "assetEnabled": {asset: (flags or {}).get(asset, True) for asset in ASSETS}}
 
 
 @dataclass
@@ -347,7 +352,7 @@ async def _registered(db: Database, user_id: str) -> dict[str, Any]:
 
 @router.get("/api/owner/users/{user_id}")
 async def owner_user_detail(
-    request: Request, user_id: str, owner: OwnerUser, range_key: RangeQuery = "all"
+    request: Request, user_id: str, owner: OwnerUser, range_key: RangeQuery = "all", asset: AssetFilter | None = None,
 ) -> dict[str, Any]:
     db: Database = request.app.state.db
     ledger = _ledger(request)
@@ -359,8 +364,8 @@ async def owner_user_detail(
     # Read the wallet first so a fresh observation appears in the capital history below.
     wallet = await _probe(request).read(request, target) if connected else {"state": "not_connected"}
     owner_scope, user_scope, history, capital = await asyncio.gather(
-        ledger.summary(target, deleted="include", since=since),
-        ledger.summary(target, deleted="exclude", since=since),
+        ledger.summary(target, deleted="include", since=since, asset=asset),
+        ledger.summary(target, deleted="exclude", since=since, asset=asset),
         _history(ledger),
         ledger.capital_history(target, 30),
     )
@@ -368,10 +373,13 @@ async def owner_user_detail(
         "success": True,
         "asOf": datetime.now(UTC).isoformat(),
         "range": range_key,
+        "asset": asset or "all",
         **history,
         "profile": _profile_fields(profile, str(owner["id"])),
         "account": _account_fields(account),
-        "automation": {"enabled": bool(account and account["automationEnabled"])},
+        "automation": _automation_fields(
+            bool(account and account["automationEnabled"]), account and account["assetAutomation"],
+        ),
         "capitalPolicy": {
             "allocationMode": account["allocationMode"] if account else None,
             "capitalAmount": account["capitalAmount"] if account else None,
@@ -406,11 +414,34 @@ async def owner_user_trades(
     deleted: DeletedFilter = "include",
     cursor: str | None = None,
     limit: PageLimit = 25,
+    asset: AssetFilter | None = None,
 ) -> dict[str, Any]:
     page = await _ledger(request).trades(
-        _user_id(user_id), deleted=deleted, since=_since(range_key), state=state, cursor=cursor, limit=limit
+        _user_id(user_id), deleted=deleted, since=_since(range_key), state=state,
+        cursor=cursor, limit=limit, asset=asset,
     )
-    return {"success": True, "items": [trade_item(row) for row in page["items"]], "nextCursor": page["nextCursor"]}
+    return {"success": True, "asset": asset or "all", "items": [trade_item(row) for row in page["items"]],
+            "nextCursor": page["nextCursor"]}
+
+
+@router.get("/api/owner/users/{user_id}/pnl/calendar")
+async def owner_user_calendar(
+    request: Request, user_id: str, _owner: OwnerUser, range_key: RangeQuery = "all", asset: AssetFilter | None = None,
+) -> dict[str, Any]:
+    target = _user_id(user_id)
+    await _registered(request.app.state.db, target)
+    now = datetime.now(UTC)
+    since = _since(range_key)
+    ledger = _ledger(request)
+    days = await ledger.daily_pnl(target, since=since, asset=asset, deleted="include")
+    timezone = ZoneInfo("Asia/Kolkata")
+    return {
+        "success": True, "range": range_key, "asset": asset or "all", "strategy": None,
+        "timezone": "Asia/Kolkata", "asOf": now.isoformat(),
+        "startDate": since.astimezone(timezone).date().isoformat() if since else None,
+        "endDate": now.astimezone(timezone).date().isoformat(),
+        **await _history(ledger), "days": days,
+    }
 
 
 @router.get("/api/owner/users/{user_id}/trades/{run_id}")
@@ -472,6 +503,22 @@ async def owner_user_automation(
     saved = await set_account_automation(db, target, body.enabled, actor_id=str(owner["id"]))
     return {
         "success": True,
-        "automation": {"enabled": bool(saved["enabled"])},
+        "automation": _automation_fields(bool(saved["enabled"]), saved.get("asset_enabled")),
         "savedAt": datetime.now(UTC).isoformat(),
     }
+
+
+@router.put("/api/owner/users/{user_id}/automation/assets/{asset}")
+async def owner_user_asset_automation(
+    request: Request, user_id: str, asset: Asset, body: AutomationSwitch, owner: OwnerUser,
+) -> dict[str, Any]:
+    db: Database = request.app.state.db
+    target = _user_id(user_id)
+    await _registered(db, target)
+    saved = await db.runtime.data.request("accountAutomation:setAssetEnabled", {
+        "userId": target, "asset": asset, "enabled": body.enabled,
+    }, mutation=True)
+    logger.info("Owner account asset change actor=%s target=%s asset=%s enabled=%s",
+                owner["id"], target, asset, body.enabled)
+    return {"success": True, "automation": _automation_fields(bool(saved["enabled"]), saved.get("asset_enabled")),
+            "savedAt": datetime.now(UTC).isoformat()}

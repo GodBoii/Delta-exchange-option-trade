@@ -418,7 +418,7 @@ class OwnerLedger:
 
     async def daily_pnl(
         self, user_id: str, *, since: datetime | None, asset: AssetFilter | None = None,
-        strategy: str | None = None,
+        strategy: str | None = None, deleted: DeletedFilter = "exclude",
     ) -> list[dict[str, Any]]:
         """Complete settled totals, grouped by settlement day in IST, with decimal money."""
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -432,12 +432,13 @@ class OwnerLedger:
                           count(*) filter (where realized_pnl < 0) as lost,
                           count(*) filter (where realized_pnl = 0) as break_even
                      from owner_reporting.trade_ledger
-                    where owner_user_id=%s and deleted_by_user_at is null and accounting_state='settled'
+                    where owner_user_id=%s and accounting_state='settled'
+                      and (%s = 'include' or (%s = 'exclude') = (deleted_by_user_at is null))
                       and (%s::timestamptz is null or activity_at >= %s)
                       and (%s::text is null or coalesce(asset, 'BTC') = %s)
                       and (%s::text is null or strategy_name = %s)
                     group by (activity_at at time zone 'Asia/Kolkata')::date order by day""",
-                (user_id, since, since, asset, asset, strategy, strategy),
+                (user_id, deleted, deleted, since, since, asset, asset, strategy, strategy),
             )
             rows = await cursor.fetchall()
         return [{

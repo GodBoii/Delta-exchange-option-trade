@@ -12,6 +12,7 @@ import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from app.assets import automation_asset_enabled
 from app.database import Database
 from app.engine import TradingEngine
 from app.errors import AppError
@@ -169,6 +170,8 @@ async def test_ordinary_user_cannot_call_owner_endpoints(api):
         ("GET", "/api/owner/users"),
         ("GET", f"/api/owner/users/{api.owner}"),
         ("GET", f"/api/owner/users/{api.brother}/trades"),
+        ("GET", f"/api/owner/users/{api.brother}/pnl/calendar"),
+        ("PUT", f"/api/owner/users/{api.brother}/automation/assets/ETH"),
         ("GET", f"/api/owner/users/{api.brother}/trades/{uuid4()}"),
         ("PUT", f"/api/owner/users/{api.brother}/automation"),
         ("PUT", f"/api/owner/users/{api.owner}/capital"),
@@ -293,12 +296,12 @@ async def test_owner_switches_automation_for_any_account_including_their_own(api
     await api.db.runtime.write("strategy_proposals", {"user_id": api.brother, "strategy_id": run_id,
                                                       "status": "scheduled"})
     off = await api.client.put(f"/api/owner/users/{api.brother}/automation", json={"enabled": False})
-    assert off.status_code == 200 and off.json()["automation"] == {"enabled": False}
+    assert off.status_code == 200 and off.json()["automation"]["enabled"] is False
     assert (await api.db.runtime.select("strategies", {"id": f"eq.{run_id}"}))[0]["status"] == "cancelled"
     mine = await api.client.put(f"/api/owner/users/{api.owner}/automation", json={"enabled": False})
-    assert mine.json()["automation"] == {"enabled": False}
+    assert mine.json()["automation"]["enabled"] is False
     detail = (await api.client.get(f"/api/owner/users/{api.brother}")).json()
-    assert detail["automation"] == {"enabled": False}
+    assert detail["automation"] == {"enabled": False, "assetEnabled": {"BTC": True, "ETH": True}}
     missing = await api.client.put(f"/api/owner/users/{uuid4()}/automation", json={"enabled": True})
     assert missing.status_code == 404
 
@@ -331,3 +334,87 @@ async def test_owner_sets_per_strategy_budget_for_any_account(api):
     assert missing_amount.status_code == 400
     unknown = await api.client.put(f"/api/owner/users/{uuid4()}/capital", json={"allocationMode": "half_balance"})
     assert unknown.status_code == 404
+
+async def test_account_asset_pause_preserves_other_assets_accounts_live_and_manual_runs(api):
+    runtime = api.db.runtime
+    rows = {}
+    for user in (api.owner, api.brother):
+        for asset in ("BTC", "ETH"):
+            for status in ("scheduled", "active"):
+                run_id = str(uuid4())
+                rows[user, asset, status] = run_id
+                await runtime.write("strategies", {
+                    "id": run_id, "user_id": user, "name": asset, "status": status, "asset": asset,
+                    "definition_json": {"instrument": {"underlying": asset}},
+                })
+                await runtime.write("strategy_proposals", {
+                    "user_id": user, "strategy_id": run_id, "asset": asset, "status": "scheduled",
+                })
+    manual = str(uuid4())
+    await runtime.write("strategies", {"id": manual, "user_id": api.brother, "status": "scheduled", "asset": "ETH"})
+    path = f"/api/owner/users/{api.brother}"
+    response = await api.client.put(f"{path}/automation/assets/ETH", json={"enabled": False})
+    assert response.status_code == 200
+    assert response.json()["automation"] == {"enabled": True, "assetEnabled": {"BTC": True, "ETH": False}}
+    for (user, asset, status), run_id in rows.items():
+        row = (await runtime.select("strategies", {"id": f"eq.{run_id}"}))[0]
+        expected = "cancelled" if user == api.brother and asset == "ETH" and status == "scheduled" else status
+        assert row["status"] == expected
+    assert (await runtime.select("strategies", {"id": f"eq.{manual}"}))[0]["status"] == "scheduled"
+    for enabled in (False, True):
+        saved = (await api.client.put(f"{path}/automation", json={"enabled": enabled})).json()["automation"]
+        assert saved["assetEnabled"] == {"BTC": True, "ETH": False}
+    settings = (await runtime.select("automation_settings", {"user_id": f"eq.{api.brother}"}))[0]
+    assert automation_asset_enabled(settings, "BTC") and not automation_asset_enabled(settings, "ETH")
+    # The reservation transaction rechecks account preferences even after a stale entry read.
+    stale_id = str(uuid4())
+    await runtime.write("strategies", {"id": stale_id, "user_id": api.brother, "status": "scheduled", "asset": "ETH"})
+    await runtime.write("strategy_proposals", {"user_id": api.brother, "strategy_id": stale_id, "status": "scheduled"})
+    with pytest.raises(AppError) as caught:
+        await runtime.rpc("reserve_strategy_capital_slot", {
+            "p_user_id": api.brother, "p_strategy_id": stale_id, "p_maximum_slots": 2,
+            "p_budget": "10", "p_total_balance": "100",
+        })
+    assert caught.value.code == "automation_disabled"
+
+
+async def test_owner_asset_totals_pages_and_calendar_include_deleted_runs_and_isolate_accounts(api):
+    runtime = api.db.runtime
+    await settled_run(runtime, api.owner, asset="ETH")
+    btc = await settled_run(runtime, api.brother, asset="BTC", exit_price="400")
+    eth = await settled_run(runtime, api.brother, asset="ETH", exit_price="1500")
+    await runtime.update("strategies", {}, {"id": f"eq.{eth}"}, remove=True)
+    path = f"/api/owner/users/{api.brother}"
+    totals = {}
+    for asset, ids in ((None, {btc, eth}), ("BTC", {btc}), ("ETH", {eth})):
+        params = {"asset": asset} if asset else {}
+        detail = (await api.client.get(path, params=params)).json()
+        assert detail["asset"] == (asset or "all")
+        totals[asset] = Decimal(detail["performance"]["ownerScope"]["netRealizedPnl"])
+        items = []
+        query = {**params, "limit": 1}
+        while True:
+            page = (await api.client.get(f"{path}/trades", params=query)).json()
+            assert page["asset"] == (asset or "all")
+            items.extend(page["items"])
+            if not page["nextCursor"]:
+                break
+            query["cursor"] = page["nextCursor"]
+        assert {row["runId"] for row in items} == ids
+        assert sum(Decimal(row["realizedPnl"]) for row in items) == totals[asset]
+        calendar = (await api.client.get(f"{path}/pnl/calendar", params=params)).json()
+        assert calendar["asset"] == (asset or "all")
+        assert sum(Decimal(day["netRealizedPnl"]) for day in calendar["days"]) == totals[asset]
+    assert totals[None] == totals["BTC"] + totals["ETH"]
+    api.current["id"] = api.brother
+    personal = (await api.client.get("/api/me/pnl/calendar", params={"range": "all"})).json()
+    assert sum(day["settledRuns"] for day in personal["days"]) == 1
+
+
+async def test_account_asset_input_validation(api):
+    path = f"/api/owner/users/{api.brother}/automation/assets"
+    assert (await api.client.put(f"{path}/SOL", json={"enabled": False})).status_code == 400
+    for value in ("false", 0, None):
+        assert (await api.client.put(f"{path}/ETH", json={"enabled": value})).status_code == 400
+
+

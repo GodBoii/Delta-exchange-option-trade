@@ -66,6 +66,16 @@ class LocalResearchOperations:
     async def _run(self, cursor: Any, run_id: str, *, lock: bool = False) -> dict[str, Any]:
         if lock:
             await self.lock_asset_settings(cursor)
+            await cursor.execute("select owner_id,data from trade.analysis_jobs where id=%s", (run_id,))
+            pending = await cursor.fetchone()
+            if pending and pending["owner_id"] != "global":
+                # Account lock precedes job locks, matching the account asset pause transaction.
+                await cursor.execute(
+                    "select automation from trade.users where user_id=%s for share", (pending["owner_id"],),
+                )
+                account = await cursor.fetchone()
+                if not account or not automation_asset_enabled(account["automation"], run_asset(pending["data"])):
+                    raise AppError(409, "Account automation disabled", "automation_disabled")
         suffix = " for update" if lock else ""
         await cursor.execute(f"select owner_id,status,data from trade.analysis_jobs where id=%s{suffix}", (run_id,))
         record = await cursor.fetchone()
@@ -298,7 +308,7 @@ class LocalResearchOperations:
                 "select automation,capital,connection from trade.users where user_id=%s for share", (user_id,)
             )
             user = await cursor.fetchone()
-            if not user or not user["automation"].get("enabled"):
+            if not user or not automation_asset_enabled(user["automation"], run_asset(run["data"])):
                 raise AppError(409, "Account automation disabled", "automation_disabled")
             if not user["connection"] or user["connection"].get("status") != "connected":
                 raise AppError(409, "Delta connection required", "delta_not_connected")

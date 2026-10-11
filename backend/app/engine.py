@@ -883,10 +883,11 @@ class TradingEngine:
                 raise AppError(409, "Automation was turned off before entry", "automation_disabled")
         if row.get("shared_decision_id"):
             enabled_accounts = await self.db.select(
-                "automation_settings", {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true", "select": "user_id"}
+                "automation_settings", {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true"}
             )
             recheck = await self.activation_recheck_states([strategy_id])
-            if not enabled_accounts or recheck[strategy_id] != "ready":
+            if (not enabled_accounts or not automation_asset_enabled(enabled_accounts[0], strategy_asset(row))
+                    or recheck[strategy_id] != "ready"):
                 raise AppError(409, "Shared strategy is not authorized for entry", "activation_recheck_failed")
         definition = StrategyDefinition.model_validate(row["definition_json"])
         if row.get("saved_strategy_id"):
@@ -902,9 +903,9 @@ class TradingEngine:
                 # An agent proposal enters only while this account's automation is still on.
                 enabled_accounts = await self.db.select(
                     "automation_settings",
-                    {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true", "select": "user_id"},
+                    {"user_id": f"eq.{row['user_id']}", "enabled": "eq.true"},
                 )
-                if not enabled_accounts:
+                if not enabled_accounts or not automation_asset_enabled(enabled_accounts[0], strategy_asset(row)):
                     raise AppError(409, "Automation was turned off before entry", "automation_disabled")
             if proposals:
                 current = await self.saved_strategies(str(row["user_id"]), str(row["saved_strategy_id"]))

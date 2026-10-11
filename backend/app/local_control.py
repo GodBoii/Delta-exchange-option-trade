@@ -42,11 +42,63 @@ class LocalControl:
             "sharedAnalysis:allocate": self.allocate,
             "sharedAnalysis:completeAllocation": self.complete_allocation,
             "sharedAnalysis:setAssetEnabled": self.set_asset_enabled,
+            "accountAutomation:setAssetEnabled": self.set_account_asset_enabled,
         }
         operation = operations.get(path)
         if operation is None:
             return await self.research.request(path, args)
         return await operation(args)
+
+    async def set_account_asset_enabled(self, args: dict[str, Any]) -> dict[str, Any]:
+        asset = parse_asset(args["asset"])
+        enabled = args["enabled"]
+        if not isinstance(enabled, bool):
+            raise AppError(422, "Invalid automation switch", "automation_switch_invalid")
+        user_id = args["userId"]
+        async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            # Allocation holds a shared account lock. Pause waits for it, then cancels its pending entry.
+            await cursor.execute("select automation,record from trade.users where user_id=%s for update", (user_id,))
+            account = await cursor.fetchone()
+            if not account:
+                raise AppError(409, "Enable account automation first", "account_automation_unavailable")
+            value = {**account["automation"], "asset_enabled": {
+                **account["automation"].get("asset_enabled", {}), asset: enabled,
+            }}
+            await cursor.execute(
+                "update trade.users set automation=%s,record=%s where user_id=%s",
+                (Jsonb(value), Jsonb({**account["record"], "automation": value, "updatedAt": _now()}), user_id),
+            )
+            if not enabled:
+                message = f"{asset} automation was turned off for this account"
+                await cursor.execute(
+                    """select data from trade.strategy_proposals where owner_id=%s and status='scheduled'
+                       and coalesce(nullif(data->>'asset',''),'BTC')=%s for update""", (user_id, asset),
+                )
+                for record in await cursor.fetchall():
+                    proposal = record["data"]
+                    if proposal.get("strategy_id"):
+                        await cursor.execute(
+                            """select data from trade.strategies
+                               where id=%s and owner_id=%s and status='scheduled' for update""",
+                            (proposal["strategy_id"], user_id),
+                        )
+                        strategy = await cursor.fetchone()
+                        if strategy:
+                            await self.store._save(connection, "strategies", {
+                                **strategy["data"], "status": "cancelled", "last_error": message,
+                            }, existing=True)
+                    await self.store._save(connection, "strategy_proposals", {
+                        **proposal, "status": "cancelled", "rejection_reason": message,
+                    }, existing=True)
+                await cursor.execute(
+                    """select data from trade.analysis_jobs where owner_id=%s and status in ('scheduled','running')
+                       and coalesce(nullif(data->>'asset',''),'BTC')=%s for update""", (user_id, asset),
+                )
+                for record in await cursor.fetchall():
+                    await self.store._save(connection, "automation_agent_runs", {
+                        **record["data"], "status": "cancelled", "completed_at": _now(), "error": message,
+                    }, existing=True)
+            return value
 
     async def set_asset_enabled(self, args: dict[str, Any]) -> dict[str, bool]:
         asset = parse_asset(args["asset"])
@@ -206,7 +258,8 @@ class LocalControl:
             items = []
             for decision in decisions:
                 for account in page:
-                    if not account["automation"].get("enabled") or not account["connection"]:
+                    if (not automation_asset_enabled(account["automation"], run_asset(decision))
+                            or not account["connection"]):
                         continue
                     if account["connection"].get("status") != "connected":
                         continue
@@ -254,7 +307,8 @@ class LocalControl:
                 "select automation,connection from trade.users where user_id=%s for share", (user_id,)
             )
             account = await cursor.fetchone()
-            if not account or not account["automation"].get("enabled") or not account["connection"]:
+            if (not account or not automation_asset_enabled(account["automation"], run_asset(decision))
+                    or not account["connection"]):
                 raise AppError(409, "Account automation unavailable", "account_automation_unavailable")
             if account["connection"].get("status") != "connected":
                 raise AppError(409, "Delta connection required", "delta_not_connected")
