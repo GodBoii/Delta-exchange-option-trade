@@ -117,7 +117,7 @@ async def test_shared_review_requires_one_enabled_account_with_capacity(availabi
     engine = SimpleNamespace(has_available_trade_slot=AsyncMock(side_effect=availability))
     assert await automation.has_automation_trade_capacity(db, engine, SHARED_USER_ID) is expected
     db.select.assert_awaited_once_with(
-        "automation_settings", {"select": "user_id", "enabled": "eq.true", "user_id": "neq.global"}
+        "automation_settings", {"select": "user_id,asset_enabled", "enabled": "eq.true", "user_id": "neq.global"}
     )
 
 
@@ -177,6 +177,15 @@ async def test_shared_capacity_checks_all_accounts_with_bounded_wallet_concurren
     assert active == 0
 
 
+def capacity_engine(**kwargs):
+    check = AsyncMock(**kwargs)
+
+    async def admission(user_id, _run):
+        return "ready" if await check(user_id) else "full"
+
+    return SimpleNamespace(has_available_trade_slot=check, analysis_trade_capacity=admission)
+
+
 class CapacityRunDatabase:
     def __init__(self, user_id, trigger):
         self.settings = SimpleNamespace(shared_analysis_enabled=user_id == SHARED_USER_ID)
@@ -217,7 +226,7 @@ class CapacityRunDatabase:
                                      "midnight_review", "agent_follow_up", "manual", "activation_recheck"])
 async def test_full_capacity_skips_due_reviews_before_readiness_or_claim(monkeypatch, user_id, trigger):
     db = CapacityRunDatabase(user_id, trigger)
-    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(return_value=False))
+    engine = capacity_engine(return_value=False)
     ready = AsyncMock()
     monkeypatch.setattr(automation, "require_analyzer_ready", ready)
     scheduler = automation.AutomationScheduler(db, engine)
@@ -241,7 +250,7 @@ async def test_full_capacity_skips_due_reviews_before_readiness_or_claim(monkeyp
 @pytest.mark.parametrize("user_id", ["account", SHARED_USER_ID])
 async def test_new_review_can_start_after_a_slot_is_freed(monkeypatch, user_id):
     db = CapacityRunDatabase(user_id, "agent_follow_up")
-    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(return_value=True))
+    engine = capacity_engine(return_value=True)
     ready = AsyncMock()
     monkeypatch.setattr(automation, "require_analyzer_ready", ready)
     scheduler = automation.AutomationScheduler(db, engine)
@@ -264,7 +273,7 @@ async def test_full_owner_does_not_cancel_shared_due_review_for_other_users(monk
         return await original_select(table, params)
 
     db.select = select
-    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(side_effect=lambda user: user == "other"))
+    engine = capacity_engine(side_effect=lambda user: user == "other")
     ready = AsyncMock()
     monkeypatch.setattr(automation, "require_analyzer_ready", ready)
     scheduler = automation.AutomationScheduler(db, engine)
@@ -279,7 +288,7 @@ async def test_full_owner_does_not_cancel_shared_due_review_for_other_users(monk
 
 async def test_capacity_lookup_failure_defers_scheduled_review(monkeypatch):
     db = CapacityRunDatabase("account", "asia_session")
-    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(side_effect=TimeoutError("wallet")))
+    engine = capacity_engine(side_effect=TimeoutError("wallet"))
     ready = AsyncMock()
     monkeypatch.setattr(automation, "require_analyzer_ready", ready)
     scheduler = automation.AutomationScheduler(db, engine)
@@ -297,7 +306,7 @@ async def test_manual_review_with_no_capacity_does_not_create_a_run(monkeypatch,
         select=AsyncMock(return_value=[{"user_id": "account"}]),
         runtime=SimpleNamespace(data=SimpleNamespace(request=AsyncMock())),
     )
-    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(return_value=False))
+    engine = capacity_engine(return_value=False)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=db, engine=engine)))
     ready = AsyncMock()
     monkeypatch.setattr(automation, "require_analyzer_ready", ready)
@@ -316,7 +325,7 @@ async def test_manual_review_with_no_capacity_does_not_create_a_run(monkeypatch,
 async def test_capacity_is_checked_again_before_analyzer_request(monkeypatch, trigger):
     db = CapacityRunDatabase("account", trigger)
     db.row["status"] = "running"
-    engine = SimpleNamespace(has_available_trade_slot=AsyncMock(return_value=False))
+    engine = capacity_engine(return_value=False)
     context = AsyncMock(side_effect=AssertionError("No context is needed for a skipped run"))
     monkeypatch.setattr(automation, "build_account_context", context)
     monkeypatch.setattr(automation, "build_activation_recheck_context", context)
