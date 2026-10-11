@@ -29,7 +29,8 @@ def chain(asset: str, *expiries: datetime, omit_put_at: datetime | None = None) 
 
 def template(asset: str = "BTC") -> dict:
     definitions = default_strategy_definitions if asset == "BTC" else eth_strategy_definitions
-    item = next(row for row in definitions(datetime(2026, 9, 29, tzinfo=UTC)) if "Short ATM straddle" in row.name)
+    name = "Short ATM straddle" if asset == "BTC" else "ETH Short strangle"
+    item = next(row for row in definitions(datetime(2026, 9, 29, tzinfo=UTC)) if row.name == name)
     return template_from_definition(item.model_dump(mode="json", exclude_none=True))
 
 
@@ -138,6 +139,20 @@ def test_new_saved_template_contains_only_trading_rules_and_materializes_safely(
         options=chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC)),
     )
     validate_materialized_definition(saved, live)
+
+
+@pytest.mark.parametrize("strategy", eth_strategy_definitions(datetime(2026, 9, 29, tzinfo=UTC)), ids=lambda s: s.name)
+def test_every_eth_shape_resolves_current_session_without_changing_rules(strategy):
+    saved = template_from_definition(strategy.model_dump(mode="json", exclude_none=True))
+    expiry = datetime(2026, 9, 30, 12, tzinfo=UTC)
+    live, schedule = resolve_exit_schedule(
+        saved, entry_at=datetime(2026, 9, 29, 13, tzinfo=UTC),
+        choice=ExitChoice(kind="intraday", hours=7), options=chain("ETH", expiry),
+    )
+    validate_materialized_definition(saved, live)
+    assert schedule["contractExpiryUtc"] == expiry.isoformat()
+    assert live["instrument"]["underlying"] == "ETH"
+    assert all(leg["expiry"] == "2026-09-30" for leg in live["legs"])
 
 
 def test_agent_calculator_uses_the_same_resolver_as_selection() -> None:

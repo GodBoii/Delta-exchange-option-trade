@@ -359,19 +359,23 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
     return [StrategyDefinition.model_validate(definition) for definition in definitions]
 
 
-# ATM templates only: their strikes sit at the listed strike nearest spot on both assets.
-# OTM, ITM and spread templates count listed strikes, which land farther from spot on ETH.
+# Mirror the current BTC strategy shapes except the two ATM straddles.
+# Listed strike steps remain unchanged; ETH's price distances depend on its chain.
 ETH_TEMPLATE_SOURCES = (
     "Long call",
     "Long put",
-    "Long ATM straddle",
-    "Short ATM straddle",
+    "Long strangle",
+    "Short strangle",
+    "Short OTM put",
+    "Short OTM call",
+    "Long ITM call",
+    "Long ITM put",
 )
 ETH_INSTRUMENT = {"index": "ETHUSD", "underlying": "ETH", "underlyingFrom": "cash"}
 
 
 def eth_strategy_definitions(now: datetime | None = None) -> list[StrategyDefinition]:
-    """Separate ETH built-ins, copied from the BTC ATM templates with the ETH instrument."""
+    """ETH counterparts retain BTC rules, including ATM single-leg calls and puts."""
     sources = {item.name: item for item in default_strategy_definitions(now)}
     definitions = []
     for name in ETH_TEMPLATE_SOURCES:
@@ -390,6 +394,6 @@ def eth_strategy_definitions(now: datetime | None = None) -> list[StrategyDefini
 
 
 def builtin_strategy_definitions(now: datetime | None = None) -> list[StrategyDefinition]:
-    """Every shared strategy shape: twelve BTC followed by four ETH templates."""
+    """Every canonical shape: twelve BTC followed by eight ETH templates."""
     now = now or datetime.now(UTC)
     return [*default_strategy_definitions(now), *eth_strategy_definitions(now)]

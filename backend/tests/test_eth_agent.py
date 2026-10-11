@@ -17,22 +17,36 @@ from news_analyzer.main import AutomationAnalysisRequest
 NOW = datetime(2026, 9, 27, 6, tzinfo=UTC)
 
 
-def test_eth_builtins_have_unique_atm_strategy_shapes():
+def test_eth_builtins_mirror_btc_except_straddles_and_retired_spreads():
     eth = eth_strategy_definitions(NOW)
 
     assert [item.name for item in eth] == [
         "ETH Long call",
         "ETH Long put",
-        "ETH Long ATM straddle",
-        "ETH Short ATM straddle",
+        "ETH Long strangle",
+        "ETH Short strangle",
+        "ETH Short OTM put",
+        "ETH Short OTM call",
+        "ETH Long ITM call",
+        "ETH Long ITM put",
     ]
     assert all(item.instrument.index == "ETHUSD" and item.instrument.underlying == "ETH" for item in eth)
-    assert all(leg.strikeMode == "atm" for item in eth for leg in item.legs)
+    btc = {item.name: item for item in default_strategy_definitions(NOW)}
+    for item in eth:
+        source = btc[item.name.removeprefix("ETH ")].model_dump(mode="json", exclude_none=True)
+        expected = {
+            **source,
+            "name": item.name,
+            "description": source["description"].replace("BTC", "ETH"),
+            "instrument": {"index": "ETHUSD", "underlying": "ETH", "underlyingFrom": "cash"},
+        }
+        assert item.model_dump(mode="json", exclude_none=True) == expected
+    assert all(leg.strikeMode == "atm" for item in eth[:2] for leg in item.legs)
     assert all("BTC" not in item.description for item in eth)
     # BTC and ETH catalogs each contain one template per strategy shape.
     assert len(default_strategy_definitions(NOW)) == 12
     assert all(item.instrument.underlying == "BTC" for item in default_strategy_definitions(NOW))
-    assert len(builtin_strategy_definitions(NOW)) == 16
+    assert len(builtin_strategy_definitions(NOW)) == 20
 
 
 def test_asset_helpers_keep_legacy_btc_rows_and_prefix_other_assets():
