@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.errors import AppError
+from app.exit_schedule import session_expiry
 from app.local_runtime import LocalRuntimeStore
 
 pytestmark = pytest.mark.skipif(
@@ -31,15 +32,16 @@ async def test_shared_decision_publish_and_recheck_commit_once():
         await pool.open()
         runtime = LocalRuntimeStore(pool)
         saved_id, run_id, snapshot_id = (str(uuid4()) for _ in range(3))
-        now = datetime.now(UTC)
+        now = (datetime.now(UTC) + timedelta(days=1)).replace(hour=4, minute=0, second=0, microsecond=0)
         activation = (now + timedelta(minutes=20)).isoformat()
         exit_at = (now + timedelta(minutes=30)).isoformat()
         expiry = (now + timedelta(minutes=35)).isoformat()
         template = {
             "name": "Research spread",
+            "instrument": {"underlying": "BTC"},
             "enabledForAi": True,
             "entry": {"strategyType": "intraday", "entryAt": now.isoformat(), "exitAt": exit_at},
-            "legs": [{"id": "short", "position": "sell", "expiry": "2026-09-25"}],
+            "legs": [{"id": "short", "position": "sell", "expiry": session_expiry(now).date().isoformat()}],
         }
         proposal = {**template, "entry": {**template["entry"], "entryAt": activation}}
         async with pool.connection() as db:
@@ -99,16 +101,17 @@ async def test_account_schedule_creates_strategy_proposal_and_recheck_atomically
         await pool.open()
         runtime = LocalRuntimeStore(pool)
         user_id, saved_id, run_id, snapshot_id = (str(uuid4()) for _ in range(4))
-        now = datetime.now(UTC)
+        now = (datetime.now(UTC) + timedelta(days=1)).replace(hour=4, minute=0, second=0, microsecond=0)
         activation = (now + timedelta(minutes=20)).isoformat()
         recheck = (now + timedelta(minutes=13)).isoformat()
         exit_at = (now + timedelta(minutes=30)).isoformat()
         expiry = (now + timedelta(minutes=35)).isoformat()
         template = {
             "name": "Account spread",
+            "instrument": {"underlying": "BTC"},
             "enabledForAi": True,
             "entry": {"strategyType": "intraday", "entryAt": now.isoformat(), "exitAt": exit_at},
-            "legs": [{"id": "short", "position": "sell", "expiry": "2026-09-25"}],
+            "legs": [{"id": "short", "position": "sell", "expiry": session_expiry(now).date().isoformat()}],
         }
         proposal = {**template, "entry": {**template["entry"], "entryAt": activation}}
         async with pool.connection() as db:

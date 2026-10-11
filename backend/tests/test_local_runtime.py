@@ -417,6 +417,7 @@ async def test_shared_capacity_uses_other_accounts_when_owner_is_full(runtime, o
 @pytest.mark.asyncio
 async def test_btc_eth_and_recheck_runs_claim_while_another_run_is_running(runtime: LocalRuntimeStore):
     user_id = str(uuid4())
+    await runtime.write("automation_settings", {"user_id": user_id, "enabled": True})
     runs = [
         {"id": str(uuid4()), "user_id": user_id, "asset": asset, "trigger": trigger,
          "run_key": f"{asset}:{trigger}:{uuid4()}", "scheduled_for": "2026-09-24T12:00:00+00:00"}
@@ -435,6 +436,7 @@ async def test_btc_eth_and_recheck_runs_claim_while_another_run_is_running(runti
 @pytest.mark.asyncio
 async def test_fixed_btc_and_eth_reviews_coexist_and_only_cancel_their_own_follow_ups(runtime: LocalRuntimeStore):
     user_id = str(uuid4())
+    await runtime.write("automation_settings", {"user_id": user_id, "enabled": True})
     fixed_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     runs = [
         {"user_id": user_id, "asset": asset, "run_key": key, "trigger": "london_session",

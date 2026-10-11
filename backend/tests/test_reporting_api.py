@@ -418,3 +418,17 @@ async def test_account_asset_input_validation(api):
         assert (await api.client.put(f"{path}/ETH", json={"enabled": value})).status_code == 400
 
 
+async def test_account_asset_pause_blocks_stale_claims_and_future_sessions(api):
+    now = "2099-01-01T10:00:00+00:00"
+    runtime = api.db.runtime
+    await api.client.put(f"/api/owner/users/{api.brother}/automation/assets/ETH", json={"enabled": False})
+    stale = {"id": str(uuid4()), "user_id": api.brother, "asset": "ETH", "status": "scheduled",
+             "scheduled_for": now, "trigger": "london_session", "run_key": f"ETH:stale:{uuid4()}"}
+    await runtime.write("automation_agent_runs", stale)
+    with pytest.raises(AppError) as caught:
+        await runtime.rpc("claim_automation_agent_run", {"p_user_id": api.brother, "p_run_id": stale["id"]})
+    assert caught.value.code == "automation_disabled"
+    assert await runtime.rpc("ensure_automation_fixed_runs", {"p_runs": [
+        {**stale, "run_key": f"ETH:future:{uuid4()}"},
+        {**stale, "asset": "BTC", "run_key": f"BTC:future:{uuid4()}"},
+    ]}) == 1
