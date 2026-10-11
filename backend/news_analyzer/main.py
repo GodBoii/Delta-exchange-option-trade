@@ -138,7 +138,7 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
                 recheck_context=body.accountContext,
                 asset=asset_profile(body.asset),
             )
-            if result.tool_calls:
+            if any(call.get("name") == "drop_strategy" for call in result.tool_calls):
                 recorded = read_automation_state(settings, user_id=body.userId, agent_run_id=body.agentRunId)
                 if not recorded or recorded.get("outcome") != "strategy_dropped":
                     raise RuntimeError("Activation recheck attempted a drop but cancellation was not recorded")

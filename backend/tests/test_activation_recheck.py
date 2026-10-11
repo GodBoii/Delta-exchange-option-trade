@@ -28,13 +28,14 @@ def recheck_request():
     )
 
 
+@pytest.mark.parametrize("read_tools", [[], [{"name": "multiply"}], [{"name": "preview_selected_strategy"}]])
 @pytest.mark.parametrize("drop_attempt,committed", [(False, False), (True, True), (True, False)])
-def test_recheck_never_reconfirms_a_failed_drop(monkeypatch, drop_attempt, committed):
+def test_recheck_never_reconfirms_a_failed_drop(monkeypatch, drop_attempt, committed, read_tools):
     state = {"outcome": "strategy_dropped" if committed else None}
     result = SimpleNamespace(
         run_id="run", session_id="session", model_id="model", report="Decision",
         market_snapshot_id="snapshot", member_responses=[],
-        tool_calls=[{"name": "drop_strategy"}] if drop_attempt else [],
+        tool_calls=read_tools + ([{"name": "drop_strategy"}] if drop_attempt else []),
     )
     monkeypatch.setattr(main, "run_activation_recheck", lambda **_: result)
     monkeypatch.setattr(main, "read_automation_state", lambda *_, **__: state)
