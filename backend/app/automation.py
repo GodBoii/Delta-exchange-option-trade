@@ -52,11 +52,15 @@ RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
 ANALYSIS_FAILED_MESSAGE = "The analysis failed. No strategy was activated."
 NO_TRADE_SLOTS_MESSAGE = "No trade slots are available"
+PENDING_CAPACITY_MESSAGE = "Waiting for capacity committed to another review or entry"
+UNKNOWN_CAPACITY_MESSAGE = "Trade slot availability could not be checked"
 # Errors this module writes itself. Anything else in a run row came from an exception or
 # the analyzer and can carry provider, model or infrastructure detail.
 PUBLIC_RUN_ERRORS = frozenset({
     ANALYSIS_FAILED_MESSAGE,
     NO_TRADE_SLOTS_MESSAGE,
+    PENDING_CAPACITY_MESSAGE,
+    UNKNOWN_CAPACITY_MESSAGE,
     MARKET_AUTH_ERROR_MESSAGE,
     "Final report unavailable",
     "Automation was turned off",
@@ -333,7 +337,17 @@ async def execute_automation_run(
     try:
         if trigger == "activation_recheck" and not strategy_proposal_id:
             raise AppError(500, "Activation recheck is missing its strategy proposal", "recheck_proposal_missing")
-        if not await has_automation_trade_capacity(db, engine, user_id):
+        admission_run = {"id": run_id, "asset": asset, "strategy_proposal_id": strategy_proposal_id}
+        try:
+            has_capacity = await has_automation_trade_capacity(db, engine, user_id, run=admission_run)
+        except Exception as error:
+            message = PENDING_CAPACITY_MESSAGE
+            if not isinstance(error, AppError) or error.code != "analysis_capacity_pending":
+                message = UNKNOWN_CAPACITY_MESSAGE
+                logger.exception("Automation capacity unavailable before analyzer request run_id=%s", run_id)
+            await defer_automation_run(db, user_id, run_id, status="running", message=message)
+            return {"runId": run_id, "status": "scheduled", "deferred": True, "reason": message}
+        if not has_capacity:
             return await skip_automation_run(db, user_id, run_id, status="running")
         if trigger == "activation_recheck":
             account_context = await build_activation_recheck_context(db, user_id, strategy_proposal_id)
@@ -470,22 +484,37 @@ async def execute_automation_run(
         raise
 
 
-async def has_automation_trade_capacity(db: Database, engine: TradingEngine, user_id: str) -> bool:
+async def has_automation_trade_capacity(
+    db: Database, engine: TradingEngine, user_id: str, *, run: dict[str, Any] | None = None
+) -> bool:
+    async def capacity(account_id: str) -> str:
+        if run is not None:
+            return await engine.analysis_trade_capacity(account_id, run)
+        return "ready" if await engine.has_available_trade_slot(account_id) else "full"
+
     if user_id != SHARED_USER_ID:
-        return await engine.has_available_trade_slot(user_id)
+        state = await capacity(user_id)
+        if state == "pending":
+            raise AppError(409, PENDING_CAPACITY_MESSAGE, "analysis_capacity_pending")
+        return state == "ready"
     accounts = await db.select(
         "automation_settings",
-        {"select": "user_id", "enabled": "eq.true", "user_id": f"neq.{SHARED_USER_ID}"},
+        {"select": "user_id,asset_enabled", "enabled": "eq.true", "user_id": f"neq.{SHARED_USER_ID}"},
     )
     unavailable = False
-    account_iterator = iter(accounts)
+    pending = False
+    account_iterator = iter(
+        account for account in accounts if run is None or automation_asset_enabled(account, run_asset(run))
+    )
 
     async def check_accounts() -> bool:
-        nonlocal unavailable
+        nonlocal unavailable, pending
         for account in account_iterator:
             try:
-                if await engine.has_available_trade_slot(str(account["user_id"])):
+                state = await capacity(str(account["user_id"]))
+                if state == "ready":
                     return True
+                pending |= state == "pending"
             except Exception:
                 unavailable = True
                 logger.exception("Could not check trade capacity user_id=%s", account["user_id"])
@@ -504,8 +533,20 @@ async def has_automation_trade_capacity(db: Database, engine: TradingEngine, use
         await asyncio.gather(*tasks, return_exceptions=True)
     if unavailable:
         # An unknown wallet must not be reported as a confirmed lack of capacity.
-        raise AppError(503, "Trade slot availability could not be checked", "capital_capacity_unavailable")
+        raise AppError(503, UNKNOWN_CAPACITY_MESSAGE, "capital_capacity_unavailable")
+    if pending:
+        raise AppError(409, PENDING_CAPACITY_MESSAGE, "analysis_capacity_pending")
     return False
+
+
+async def defer_automation_run(db: Database, user_id: str, run_id: str, *, status: str, message: str) -> None:
+    await db.update(
+        "automation_agent_runs",
+        {"status": "scheduled", "started_at": None, "error": message},
+        {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": f"eq.{status}", "outcome": "is.null"},
+    )
+    reason = "analysis_capacity_pending" if message == PENDING_CAPACITY_MESSAGE else "capital_capacity_unavailable"
+    logger.info("Automation admission deferred run_id=%s user_id=%s reason=%s", run_id, user_id, reason)
 
 
 async def skip_automation_run(
@@ -744,7 +785,7 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     user_id = str(user["id"])
     await require_owner(db, user)
     if shared_enabled(db.settings):
-        if not await has_automation_trade_capacity(db, engine, SHARED_USER_ID):
+        if not await has_automation_trade_capacity(db, engine, SHARED_USER_ID, run={"asset": body.asset}):
             raise AppError(409, NO_TRADE_SLOTS_MESSAGE, "capital_slots_full")
         await require_analyzer_ready()
         row = await db.runtime.data.request(
@@ -755,7 +796,7 @@ async def run_automation(request: Request, body: AutomationRunRequest, user: Req
     settings = await ensure_settings(db, user_id)
     if not settings["enabled"]:
         raise AppError(409, "Turn on Automation before running the agent", "automation_disabled")
-    if not await has_automation_trade_capacity(db, engine, user_id):
+    if not await has_automation_trade_capacity(db, engine, user_id, run={"asset": body.asset}):
         raise AppError(409, NO_TRADE_SLOTS_MESSAGE, "capital_slots_full")
     await require_analyzer_ready()
     rows = await db.insert(
@@ -970,8 +1011,10 @@ class AutomationScheduler:
                     },
                 )
             )
-        now = datetime.now(UTC)
         analyzer_ready = False
+        # Rechecks keep their own worker pool; BTC receives first consideration within each stage.
+        due.sort(key=lambda row: (row["trigger"] != "activation_recheck", run_asset(row) != "BTC",
+                                  row["scheduled_for"], row["id"]))
         for row in due:
             is_recheck = row["trigger"] == "activation_recheck"
             if (recheck_available if is_recheck else analysis_available) <= 0:
@@ -984,7 +1027,7 @@ class AutomationScheduler:
             ):
                 continue
             scheduled_for = datetime.fromisoformat(str(row["scheduled_for"]).replace("Z", "+00:00"))
-            if now - scheduled_for > MAX_AUTOMATION_RUN_LATENESS:
+            if datetime.now(UTC) - scheduled_for > MAX_AUTOMATION_RUN_LATENESS:
                 await self.db.update(
                     "automation_agent_runs",
                     {"status": "cancelled", "completed_at": iso_now(), "error": "Scheduled review became stale"},
@@ -992,9 +1035,20 @@ class AutomationScheduler:
                 )
                 continue
             try:
-                has_capacity = await has_automation_trade_capacity(self.db, self.engine, str(row["user_id"]))
+                has_capacity = await has_automation_trade_capacity(self.db, self.engine, str(row["user_id"]), run=row)
+            except AppError as error:
+                if error.code == "analysis_capacity_pending":
+                    await defer_automation_run(self.db, str(row["user_id"]), str(row["id"]),
+                                               status="scheduled", message=error.message)
+                else:
+                    logger.exception("Scheduled automation capacity check deferred run_id=%s", row["id"])
+                    await defer_automation_run(self.db, str(row["user_id"]), str(row["id"]),
+                                               status="scheduled", message=UNKNOWN_CAPACITY_MESSAGE)
+                continue
             except Exception:
                 logger.exception("Scheduled automation capacity check deferred run_id=%s", row["id"])
+                await defer_automation_run(self.db, str(row["user_id"]), str(row["id"]),
+                                           status="scheduled", message=UNKNOWN_CAPACITY_MESSAGE)
                 continue
             if not has_capacity:
                 await skip_automation_run(self.db, str(row["user_id"]), str(row["id"]), status="scheduled")
