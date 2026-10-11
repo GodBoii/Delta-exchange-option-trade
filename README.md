@@ -81,6 +81,8 @@ Then apply migrations `010` through `018` in order. Migration `011` repairs and 
 
 Shared strategy templates live in `trade.saved_strategies`. From `backend`, `python -m scripts.shared_library seed` lists canonical templates that are missing, `descriptions` lists description drift, and `take-profit` sets a 50% take profit. Each prints the plan; add `--apply` to commit. Updates increment the template version, and `take-profit --apply` refuses while runs are open. See [spread gates and rollout checks](docs/22-defined-risk-credit-spreads.md).
 
+ETH has eight shared strategy shapes matching the current BTC library except its two ATM straddles. ATM single-leg calls and puts remain available. Use `python -m scripts.shared_library eth-catalog` to preview the targeted database rollout, then add `--apply` to copy missing ETH shapes from current saved BTC rules and retire the ETH straddles without changing BTC or trade history. See [ETH catalog rollout](docs/36-eth-strategy-catalog.md).
+
 ### Apply the account phone-number migration
 
 Open **Supabase Dashboard → SQL Editor**, paste the entire contents of:

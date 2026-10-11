@@ -3,12 +3,15 @@
 import asyncio
 import json
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from psycopg_pool import AsyncConnectionPool
 
+from app.default_strategies import default_strategy_definitions
 from app.errors import AppError
+from app.exit_schedule import validate_template
 from app.local_application_data import LocalApplicationData
 
 pytestmark = pytest.mark.skipif(
@@ -34,7 +37,8 @@ async def data():
 async def test_library_save_revision_and_soft_delete(data: LocalApplicationData):
     user_id = str(uuid4())
     identifier = str(uuid4())
-    definition = {"name": "Test spread", "legs": [{"position": "sell"}], "enabledForAi": True}
+    definition = validate_template(default_strategy_definitions(datetime.now(UTC))[0].model_dump(mode="json"))
+    definition["name"] = "Test spread"
     payload = {
         "id": identifier,
         "name": "Test spread",
