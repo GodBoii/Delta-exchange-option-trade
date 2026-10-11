@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from .analysis_admission import read_snapshot
 from .assets import automation_asset_enabled, run_asset, strategy_asset
 from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
@@ -441,6 +442,7 @@ class LocalRuntimeStore:
 
     async def rpc(self, name: str, payload: dict[str, Any]) -> Any:
         operations = {
+            "get_analysis_capacity_snapshot": lambda args: read_snapshot(self.pool, args),
             "get_strategy_capital_capacity": self._capital_capacity,
             "reserve_strategy_capital_slot": self._reserve_capital,
             "release_strategy_capital_slot": self._release_capital,
