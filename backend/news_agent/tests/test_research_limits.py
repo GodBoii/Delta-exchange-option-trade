@@ -52,6 +52,7 @@ async def test_dossier_fetches_concurrently_and_reuses_article_cache(monkeypatch
     result = json.loads(await tools.build_news_dossier(urls + urls))
     assert 1 < maximum <= 4
     assert calls == 6
+    assert tools.budget.calls["read_news_article"] == 6
     assert result["requested"] == 6
     assert json.loads(await tools.read_news_article(urls[0]))["ok"]
     assert calls == 6
@@ -94,9 +95,12 @@ async def test_search_limit_is_per_tool_and_cached(monkeypatch):
     for _ in range(10):
         assert isinstance(json.loads(await tools.search_news("same query")), list)
     assert len(calls) == 1
-    assert json.loads(await tools.search_news("eleventh"))["ok"] is False
+    assert tools.budget.calls["search_news"] == 1
+    for i in range(9):
+        await tools.search_news(f"other query {i}")
+    assert json.loads(await tools.search_news("eleventh unique query"))["ok"] is False
     assert isinstance(json.loads(await tools.web_search("official evidence")), list)
-    assert len(calls) == 2
+    assert len(calls) == 11
     fresh = WebSearchTools()
     assert isinstance(json.loads(await fresh.search_news("new run")), list)
 
