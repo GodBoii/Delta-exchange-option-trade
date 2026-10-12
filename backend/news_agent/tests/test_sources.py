@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
 from news_agent.budget import ResearchBudget
-from news_agent.sources import PublicSourceTools, Source, parse_calendar, parse_feed, parse_polymarket
+from news_agent.sources import (
+    PublicSourceTools,
+    Source,
+    parse_calendar,
+    parse_feed,
+    parse_polymarket,
+    select_source_cards,
+)
 from news_agent.tools import FetchResult
 
 
@@ -143,3 +151,53 @@ async def test_exchange_search_keeps_original_announcement_url(monkeypatch) -> N
     assert queries == ["site:binance.com/en/support/announcement Ethereum"]
     assert result["announcements"][0]["access"] == "search_snippet"
     assert result["announcements"][0]["url"].endswith("/detail/example")
+
+
+def test_atom_alternate_links_keep_distinct_article_identity_and_skip_missing_links():
+    feed = b"""<feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><title>First article</title><link rel="self" href="/feed/1"/>
+      <link rel="alternate" href="https://blockworks.co/news/one"/><published>2026-10-12T01:00:00Z</published></entry>
+      <entry><title>Second article</title><link href="https://blockworks.co/news/two"/></entry>
+      <entry><title>Missing original URL</title></entry></feed>"""
+    cards = parse_feed(feed, Source("Blockworks", "publisher", "https://blockworks.co/feed"), "now")
+    assert [card["url"] for card in cards] == ["https://blockworks.co/news/one", "https://blockworks.co/news/two"]
+
+
+def test_calendar_prioritizes_us_high_impact_beyond_initial_four_items():
+    source = Source("calendar", "calendar", "https://example.com/week.json")
+    entries = [{"title": "Holiday", "country": "JPY", "impact": "Holiday", "date": "2026-10-12T00:00:00Z"}] * 20
+    entries += [{"title": "CPI", "country": "USD", "impact": "High", "date": "2026-10-14T12:30:00Z"}]
+    cards = parse_calendar(json.dumps(entries).encode(), source, "now")
+    selected = select_source_cards(cards, source, datetime(2026, 10, 12, tzinfo=UTC), 48)
+    assert selected[0]["title"] == "CPI"
+    assert len(selected) == 16
+
+
+def test_old_feed_items_cannot_displace_later_recent_items():
+    source = Source("feed", "publisher", "https://example.com/feed")
+    selected = select_source_cards(
+        [
+            {"title": "Stale", "published_at": "2026-01-01T00:00:00Z"},
+            {"title": "Current", "published_at": "2026-10-12T00:00:00Z"},
+        ],
+        source,
+        datetime(2026, 10, 12, 1, tzinfo=UTC),
+        48,
+    )
+    assert [item["title"] for item in selected] == ["Current"]
+
+
+def test_primary_source_catalog_includes_missing_agencies_and_exchange_feeds():
+    from news_agent.sources import _sources
+
+    names = {source.name for source in _sources("BTC", [])}
+    assert {
+        "White House actions",
+        "White House statements",
+        "Treasury releases",
+        "BEA releases",
+        "CFTC releases",
+        "Kraken announcements",
+        "Delta announcements",
+        "The Block",
+    } <= names
