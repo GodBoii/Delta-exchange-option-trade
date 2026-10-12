@@ -6,6 +6,8 @@ import os
 import sys
 import time
 import uuid
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import FastAPI, Request
@@ -22,10 +24,21 @@ from automation_agent.team import run_activation_recheck, run_automation_team
 from automation_agent.tools import confirm_activation_recheck, read_automation_state
 from news_agent.config import RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
-from news_analyzer.worker import run_in_worker
+from news_agent.failures import NewsResearchError
+from news_analyzer.worker import AnalysisWorkerError, run_in_worker
 
 LOG_LEVEL_NAME = os.getenv("NEWS_LOG_LEVEL", "INFO").upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
+
+
+class _SafeLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        for key in ("OPENROUTER_API_KEY", "ANALYSIS_SERVICE_SECRET", "AI_DATABASE_URL"):
+            value = os.getenv(key)
+            if value:
+                text = text.replace(value, "[redacted]")
+        return text
 
 
 def _configure_logging() -> None:
@@ -37,6 +50,18 @@ def _configure_logging() -> None:
         root.addHandler(handler)
     for handler in root.handlers:
         handler.setLevel(LOG_LEVEL)
+    if os.getenv("NEWS_STATE_DIR"):
+        directory = Path(os.environ["NEWS_STATE_DIR"]) / "logs"
+        directory.mkdir(parents=True, exist_ok=True)
+        # Each isolated worker owns its file, so rotation cannot race across processes.
+        filename = directory / f"analysis-{time.time_ns()}-{os.getpid()}.log"
+        retained = RotatingFileHandler(filename, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8")
+        retained.setLevel(logging.INFO)
+        retained.setFormatter(_SafeLogFormatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+        root.addHandler(retained)
+        for old in directory.glob("analysis-*.log*"):
+            if old.stat().st_mtime < time.time() - 30 * 24 * 3600:
+                old.unlink(missing_ok=True)
     for logger_name in ("news_analyzer", "news_agent", "agno"):
         logging.getLogger(logger_name).setLevel(LOG_LEVEL)
     # Keep application and Agno traces detailed without drowning them in HTTP/2,
@@ -178,7 +203,8 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
                     raise ServiceError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE)
         outcome = str(state.get("outcome") or "no_trade_for_current_window") if state else "no_trade_for_current_window"
         report = (
-            result.report if body.trigger == "activation_recheck"
+            result.report
+            if body.trigger == "activation_recheck"
             else replace_model_decision(outcome, result.report, shared=body.userId == SHARED_USER_ID)
         )
         return {
@@ -236,6 +262,8 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
         )
         if isinstance(exc, ServiceError):
             raise
+        if isinstance(exc, NewsResearchError):
+            raise ServiceError(502, str(exc), exc.failure["code"]) from exc
         raise ServiceError(
             502,
             "The automation analysis could not be completed. No strategy was activated.",
@@ -364,12 +392,17 @@ async def analyze_automation(body: AutomationAnalysisRequest, request: Request) 
         raise ServiceError(503, "Automation storage is temporarily unavailable", "automation_database_not_configured")
     try:
         return await asyncio.to_thread(
-            run_in_worker, _run_automation_analysis, body, request.state.trace_id,
+            run_in_worker,
+            _run_automation_analysis,
+            body,
+            request.state.trace_id,
             timeout_seconds=RECHECK_TIMEOUT_SECONDS if body.trigger == "activation_recheck" else 45 * 60,
         )
     except TimeoutError as exc:
         raise ServiceError(504, str(exc), "automation_analysis_timeout") from exc
     except RuntimeError as exc:
+        if isinstance(exc, AnalysisWorkerError) and exc.code:
+            raise ServiceError(exc.status or 502, str(exc), exc.code) from exc
         if str(exc) == MARKET_AUTH_ERROR_MESSAGE:
             raise ServiceError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE) from exc
         raise ServiceError(502, "Automation analysis could not be completed", "automation_agent_failed") from exc
