@@ -237,9 +237,12 @@ async def read(runtime, owner, run):
 
 async def test_shared_admission_accepts_real_legacy_settings_projection(runtime):
     owner = await account(runtime)
-    projected = await runtime.select("automation_settings", {
-        "select": "user_id,asset_enabled", "enabled": "eq.true", "user_id": f"eq.{owner}",
+    async with runtime.pool.connection() as connection:
+        await connection.execute("update trade.users set automation=automation-'asset_enabled' where user_id=%s", (owner,))
+    rows = await runtime.select("automation_settings", {
+        "select": "user_id,asset_enabled", "enabled": "eq.true", "user_id": "neq.global",
     })
+    projected = [row for row in rows if row["user_id"] == owner]
     assert projected == [{"user_id": owner, "asset_enabled": None}]
     db = SimpleNamespace(select=AsyncMock(return_value=projected))
     engine = SimpleNamespace(analysis_trade_capacity=AsyncMock(return_value="ready"))
