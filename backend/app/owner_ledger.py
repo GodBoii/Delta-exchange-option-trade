@@ -84,7 +84,13 @@ async def capture_quietly(ledger: "OwnerLedger", connection: Any, run_id: str) -
         logger.exception("Owner ledger capture failed run_id=%s", run_id)
 
 
-async def record_policy(connection: Any, user_id: str, mode: str, amount: Any) -> None:
+async def record_policy(
+    connection: Any,
+    user_id: str,
+    mode: str,
+    amount: Any,
+    policy: dict[str, Any] | None = None,
+) -> None:
     """Record a capital-policy change in the caller's transaction, isolated by a savepoint."""
     now = datetime.now(UTC)
     try:
@@ -94,9 +100,16 @@ async def record_policy(connection: Any, user_id: str, mode: str, amount: Any) -
             )
             await connection.execute(
                 """insert into owner_reporting.capital_observations
-                   (user_id,kind,source,observation_key,observed_at,allocation_mode,capital_amount)
-                   values (%s,'policy','capital_policy',%s,%s,%s,%s) on conflict do nothing""",
-                (user_id, f"policy:{now.isoformat()}", now, mode, optional_decimal(amount)),
+                   (user_id,kind,source,observation_key,observed_at,allocation_mode,capital_amount,policy_json)
+                   values (%s,'policy','capital_policy',%s,%s,%s,%s,%s) on conflict do nothing""",
+                (
+                    user_id,
+                    f"policy:{now.isoformat()}",
+                    now,
+                    mode,
+                    optional_decimal(amount),
+                    Jsonb(policy) if policy else None,
+                ),
             )
     except Exception:
         logger.exception("Capital policy observation failed user_id=%s", user_id)
@@ -230,16 +243,23 @@ class OwnerLedger:
             values.append(("wallet", total, optional_decimal(policy.get("availableBalanceAtEntry")), None, None, None))
         if policy.get("allocationMode"):
             values.append(
-                ("policy", None, None, str(policy["allocationMode"]), optional_decimal(policy.get("capitalAmount")),
-                 None)
+                (
+                    "policy",
+                    None,
+                    None,
+                    str(policy["allocationMode"]),
+                    optional_decimal(policy.get("capitalAmount")),
+                    None,
+                )
             )
         for kind, total_balance, available, mode, amount, allocated in values:
             await connection.execute(
                 """insert into owner_reporting.capital_observations
                    (user_id,kind,source,observation_key,observed_at,run_id,total_balance,available_balance,
-                    allocation_mode,capital_amount,allocated_budget)
-                   values (%s,%s,'strategy_entry',%s,%s,%s,%s,%s,%s,%s,%s) on conflict do nothing""",
-                (owner, kind, key, observed_at, run_id, total_balance, available, mode, amount, allocated),
+                    allocation_mode,capital_amount,allocated_budget,policy_json)
+                   values (%s,%s,'strategy_entry',%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict do nothing""",
+                (owner, kind, key, observed_at, run_id, total_balance, available, mode, amount, allocated,
+                 Jsonb(policy) if kind == "policy" else None),
             )
 
     async def backfill(self, *, batch_size: int = 200) -> dict[str, Any]:
@@ -396,8 +416,23 @@ class OwnerLedger:
                      and (%s::text is null or strategy_name = %s)
                      and (%s::timestamptz is null or (activity_at, run_id) < (%s, %s))
                    order by activity_at desc, run_id desc limit %s""",
-                (user_id, deleted, deleted, since, since, state, state, asset, asset, strategy, strategy,
-                 after_time, after_time, after_id, limit + 1),
+                (
+                    user_id,
+                    deleted,
+                    deleted,
+                    since,
+                    since,
+                    state,
+                    state,
+                    asset,
+                    asset,
+                    strategy,
+                    strategy,
+                    after_time,
+                    after_time,
+                    after_id,
+                    limit + 1,
+                ),
             )
             rows = await query.fetchall()
         page = rows[:limit]
@@ -480,7 +515,7 @@ class OwnerLedger:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute(
                 """select kind,source,observed_at,run_id,total_balance,available_balance,allocation_mode,
-                          capital_amount,allocated_budget
+                          capital_amount,allocated_budget,policy_json
                      from owner_reporting.capital_observations
                     where user_id=%s order by observed_at desc, id desc limit %s""",
                 (user_id, limit),
