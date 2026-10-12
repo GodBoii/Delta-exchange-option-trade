@@ -9,19 +9,22 @@ import socket
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 from agno.tools import Toolkit
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT = "DeltaNewsResearchBot/0.1 (+local research prototype)"
+USER_AGENT = "TradeCognitionNews/1.0 (+https://tradecognition.online)"
 TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src"}
 
@@ -379,6 +382,24 @@ def _safe_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def parse_article_pdf(body: bytes, final_url: str) -> dict[str, Any]:
+    """Read bounded official document text, without OCR or invented publication dates."""
+    reader = PdfReader(BytesIO(body))
+    if reader.is_encrypted:
+        raise ValueError("Encrypted PDF cannot be used as article evidence")
+    pages = reader.pages[:12]
+    text = "\n\n".join(page.extract_text() or "" for page in pages)
+    return {
+        "title": str((reader.metadata or {}).get("/Title") or final_url.rsplit("/", 1)[-1]),
+        "canonical_url": final_url,
+        "published_at": None,
+        "text": text[:8000],
+        "text_truncated": len(reader.pages) > 12 or len(text) > 8000,
+        "images": [],
+        "publication_date_source": "undated",
+    }
+
+
 def classify_source_url(url: str) -> dict[str, str]:
     """Classify a news URL using a transparent domain allowlist; this is not a truth score."""
     hostname = (urlsplit(url).hostname or "").lower().rstrip(".")
@@ -459,13 +480,30 @@ class NewsResearchTools(Toolkit):
         started = time.perf_counter()
         try:
             async with asyncio.timeout(self.budget.remaining(30)), self.fetch_slots:
-                fetched = await fetch_public_document(url, self.settings, client=client)
+                fetched = await fetch_public_document(
+                    url,
+                    self.settings,
+                    client=client,
+                    accepted_types=frozenset(
+                        {"text/html", "application/xhtml+xml", "text/plain", "application/pdf", ""}
+                    ),
+                )
                 parsed_at = time.perf_counter()
-                article = await asyncio.to_thread(
-                    parse_article_html,
-                    fetched.body.decode("utf-8", errors="replace"),
-                    fetched.final_url,
-                    8000,
+                if fetched.content_type == "application/pdf":
+                    article = await asyncio.to_thread(parse_article_pdf, fetched.body, fetched.final_url)
+                else:
+                    article = await asyncio.to_thread(
+                        parse_article_html,
+                        fetched.body.decode("utf-8", errors="replace"),
+                        fetched.final_url,
+                        8000,
+                    )
+                if re.fullmatch(
+                    r"just a moment\.?|access denied|attention required!.*", article.get("title") or "", re.IGNORECASE
+                ):
+                    raise ValueError("Source returned an access challenge instead of an article")
+                article.setdefault(
+                    "publication_date_source", "article_metadata" if article.get("published_at") else "undated"
                 )
                 article["source_class"] = classify_source_url(fetched.final_url)["source_class"]
                 article["final_url"] = fetched.final_url
@@ -489,7 +527,7 @@ class NewsResearchTools(Toolkit):
                     round((time.perf_counter() - parsed_at) * 1000),
                     len(article["text"]),
                 )
-        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+        except (httpx.HTTPError, TimeoutError, ValueError, PdfReadError) as exc:
             self.domain_failures[domain] = self.domain_failures.get(domain, 0) + 1
             result = {"ok": False, "url": url, "error": str(exc) or "Article timed out"}
         self.cache[url] = result
@@ -500,11 +538,11 @@ class NewsResearchTools(Toolkit):
 
     async def _read(self, url: str, client: httpx.AsyncClient) -> dict[str, Any]:
         try:
-            self.budget.consume("read_news_article")
             url = canonicalize_url(url)
             if url in self.cache:
                 return self.cache[url]
             if url not in self.pending:
+                self.budget.consume("read_news_article")
                 self.pending[url] = asyncio.create_task(self._fetch_article(url, client))
             return await self.pending[url]
         except (TimeoutError, ValueError) as exc:
