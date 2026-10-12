@@ -93,7 +93,7 @@ def _trace_result(name: str, value: Any) -> dict[str, Any]:
             "count": len(result.get("announcements") or []),
             "items": [
                 {key: item.get(key) for key in ("exchange", "title", "url", "search_date", "access")}
-                for item in (result.get("announcements") or [])[:20]
+                for item in (result.get("announcements") or [])[:30]
             ],
             "errors": result.get("errors") or [],
         }
