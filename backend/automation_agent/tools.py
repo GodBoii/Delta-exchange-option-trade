@@ -20,7 +20,7 @@ from app.automation_schedule import (
     previous_fixed_run,
     utc_text,
 )
-from app.capital import percentage_concurrency_limit
+from app.capital import policy_from_row
 from app.errors import AppError
 from app.exit_schedule import ExitChoice, maximum_hold_hours, resolve_exit_schedule, template_from_definition
 from app.models import StrategyDefinition
@@ -163,7 +163,8 @@ class AutomationStrategyTools(Toolkit):
         context = self.runtime_data.request_sync(
             "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
         )
-        maximum = percentage_concurrency_limit(str(capital_settings["allocation_mode"]))
+        policy = policy_from_row(capital_settings)
+        maximum = policy.concurrency_limit()
         occupied = context["occupied"]
         visible = sorted(
             (
