@@ -10,7 +10,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode, urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -74,7 +74,7 @@ SOURCES = (
 DISCUSSION_SITES = {
     "reddit": "reddit.com",
     "x": "x.com",
-    "threads": "threads.net",
+    "threads": "threads.com",
     "facebook": "facebook.com",
     "binance_square": "binance.com/en/square",
 }
@@ -95,6 +95,21 @@ DISCOVERY_FALLBACKS = {
     "GDELT asset": "Bitcoin OR Ethereum",
     "GDELT global": '"central bank" OR inflation OR tariffs OR geopolitics',
 }
+
+
+def _matches_site(url: str, site: str) -> bool:
+    """Check actual result provenance instead of trusting the search engine's site operator."""
+    try:
+        actual, expected = urlsplit(url), urlsplit(f"https://{site}")
+    except ValueError:
+        return False
+    host, domain = (actual.hostname or "").rstrip("."), expected.hostname or ""
+    path = expected.path.rstrip("/")
+    return (
+        actual.scheme in {"http", "https"}
+        and (host == domain or host.endswith(f".{domain}"))
+        and (not path or actual.path == path or actual.path.startswith(path + "/"))
+    )
 
 
 def select_source_cards(
@@ -455,9 +470,9 @@ class PublicSourceTools(Toolkit):
             self.budget.consume("search_exchange_announcements")
         except (TimeoutError, ValueError) as error:
             return json.dumps({"announcements": [], "errors": [{"exchange": "search", "error": str(error)}]})
-        selected = list(dict.fromkeys(name.lower() for name in exchanges if name.lower() in EXCHANGE_SITES))[:4]
+        selected = list(dict.fromkeys(name.lower() for name in exchanges if name.lower() in EXCHANGE_SITES))[:6]
         if not selected:
-            selected = ["binance", "coinbase", "kraken", "okx"]
+            selected = list(EXCHANGE_SITES)
 
         async def discover(exchange: str) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
             query = f"site:{EXCHANGE_SITES[exchange]} {topic[:120]}"
@@ -474,7 +489,7 @@ class PublicSourceTools(Toolkit):
                     "access": "search_snippet",
                 }
                 for row in result
-                if isinstance(row, dict) and row.get("url")
+                if isinstance(row, dict) and _matches_site(str(row.get("url") or ""), EXCHANGE_SITES[exchange])
             ], None
 
         outcomes = await asyncio.gather(*(discover(exchange) for exchange in selected))
@@ -507,7 +522,9 @@ class PublicSourceTools(Toolkit):
                 return [], {"platform": platform, "error": str(result.get("error") or "Search unavailable")}
             posts = []
             for row in result:
-                if not isinstance(row, dict) or not row.get("url"):
+                if not isinstance(row, dict) or not _matches_site(
+                    str(row.get("url") or ""), DISCUSSION_SITES[platform]
+                ):
                     continue
                 posts.append(
                     {
