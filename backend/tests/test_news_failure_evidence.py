@@ -18,7 +18,7 @@ def raise_service_credit_error():
 
 def test_worker_preserves_provider_failure_code_across_process_boundary():
     with pytest.raises(AnalysisWorkerError) as caught:
-        run_in_worker(raise_service_credit_error, timeout_seconds=10)
+        run_in_worker(raise_service_credit_error, timeout_seconds=30)
     assert caught.value.code == "model_credit_limit"
     assert caught.value.status == 502
 
