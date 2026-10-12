@@ -47,7 +47,7 @@ def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
 
     result = run_news_pipeline("BTC news", session_id="btc-thread", user_id="alice", db=InMemoryDb())
 
-    assert result.markdown == "I will research now." + COMPLETE_REPORT
+    assert result.markdown == COMPLETE_REPORT
     assert result.research_tools == ["search_news"]
     assert result.research_trace[0]["result"]["items"][0]["url"] == "https://example.com/btc"
     assert analyst.calls[0]["session_id"] == "btc-thread"
@@ -97,13 +97,13 @@ def test_pipeline_rejects_provider_error_content(monkeypatch) -> None:
         run_news_pipeline("ETH news", db=InMemoryDb(), asset="ETH")
 
 
-def test_pipeline_does_not_reject_completed_content_for_tool_markup(monkeypatch) -> None:
+def test_pipeline_rejects_unfinished_tool_markup(monkeypatch) -> None:
     analyst = FakeAgent(
         [RunOutput(content="<｜DSML｜ calls>curate_public_sources</｜DSML｜ calls>", status=RunStatus.completed)]
     )
     monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
-    result = run_news_pipeline("ETH news", db=InMemoryDb(), asset="ETH")
-    assert result.markdown == analyst.responses[0].content
+    with pytest.raises(ValueError, match="unfinished tool markup"):
+        run_news_pipeline("ETH news", db=InMemoryDb(), asset="ETH")
 
 
 def test_real_agno_async_dispatch_executes_research_tool(monkeypatch) -> None:
@@ -162,3 +162,24 @@ def test_pipeline_accepts_completed_markdown_without_exact_sections(monkeypatch,
     monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
     result = run_news_pipeline("BTC news", db=InMemoryDb())
     assert result.markdown == content
+
+
+def test_successful_evidence_is_sent_to_durable_sink_before_pipeline_returns(monkeypatch):
+    analyst = FakeAgent([RunOutput(content=COMPLETE_REPORT, status=RunStatus.completed)])
+    monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
+    evidence = []
+    result = run_news_pipeline("BTC", db=InMemoryDb(), evidence_sink=evidence.append)
+    assert evidence[0]["content"] == result.markdown
+    assert evidence[0]["reportQuality"]["unsupported_urls"] == []
+
+
+def test_provider_failure_evidence_survives_error_run(monkeypatch):
+    from news_agent.failures import NewsResearchError
+
+    analyst = FakeAgent([RunOutput(content="Provider returned error", status=RunStatus.error)])
+    analyst.model.last_failure = {"code": "model_credit_limit", "stage": "news", "message": "Key limit exceeded"}
+    monkeypatch.setattr("news_agent.pipeline.create_news_agent", lambda **_: analyst)
+    evidence = []
+    with pytest.raises(NewsResearchError, match="Key limit exceeded"):
+        run_news_pipeline("BTC", db=InMemoryDb(), evidence_sink=evidence.append)
+    assert evidence[0]["failure"]["code"] == "model_credit_limit"
