@@ -4,6 +4,8 @@ The news agent gathers more varied evidence after the late-September overhaul, b
 
 This audit made no application, model, scheduler, credential, or trading changes. Live checks called public-source collection directly without calling a model or triggering an automation run.
 
+After the audit, the user confirmed that failed agent runs were caused by the OpenRouter credit limit. Treat those outages as funding interruptions, not evidence that the news overhaul broke run delivery. The fetching, parsing, coverage, and report-quality findings below remain separate confirmed issues.
+
 ## Window and evidence
 
 The review covers 12 September 2026 at 08:40 IST through 12 October 2026 at 08:40 IST, exactly 30 days. Jobs are assigned to the window using `started_at`, falling back to `scheduled_for`, then `created_at`. Report creation time alone is unsuitable because some report rows inherit the date a future job was created.
