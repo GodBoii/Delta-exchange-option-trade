@@ -26,6 +26,12 @@ def test_legacy_settings_keep_both_assets_enabled():
     assert not automation_asset_enabled(settings, "ETH")
 
 
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+def test_projected_legacy_settings_allow_null_asset_flags(asset):
+    assert automation_asset_enabled({"asset_enabled": None}, asset)
+    assert not automation_asset_enabled({"enabled": False, "asset_enabled": None}, asset)
+
+
 async def test_asset_endpoint_rejects_regular_accounts_before_writing():
     mutation = AsyncMock()
     db = SimpleNamespace(profile=AsyncMock(return_value={"user_type": "user"}),
