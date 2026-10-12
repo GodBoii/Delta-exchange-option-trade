@@ -239,3 +239,19 @@ async def test_stale_publisher_uses_labelled_discovery_fallback(monkeypatch):
     result = json.loads(await PublicSourceTools(object(), ResearchBudget()).curate_public_sources("BTC", []))
     assert next(x for x in result["source_health"] if x["source"] == "Blockworks")["status"] == "stale"
     assert any(x["source"] == "Blockworks discovery" and x["kind"] == "discovery" for x in result["sources"])
+
+
+def test_high_impact_global_events_rank_before_low_impact_us_events():
+    source = Source("calendar", "calendar", "https://example.com/week.json")
+    cards = parse_calendar(
+        json.dumps(
+            [
+                {"title": "Minor US survey", "country": "USD", "impact": "Low", "date": "2026-10-12T12:30:00Z"},
+                {"title": "UK rate decision", "country": "GBP", "impact": "High", "date": "2026-10-14T12:00:00Z"},
+            ]
+        ).encode(),
+        source,
+        "now",
+    )
+    selected = select_source_cards(cards, source, datetime(2026, 10, 12, tzinfo=UTC), 48)
+    assert selected[0]["title"] == "UK rate decision"
