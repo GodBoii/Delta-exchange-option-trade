@@ -81,3 +81,18 @@ def test_dossier_redirects_and_canonical_tracking_urls_preserve_verified_claims(
     result = clean_report("## Summary\n\nFact [source](https://b.example/canonical?utm_source=test).", tools)
     assert result.omitted_blocks == 0
     assert "Fact" in result.markdown
+
+
+def test_discovery_page_cannot_become_verified_evidence_even_if_it_has_text():
+    url = "https://news.google.com/rss/articles/lead"
+    tools = [
+        {
+            "tool_name": "read_news_article",
+            "result": json.dumps(
+                {"ok": True, "article": {"requested_url": url, "final_url": url, "canonical_url": url}}
+            ),
+        }
+    ]
+    result = clean_report(f"## News\n\nUnsupported claim [discovery]({url}).", tools)
+    assert "Unsupported claim" not in result.markdown
+    assert url not in result.verified_urls
