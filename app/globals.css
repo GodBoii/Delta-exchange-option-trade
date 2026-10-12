@@ -6403,12 +6403,31 @@ time,
 
 .capital-body {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(0, 1.1fr) minmax(180px, 0.8fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
   gap: var(--s-5);
   align-items: start;
 }
 
-.capital-rule { display: grid; gap: var(--s-3); }
+.capital-rule { display: grid; gap: var(--s-3); align-content: start; }
+.capital-summary { display: grid; gap: var(--s-4); min-width: 0; }
+
+.capital-policy-fields {
+  display: grid;
+  gap: var(--s-4);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.capital-asset-fields {
+  display: grid;
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: var(--s-4);
+}
+
+.capital-asset-fields > .capital-rule { padding-top: var(--s-3); border-top: 1px solid var(--line); }
 
 /* Figures read as a column of aligned pairs, so the eye scans values down one
    edge instead of hunting across a definition list. */
@@ -6428,6 +6447,8 @@ time,
 }
 
 .capital-figures > div:last-child { border-bottom: 0; padding-bottom: 0; }
+.capital-figures > .capital-asset-figure { display: grid; gap: var(--s-2); }
+.capital-asset-figure dd { display: grid; gap: var(--s-2); }
 .capital-figures dt { color: var(--text-3); font-size: var(--t-xs); }
 
 .capital-figures dd {
