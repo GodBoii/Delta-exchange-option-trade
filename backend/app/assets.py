@@ -47,4 +47,5 @@ def enabled_assets(settings: Any) -> tuple[Asset, ...]:
 
 def automation_asset_enabled(settings: dict[str, Any], asset: Asset) -> bool:
     """Old settings enable both assets until the owner explicitly pauses one."""
-    return bool(settings.get("enabled", True) and settings.get("asset_enabled", {}).get(asset, True))
+    flags = settings.get("asset_enabled") or {}
+    return bool(settings.get("enabled", True) and flags.get(asset, True))
