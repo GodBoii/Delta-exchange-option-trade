@@ -59,6 +59,7 @@ def test_roles_are_least_privilege_and_password_rotation_applies():
 def test_roles_must_share_the_writer_database_and_differ_from_it():
     writer = os.environ["TEST_LOCAL_DATABASE_URL"]
     with pytest.raises(ValueError, match="writer's database"):
-        ensure_roles(writer, ai_url=role_url(writer, "x", "y").replace("/trade_cognition", "/other"))
+        target = urlsplit(role_url(writer, "x", "y"))
+        ensure_roles(writer, ai_url=urlunsplit(target._replace(path="/other")))
     with pytest.raises(ValueError, match="differ"):
         ensure_roles(writer, ai_url=writer)
