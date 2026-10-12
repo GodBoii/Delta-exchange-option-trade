@@ -48,6 +48,11 @@ def verified_evidence_urls(executions: list[Any]) -> set[str]:
                 continue
             article = item.get("article") or {}
             for key in ("requested_url", "final_url", "canonical_url"):
+                if (urlsplit(article.get(key) or "").hostname or "").rstrip(".") in {
+                    "news.google.com",
+                    "consent.google.com",
+                }:
+                    continue
                 if (
                     key == "canonical_url"
                     and urlsplit(article.get(key) or "").hostname
