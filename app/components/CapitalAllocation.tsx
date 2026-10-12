@@ -2,35 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CircleDollarSign, RefreshCw, Save } from "@/app/components/icons";
-import type { CapitalAllocationMode, CapitalOverview } from "@/lib/app-types";
+import type { CapitalOverview, CapitalSettings } from "@/lib/app-types";
 import { requestJson } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
-import { CAPITAL_MODE_OPTIONS, isCapitalAllocationMode } from "@/lib/capital";
+import { capitalSettingsError, normalizeCapitalSettings } from "@/lib/capital";
+import CapitalPolicyFields from "@/app/components/CapitalPolicyFields";
 import { useCurrency } from "@/app/components/currency";
 import {
-  IconSwap, InlineMessage, Meter, NumberField, Panel, PanelHeader, Select, Shimmer,
-  type NoticeHandler, type SelectOption
+  IconSwap, InlineMessage, Meter, Panel, PanelHeader, Shimmer,
+  type NoticeHandler
 } from "@/app/components/ui";
 
-const MODE_OPTIONS: SelectOption[] = CAPITAL_MODE_OPTIONS.map(option => ({ ...option }));
-
-/**
- * Capital policy.
- *
- * One account-wide budget, so this is a single panel inside Portfolio rather
- * than a destination of its own: the numbers it needs — total balance, what is
- * available — are the numbers already on this screen, and a whole route for one
- * setting made the operator leave the data to change the rule derived from it.
- *
- * The five facts read as one row of figures instead of two panels of definition
- * lists, because they are all read together when deciding the rule and none of
- * them is worth a heading.
- */
+/** Account default, BTC/ETH budgets and caps alongside live wallet previews. */
 export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandler }) {
-  const { currencyCode, convertFromUsd, convertToUsd, formatMoney } = useCurrency();
+  const { formatMoney } = useCurrency();
   const [overview, setOverview] = useState<CapitalOverview | null>(null);
-  const [mode, setMode] = useState<CapitalAllocationMode>("half_balance");
-  const [capitalAmount, setCapitalAmount] = useState(1);
+  const [draft, setDraft] = useState<CapitalSettings>(() => normalizeCapitalSettings({ allocationMode: "half_balance" }));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -40,21 +27,21 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
     try {
       const data = await requestJson<CapitalOverview>("/api/capital/settings");
       setOverview(data);
-      setMode(data.settings.allocationMode);
-      setCapitalAmount(convertFromUsd(data.settings.capitalAmount ?? 1));
+      setDraft(normalizeCapitalSettings(data.settings));
       setError("");
     } catch (loadError) {
       setError(errorMessage(loadError, "Capital settings could not be loaded."));
     } finally {
       setLoading(false);
     }
-  }, [convertFromUsd]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
   async function save() {
-    if (mode === "fixed_amount" && capitalAmount <= 0) {
-      setError("Enter a fixed capital amount greater than zero.");
+    const invalid = capitalSettingsError(draft);
+    if (invalid) {
+      setError(invalid);
       return;
     }
     setSaving(true);
@@ -62,12 +49,10 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
     try {
       const data = await requestJson<CapitalOverview>("/api/capital/settings", {
         method: "PUT",
-        body: JSON.stringify({
-          allocationMode: mode,
-          capitalAmount: mode === "fixed_amount" ? convertToUsd(capitalAmount) : null
-        })
+        body: JSON.stringify({ ...draft, expectedRevision: overview?.capitalRevision ?? null })
       });
       setOverview(data);
+      setDraft(normalizeCapitalSettings(data.settings));
       onNotice({
         tone: "ok",
         text: `Capital policy saved. Up to ${data.maximumConcurrentStrategies} strategies can hold allocations.`
@@ -81,12 +66,9 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
 
   const dirty = overview === null
     ? false
-    : overview.settings.allocationMode !== mode
-      || (mode === "fixed_amount" && Math.abs((overview.settings.capitalAmount ?? 0) - convertToUsd(capitalAmount)) > 0.00001);
+    : JSON.stringify(normalizeCapitalSettings(overview.settings)) !== JSON.stringify(normalizeCapitalSettings(draft));
 
   const pending = loading ? "Loading" : "Unavailable";
-  const modeOptions = MODE_OPTIONS.map(option => option.value === "fixed_amount"
-    ? { ...option, label: `Fixed ${currencyCode} amount` } : option);
   const allocationsFull = overview?.availableAllocations === 0;
 
   return (
@@ -111,7 +93,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
             {/* The save control only exists once there is an unsaved change, so a
                 settled policy does not present an action with nothing to do. */}
             {dirty && (
-              <button type="button" className="button primary small" onClick={() => void save()} disabled={saving}>
+              <button type="button" className="button primary small" onClick={() => void save()} disabled={saving || loading || !!capitalSettingsError(draft)}>
                 <Save aria-hidden="true" />{saving ? <Shimmer>Saving</Shimmer> : "Save"}
               </button>
             )}
@@ -120,62 +102,52 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
       />
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
+      {dirty && capitalSettingsError(draft) && <InlineMessage tone="error">{capitalSettingsError(draft)}</InlineMessage>}
 
       <div className="capital-body">
-        <div className="capital-rule">
-          <Select
-            label="Budget per strategy"
-            value={mode}
-            options={modeOptions}
-            onChange={value => { if (isCapitalAllocationMode(value)) setMode(value); }}
-            hint={`Calculated from the total USD balance. Displayed in ${currencyCode}, then capped by the balance actually available.`}
-          />
-          {mode === "fixed_amount" && (
-            <NumberField
-              label="Amount"
-              value={capitalAmount}
-              min={0.01}
-              step={0.01}
-              suffix={currencyCode}
-              invalid={capitalAmount <= 0}
-              onChange={setCapitalAmount}
+        <CapitalPolicyFields value={draft} onChange={setDraft} disabled={loading || saving || !overview} />
+
+        <div className="capital-summary">
+          <dl className="capital-figures">
+            <div>
+              <dt>Total balance</dt>
+              <dd>{overview ? formatMoney(overview.wallet.totalBalance) : pending}</dd>
+            </div>
+            <div>
+              <dt>Available now</dt>
+              <dd>{overview ? formatMoney(overview.wallet.availableBalance) : pending}</dd>
+            </div>
+            <div>
+              <dt>Overall capital cap</dt>
+              <dd>{overview ? formatMoney(overview.overallCapitalLimit) : pending}</dd>
+            </div>
+            <div>
+              <dt>Reserved across wallet</dt>
+              <dd>{overview ? formatMoney(overview.reservedBudget) : pending}</dd>
+            </div>
+            {overview && (["BTC", "ETH"] as const).map(asset => <div className="capital-asset-figure" key={asset}>
+              <dt>{asset} budget per strategy</dt><dd>{formatMoney(overview.assetBudgets[asset].nominalBudgetPerStrategy)}
+              <small className="field-hint">Next entry {formatMoney(overview.assetBudgets[asset].availableBudgetForNextStrategy)} ·
+                Reserved {formatMoney(overview.assetBudgets[asset].reservedBudget)} ·
+                Cap {formatMoney(overview.assetBudgets[asset].capitalLimit)}</small></dd>
+            </div>)}
+          </dl>
+
+          <div className="capital-allocations">
+            <Meter
+              value={overview?.occupiedAllocations ?? 0}
+              max={overview?.maximumConcurrentStrategies ?? 2}
+              label="Capital allocations currently in use"
+              tone={allocationsFull ? "warning" : "positive"}
             />
-          )}
-        </div>
-
-        <dl className="capital-figures">
-          <div>
-            <dt>Total balance</dt>
-            <dd>{overview ? formatMoney(overview.wallet.totalBalance) : pending}</dd>
+            <p>
+              {overview === null
+                ? "Reading your allocation state."
+                : allocationsFull
+                  ? "Every allocation is held. No further entry can start until one is released."
+                  : `${overview.availableAllocations} strategy slots free. Wallet funds and capital caps also apply.`}
+            </p>
           </div>
-          <div>
-            <dt>Available now</dt>
-            <dd>{overview ? formatMoney(overview.wallet.availableBalance) : pending}</dd>
-          </div>
-          <div>
-            <dt>Budget per strategy</dt>
-            <dd>{overview ? formatMoney(overview.nominalBudgetPerStrategy) : pending}</dd>
-          </div>
-          <div>
-            <dt>Next strategy can use</dt>
-            <dd>{overview ? formatMoney(overview.availableBudgetForNextStrategy) : pending}</dd>
-          </div>
-        </dl>
-
-        <div className="capital-allocations">
-          <Meter
-            value={overview?.occupiedAllocations ?? 0}
-            max={overview?.maximumConcurrentStrategies ?? 2}
-            label="Capital allocations currently in use"
-            tone={allocationsFull ? "warning" : "positive"}
-          />
-          <p>
-            {overview === null
-              ? "Reading your allocation state."
-              : allocationsFull
-                ? "Every allocation is held. No further entry can start until one is released."
-                : `${overview.availableAllocations} of ${overview.maximumConcurrentStrategies} allocations free for a new entry.`}
-          </p>
         </div>
       </div>
     </Panel>
