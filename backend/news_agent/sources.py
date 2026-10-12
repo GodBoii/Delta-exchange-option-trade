@@ -125,8 +125,8 @@ def select_source_cards(
         impact = {"High": 0, "Medium": 1, "Low": 2, "Holiday": 3}
         recent.sort(
             key=lambda item: (
-                item.get("country") != "USD",
                 impact.get(item.get("impact"), 2),
+                item.get("country") != "USD",
                 abs((datetime.fromisoformat(item["published_at"]) - now).total_seconds()),
             )
         )
