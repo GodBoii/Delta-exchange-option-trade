@@ -9,6 +9,7 @@ from agno.models.openrouter import OpenRouter
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
+from .failures import ResearchOpenRouter
 from .search import WebSearchTools
 from .sources import PublicSourceTools
 from .tools import NewsResearchTools
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRouter:
     api_key = settings.require_api_key() if require_api_key else settings.openrouter_api_key
-    return OpenRouter(
+    return ResearchOpenRouter(
         id=settings.model_id,
         api_key=api_key,
         supports_native_structured_outputs=False,
@@ -79,6 +80,13 @@ def create_news_agent(
             "the Google News link is a discovery link, not the publisher's article URL.",
             "Treat search results with no reliable publication date as undated. Open the original page before "
             "describing a post or announcement as current.",
+            "Source health distinguishes blocked, empty, stale and available feeds. Discovery fallbacks and "
+            "social snippets are leads only. Do not put their claims in positive factors or risks until an "
+            "original page has been read successfully. Never cite a Google News URL.",
+            "If a tool reports a call limit or research deadline, stop calling that tool and write the report. "
+            "Reuse evidence already read. Reserve article reads for primary sources and material claims.",
+            "Use the shared official calendar evidence for both BTC and ETH. A scheduled time does not prove "
+            "a release will occur. Check official delay notices; an unverified delay remains uncertain.",
         ]
         tools = _create_research_tools(settings, research_budget or ResearchBudget())
     else:
@@ -106,6 +114,10 @@ def create_news_agent(
                 "with uncertainty."
             ),
             "Support material claims with clickable Markdown links to the exact sources you read.",
+            "Start directly with the report's first Markdown heading. Do not include planning, progress "
+            "commentary, promises to investigate, or tool markup. Only cite successful original reads or "
+            "retrieved calendar entries. Unavailable originals belong in evidence gaps, without repeating "
+            "their unverified numerical claims as facts.",
             "Call an event corroborated only when at least two genuinely independent sources support it.",
             "If no event is sufficiently verified, plainly explain the evidence gaps.",
             "Deduplicate syndicated coverage and do not count copied stories as independent confirmation.",
@@ -137,9 +149,7 @@ def create_news_agent(
             f"and assesses possible {asset} volatility and directional transmission channels."
         ),
         instructions=instructions,
-        expected_output=(
-            "A customer-facing Markdown market report with linked evidence and explicit uncertainty."
-        ),
+        expected_output=("A customer-facing Markdown market report with linked evidence and explicit uncertainty."),
         db=session_db,
         add_history_to_context=True,
         num_history_runs=settings.history_runs,
