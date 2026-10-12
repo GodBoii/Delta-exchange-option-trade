@@ -234,3 +234,31 @@ def test_copied_bodies_are_collapsed_but_independent_reporting_remains():
     assert len(result) == 2
     assert result[0]["article"]["duplicate_sources"] == ["https://b.com"]
     assert result[1]["article"]["canonical_url"] == "https://c.com"
+
+
+@pytest.mark.asyncio
+async def test_empty_search_is_not_a_transport_error(monkeypatch):
+    from agno.tools.websearch import WebSearchTools as NativeSearch
+    from ddgs.exceptions import DDGSException
+
+    def empty(*_, **__):
+        raise DDGSException("No results found.")
+
+    monkeypatch.setattr(NativeSearch, "web_search", empty)
+    assert json.loads(await WebSearchTools().web_search("public news")) == []
+
+
+@pytest.mark.asyncio
+async def test_site_search_can_recover_indexed_originals_without_date_filter(monkeypatch):
+    from agno.tools.websearch import WebSearchTools as NativeSearch
+    from ddgs.exceptions import DDGSException
+
+    def search(self, *_, **__):
+        if self.timelimit:
+            raise DDGSException("No results found.")
+        return json.dumps([{"url": "https://official.example/notice", "title": "Official notice"}])
+
+    monkeypatch.setattr(NativeSearch, "web_search", search)
+    result = json.loads(await WebSearchTools(timelimit="w").web_search("site:official.example Bitcoin"))
+    assert result[0]["url"] == "https://official.example/notice"
+    assert result[0]["date"] is None
