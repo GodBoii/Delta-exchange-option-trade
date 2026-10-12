@@ -101,7 +101,9 @@ class WebSearchTools(AgnoWebSearchTools):
                         try:
                             fallback = AgnoWebSearchTools(timeout=8, fixed_max_results=limit, timelimit=None)
                             async with asyncio.timeout(self.budget.remaining(10)):
-                                rows = json.loads(await asyncio.to_thread(fallback.web_search, query, max_results=limit))
+                                rows = json.loads(
+                                    await asyncio.to_thread(fallback.web_search, query, max_results=limit)
+                                )
                         except (DDGSException, TimeoutError, ValueError) as fallback_error:
                             reason = str(fallback_error) or type(fallback_error).__name__
                             if reason.casefold().rstrip(".") != "no results found":
