@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/automation", tags=["automation"])
 news_analyzer_url = "http://news-analyzer:8002"
 MODEL_ID = "deepseek/deepseek-v4.1-flash"
 FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
-FIXED_RUN_CATCH_UP = timedelta(minutes=5)
+FIXED_RUN_CATCH_UP = timedelta(minutes=10)
 FIXED_RUN_SYNC_SECONDS = 60.0
 CHART_PRUNE_SECONDS = 6 * 60 * 60.0
 MAX_AUTOMATION_RUN_LATENESS = timedelta(minutes=10)
@@ -54,6 +54,7 @@ CREDIT_LIMIT_MESSAGE = "Analysis paused because the model provider's credit or k
 NO_TRADE_SLOTS_MESSAGE = "No trade slots are available"
 PENDING_CAPACITY_MESSAGE = "Waiting for capacity committed to another review or entry"
 UNKNOWN_CAPACITY_MESSAGE = "Trade slot availability could not be checked"
+ANALYZER_UNAVAILABLE_MESSAGE = "Waiting for the analysis service to become ready"
 # Errors this module writes itself. Anything else in a run row came from an exception or
 # the analyzer and can carry provider, model or infrastructure detail.
 PUBLIC_RUN_ERRORS = frozenset({
@@ -62,6 +63,7 @@ PUBLIC_RUN_ERRORS = frozenset({
     NO_TRADE_SLOTS_MESSAGE,
     PENDING_CAPACITY_MESSAGE,
     UNKNOWN_CAPACITY_MESSAGE,
+    ANALYZER_UNAVAILABLE_MESSAGE,
     MARKET_AUTH_ERROR_MESSAGE,
     "Final report unavailable",
     "Automation was turned off",
@@ -549,12 +551,17 @@ async def has_automation_trade_capacity(
 
 
 async def defer_automation_run(db: Database, user_id: str, run_id: str, *, status: str, message: str) -> None:
+    reason = (
+        "analysis_capacity_pending" if message == PENDING_CAPACITY_MESSAGE
+        else "automation_service_unavailable" if message == ANALYZER_UNAVAILABLE_MESSAGE
+        else "capital_capacity_unavailable"
+    )
     await db.update(
         "automation_agent_runs",
-        {"status": "scheduled", "started_at": None, "error": message},
+        {"status": "scheduled", "started_at": None, "error": message,
+         "last_deferred_reason": reason, "last_deferred_at": iso_now()},
         {"id": f"eq.{run_id}", "user_id": f"eq.{user_id}", "status": f"eq.{status}", "outcome": "is.null"},
     )
-    reason = "analysis_capacity_pending" if message == PENDING_CAPACITY_MESSAGE else "capital_capacity_unavailable"
     logger.info("Automation admission deferred run_id=%s user_id=%s reason=%s", run_id, user_id, reason)
 
 
@@ -861,6 +868,26 @@ class AutomationScheduler:
         self.recovered = False
         self.last_market_watch_sync = 0.0
         self.market_watch_client: httpx.AsyncClient | None = None
+        self.last_started_at: str | None = None
+        self.last_completed_at: str | None = None
+        self.last_error: str | None = None
+        self.last_completed_monotonic: float | None = None
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(getattr(self.db.settings, "trading_writer_enabled", True)
+                            and getattr(self.db.settings, "automation_scheduler_enabled", True)),
+            "running": bool(self.task and not self.task.done()),
+            "pollSeconds": self.poll_seconds,
+            "lastStartedAt": self.last_started_at,
+            "lastCompletedAt": self.last_completed_at,
+            "lastError": self.last_error,
+            "healthy": bool(self.task and not self.task.done() and self.last_error is None
+                            and self.last_completed_monotonic is not None
+                            and time.monotonic() - self.last_completed_monotonic < max(180, self.poll_seconds * 3)),
+            "activeAnalyses": len(self.running_tasks - self.recheck_tasks),
+            "activeRechecks": len(self.recheck_tasks),
+        }
 
     def start(self) -> None:
         self.task = asyncio.create_task(self.run(), name="automation-agent-scheduler")
@@ -879,6 +906,7 @@ class AutomationScheduler:
     async def run(self) -> None:
         logger.info("Automation scheduler started; polling every %.1f seconds", self.poll_seconds)
         while not self.stop_event.is_set():
+            self.last_started_at = iso_now()
             try:
                 if not self.recovered:
                     interrupted = await self.db.select(
@@ -917,7 +945,11 @@ class AutomationScheduler:
                 if monotonic_now - self.last_chart_prune >= CHART_PRUNE_SECONDS:
                     self.last_chart_prune = monotonic_now
                     await self._prune_charts()
+                self.last_completed_at = iso_now()
+                self.last_completed_monotonic = time.monotonic()
+                self.last_error = None
             except Exception:
+                self.last_error = "Automation scheduler polling cycle failed"
                 logger.exception("Automation scheduler polling cycle failed")
             with suppress(TimeoutError):
                 await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_seconds)
@@ -1005,7 +1037,8 @@ class AutomationScheduler:
                     "automation_agent_runs",
                     {
                         "select": (
-                            "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id,asset"
+                            "id,user_id,trigger,reason,signals_to_inspect,scheduled_for,strategy_proposal_id,asset,"
+                            "last_deferred_reason,last_deferred_at"
                         ),
                         "status": "eq.scheduled",
                         "trigger": trigger_filter,
@@ -1039,7 +1072,8 @@ class AutomationScheduler:
             if datetime.now(UTC) - scheduled_for > MAX_AUTOMATION_RUN_LATENESS:
                 await self.db.update(
                     "automation_agent_runs",
-                    {"status": "cancelled", "completed_at": iso_now(), "error": "Scheduled review became stale"},
+                    {"status": "cancelled", "completed_at": iso_now(), "error": "Scheduled review became stale",
+                     "expiry_reason": row.get("last_deferred_reason") or "start_window_expired"},
                     {"id": f"eq.{row['id']}", "status": "eq.scheduled"},
                 )
                 continue
@@ -1066,6 +1100,8 @@ class AutomationScheduler:
                 try:
                     await require_analyzer_ready()
                 except AppError as error:
+                    await defer_automation_run(self.db, str(row["user_id"]), str(row["id"]),
+                                               status="scheduled", message=ANALYZER_UNAVAILABLE_MESSAGE)
                     logger.warning("Scheduled automation runs deferred: %s", error.message)
                     return
                 analyzer_ready = True
