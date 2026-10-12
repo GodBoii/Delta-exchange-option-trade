@@ -12,12 +12,28 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class AnalysisWorkerError(RuntimeError):
+    def __init__(self, message: str, code: str | None = None, status: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
 def _execute(connection: Connection, function: Callable, args: tuple) -> None:
     try:
         connection.send((True, function(*args)))
     except Exception as exc:
         logger.exception("Analysis worker failed")
-        connection.send((False, str(exc) or type(exc).__name__))
+        connection.send(
+            (
+                False,
+                {
+                    "message": str(exc) or type(exc).__name__,
+                    "code": getattr(exc, "code", None),
+                    "status": getattr(exc, "status", None),
+                },
+            )
+        )
     finally:
         connection.close()
 
@@ -38,7 +54,7 @@ def run_in_worker(function: Callable, *args: Any, timeout_seconds: float) -> Any
         except EOFError as exc:
             raise RuntimeError("Analysis worker exited without a result") from exc
         if not success:
-            raise RuntimeError(result)
+            raise AnalysisWorkerError(result["message"], result.get("code"), result.get("status"))
         return result
     finally:
         receiver.close()
