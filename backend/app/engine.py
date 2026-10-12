@@ -17,10 +17,8 @@ from .assets import automation_asset_enabled, strategy_asset
 from .auth import credentials_for_user
 from .capital import (
     CapitalPolicy,
-    capital_budget,
     has_available_capital_slot,
-    maximum_concurrent_strategies,
-    percentage_concurrency_limit,
+    policy_budget,
     policy_from_row,
 )
 from .config import Settings
@@ -283,20 +281,21 @@ class TradingEngine:
     async def capital_policy(self, user_id: str) -> CapitalPolicy:
         return policy_from_row(await self.application_data.request("library:getCapital", {"userId": user_id}))
 
-    async def has_available_trade_slot(self, user_id: str) -> bool:
+    async def has_available_trade_slot(self, user_id: str, asset: str = "BTC") -> bool:
         """Check capacity without reserving capital or sending exchange orders."""
         capacity = await self.db.rpc("get_strategy_capital_capacity", {"p_user_id": user_id})
         if not capacity["connected"]:
             return False
         policy = await self.capital_policy(user_id)
-        maximum = percentage_concurrency_limit(policy.allocation_mode)
+        maximum = policy.concurrency_limit()
         if maximum is not None and len(capacity["occupiedSlots"]) >= maximum:
             return False
         client = await self.client_for_user(user_id)
         try:
             available, total = await self.usd_capital(client)
             return has_available_capital_slot(
-                available, total, policy, capacity["occupiedSlots"], Decimal(capacity["reservedBudget"])
+                available, total, policy, capacity["occupiedSlots"], Decimal(capacity["reservedBudget"]), asset,
+                {key: Decimal(value) for key, value in capacity.get("reservedByAsset", {}).items()},
             )
         finally:
             await client.close()
@@ -310,7 +309,7 @@ class TradingEngine:
         if not snapshot["eligible"]:
             return "full"
         policy = policy_from_row(snapshot["capital"])
-        maximum = percentage_concurrency_limit(policy.allocation_mode)
+        maximum = policy.concurrency_limit()
         if maximum is not None and snapshot["occupied"] >= maximum:
             return "full"
         client = await self.client_for_user(user_id)
@@ -324,13 +323,15 @@ class TradingEngine:
         return await self.application_data.saved_strategies(user_id, strategy_id)
 
     async def save_capital_policy(
-        self, user_id: str, mode: str, amount: float | None, *, actor_id: str | None = None
+        self, user_id: str, mode: str, amount: float | None, *, actor_id: str | None = None,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         """Save an account's per-strategy budget. ``actor_id`` marks an owner change and audits it."""
         payload = {
             "user_id": user_id,
             "allocation_mode": mode,
             "capital_amount": str(amount) if mode == "fixed_amount" else None,
+            **(extensions or {}),
         }
         args: dict[str, Any] = {"value": payload}
         if actor_id is not None:
@@ -377,12 +378,7 @@ class TradingEngine:
         available, total_balance = wallet or await self.usd_capital(client)
         if available <= 0:
             raise AppError(409, "No available Delta balance can fund this strategy", "automation_balance_unavailable")
-        allocation = capital_budget(
-            available,
-            total_balance,
-            policy.allocation_mode,
-            policy.capital_amount,
-        )
+        allocation = policy_budget(available, total_balance, policy, definition.instrument.underlying)
         usable_capital = allocation * Decimal("0.98")
         product_task = asyncio.gather(*(self.product_spec(client, str(leg["productSymbol"])) for leg in resolved))
         short_legs = [(index, leg) for index, leg in enumerate(resolved) if leg["position"] == "sell"]
@@ -508,15 +504,18 @@ class TradingEngine:
         *,
         wallet: tuple[Decimal, Decimal],
         policy: CapitalPolicy,
+        asset: str = "BTC",
     ) -> dict[str, Any]:
         extra = {}
         if getattr(self.db, "runtime", None) is not None:
             available, total = wallet
             extra = {
                 "p_budget": format(
-                    capital_budget(available, total, policy.allocation_mode, policy.capital_amount), "f"
+                    policy_budget(available, total, policy, asset), "f"
                 ),
+                "p_policy": policy.as_json(),
                 "p_total_balance": format(total, "f"),
+                "p_available_balance": format(available, "f"),
                 "p_max_entry_lateness_seconds": getattr(self.settings, "max_entry_lateness_seconds", 180),
             }
         reservation = await self.db.rpc(
@@ -948,21 +947,19 @@ class TradingEngine:
                 raise AppError(
                     409, "No available Delta balance can fund this strategy", "automation_balance_unavailable"
                 )
-            maximum_slots = maximum_concurrent_strategies(
-                total_balance,
-                policy.allocation_mode,
-                policy.capital_amount,
-            )
+            maximum_slots = policy.concurrency_limit(total_balance)
             try:
                 reservation = await self.reserve_capital_slot(
-                    str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy
+                    str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy,
+                    asset=definition.instrument.underlying,
                 )
             except AppError as error:
                 if error.code not in {"capital_slots_full", "capital_reserved"}:
                     raise
                 await self.reconcile_attention_runs(str(row["user_id"]), client)
                 reservation = await self.reserve_capital_slot(
-                    str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy
+                    str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy,
+                    asset=definition.instrument.underlying,
                 )
             resolved = await self.resolve_strategy(client, definition)
             if definition.expiryPolicy == "auto":
@@ -989,12 +986,7 @@ class TradingEngine:
             validate_entry_policy(definition, resolved)
             resolved = await self.apply_automatic_lots(client, definition, resolved, policy, wallet)
             exclusive = getattr(client, "order_journal", None) is not None
-            allocated_budget = capital_budget(
-                available,
-                total_balance,
-                policy.allocation_mode,
-                policy.capital_amount,
-            )
+            allocated_budget = policy_budget(available, total_balance, policy, definition.instrument.underlying)
             try:
                 await self.claim_strategy(
                     strategy_id,
@@ -1013,6 +1005,8 @@ class TradingEngine:
                         "capital_budget": str(allocated_budget),
                         "capital_policy_json": {
                             **policy.as_json(),
+                            "asset": definition.instrument.underlying,
+                            "effectiveRule": policy.for_asset(definition.instrument.underlying).as_json(),
                             "maximumConcurrentStrategies": maximum_slots,
                             "totalBalanceAtEntry": str(total_balance),
                             "availableBalanceAtEntry": str(available),
