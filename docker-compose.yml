@@ -74,12 +74,13 @@ services:
       SCHEDULER_ENABLED: "true"
       SCHEDULER_POLL_SECONDS: "2"
       MAX_ENTRY_LATENESS_SECONDS: "180"
+      TRADING_LOG_DIR: /app/state/logs
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped
     init: true
     healthcheck:
-      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)); s=data['scheduler']; assert data['success'] and (not s['enabled'] or (s['running'] and s['lastCompletedAt'] and not s['lastError']))"]
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)); s=data['scheduler']; a=data['automationScheduler']; assert data['success'] and (not s['enabled'] or (s['running'] and s['lastCompletedAt'] and not s['lastError'])) and (not a['enabled'] or a['healthy'])"]
       interval: 30s
       timeout: 5s
       start_period: 15s
