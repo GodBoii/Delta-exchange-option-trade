@@ -4,7 +4,8 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from agno.db.base import BaseDb
@@ -15,6 +16,8 @@ from .agent import create_news_agent
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
+from .failures import NewsResearchError, provider_failure
+from .report_quality import clean_report
 
 logger = logging.getLogger(__name__)
 BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
@@ -69,11 +72,12 @@ def _trace_result(name: str, value: Any) -> dict[str, Any]:
             "items": [
                 {
                     key: (item.get(key)[:200] if key == "excerpt" and isinstance(item.get(key), str) else item.get(key))
-                    for key in ("source", "title", "url", "published_at", "excerpt")
+                    for key in ("source", "title", "url", "published_at", "excerpt", "older_than_window", "kind")
                 }
-                for item in (result.get("sources") or [])[:40]
+                for item in (result.get("sources") or [])[:160]
             ],
             "errors": result.get("errors") or [],
+            "source_health": result.get("source_health") or [],
         }
     if name == "search_public_discussion":
         return {
@@ -101,6 +105,8 @@ def _trace_result(name: str, value: Any) -> dict[str, Any]:
                 {
                     "ok": item.get("ok"),
                     "url": article.get("final_url") or item.get("url"),
+                    "requested_url": article.get("requested_url"),
+                    "canonical_url": article.get("canonical_url"),
                     "title": article.get("title"),
                     "published_at": article.get("published_at"),
                     "feed_published_at": article.get("feed_published_at"),
@@ -121,6 +127,8 @@ def _trace_result(name: str, value: Any) -> dict[str, Any]:
         return {
             "ok": result.get("ok"),
             "url": article.get("final_url") or result.get("url"),
+            "requested_url": article.get("requested_url"),
+            "canonical_url": article.get("canonical_url"),
             "title": article.get("title"),
             "published_at": article.get("published_at"),
             "feed_published_at": article.get("feed_published_at"),
@@ -158,6 +166,7 @@ class NewsPipelineResult:
     model_id: str
     session_id: str
     user_id: str
+    quality: dict[str, Any] = field(default_factory=dict)
 
     @property
     def markdown(self) -> str | None:
@@ -183,6 +192,7 @@ def run_news_pipeline(
     debug_mode: bool = True,
     asset: str = "BTC",
     focus_query: str = BTC_FOCUS_QUERY,
+    evidence_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> NewsPipelineResult:
     """Let the analyst choose source collection, web searches, and article reads."""
     settings = settings or NewsAgentSettings.load()
@@ -191,6 +201,8 @@ def run_news_pipeline(
     owns_db = db is None
     session_db = db or create_session_db(settings)
     started_at = time.perf_counter()
+    report_response = None
+    evidence_written = False
     try:
         analyst = create_news_agent(
             settings=settings,
@@ -221,8 +233,37 @@ def run_news_pipeline(
             or report_response.content.strip().casefold()
             in {"provider returned error", "the operation was aborted", "request timed out", "request timed out."}
         ):
-            raise RuntimeError("News synthesis returned no report")
-        report_response.content = report_response.content.strip()
+            failure = getattr(analyst.model, "last_failure", None) or {
+                "code": "news_synthesis_failed",
+                "stage": "news",
+                "message": "News synthesis returned no report",
+            }
+            raise NewsResearchError(
+                failure, research_trace(report_response) if isinstance(report_response, RunOutput) else []
+            )
+        cleaned = clean_report(report_response.content, report_response.tools or [])
+        report_response.content = cleaned.markdown
+        quality = {
+            "omitted_blocks": cleaned.omitted_blocks,
+            "unsupported_urls": list(cleaned.unsupported_urls),
+            "verified_urls": list(cleaned.verified_urls),
+        }
+        if evidence_sink:
+            evidence_written = True
+            evidence_sink(
+                {
+                    "agentId": report_response.agent_id or "news-intelligence-analyst",
+                    "agentName": "News Intelligence Analyst",
+                    "runId": report_response.run_id,
+                    "model": analyst.model.id,
+                    "status": str(report_response.status),
+                    "content": cleaned.markdown,
+                    "createdAt": report_response.created_at,
+                    "researchTools": _tool_names(report_response),
+                    "researchTrace": research_trace(report_response),
+                    "reportQuality": quality,
+                }
+            )
         logger.info(
             "News pipeline completed run_id=%s elapsed_ms=%d tools=%s",
             report_response.run_id,
@@ -234,8 +275,25 @@ def run_news_pipeline(
             model_id=analyst.model.id,
             session_id=effective_session_id,
             user_id=effective_user_id,
+            quality=quality,
         )
-    except Exception:
+    except Exception as error:
+        if evidence_sink and not evidence_written:
+            failure = (
+                error.failure
+                if isinstance(error, NewsResearchError)
+                else provider_failure(error, settings.openrouter_api_key)
+            )
+            evidence_sink(
+                {
+                    "agentId": "news-intelligence-analyst",
+                    "agentName": "News Intelligence Analyst",
+                    "status": "error",
+                    "content": None,
+                    "failure": failure,
+                    "researchTrace": research_trace(report_response) if isinstance(report_response, RunOutput) else [],
+                }
+            )
         logger.exception("News pipeline failed session_id=%s user_id=%s", effective_session_id, effective_user_id)
         raise
     finally:
