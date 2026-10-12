@@ -334,6 +334,10 @@ def parse_listing(body: bytes, source: Source, retrieved: str) -> list[dict[str,
             or link.find_parent(class_=re.compile(r"views-row|featured-stories__item"))
             or link.parent
         )
+        if source.name == "Treasury releases":
+            heading = link.find_parent(["h2", "h3"])
+            if heading:
+                container = heading.parent
         if container:
             dated = container.find("time")
             if dated:
@@ -593,7 +597,7 @@ class PublicSourceTools(Toolkit):
                 try:
                     async with semaphore, asyncio.timeout(self.budget.remaining(25)):
                         snapshot = await SOURCE_CACHE.get(
-                            (source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
+                            (2, source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
                         )
                 except TimeoutError:
                     snapshot = SourceSnapshot([], retrieved, "Source collection deadline", "timeout", 120)
@@ -608,6 +612,8 @@ class PublicSourceTools(Toolkit):
                     if selected and all(item.get("older_than_window") for item in selected)
                     else "no_current_items"
                     if not selected
+                    else "undated"
+                    if all(item.get("publication_status") == "undated" for item in selected)
                     else "available"
                 )
                 health.append(
