@@ -96,3 +96,7 @@ def test_discovery_page_cannot_become_verified_evidence_even_if_it_has_text():
     result = clean_report(f"## News\n\nUnsupported claim [discovery]({url}).", tools)
     assert "Unsupported claim" not in result.markdown
     assert url not in result.verified_urls
+    alias = "https://short.example/discovery"
+    tools[0]["result"] = json.dumps({"ok": True, "article": {"requested_url": alias, "final_url": url}})
+    result = clean_report(f"## News\n\nUnsupported claim [discovery]({alias}).", tools)
+    assert alias not in result.verified_urls
