@@ -91,6 +91,7 @@ DISCOVERY_FALLBACKS = {
     "Binance announcements": "site:binance.com/en/support/announcement/detail/",
     "CFTC releases": "site:cftc.gov/PressRoom/PressReleases crypto OR derivatives",
     "Polymarket": "site:polymarket.com/event/ Bitcoin OR Ethereum",
+    "Blockworks": "site:blockworks.com/news Bitcoin OR Ethereum",
 }
 
 
@@ -631,7 +632,7 @@ class PublicSourceTools(Toolkit):
                         or None,
                     }
                 )
-                if snapshot.error and source.name in DISCOVERY_FALLBACKS:
+                if (snapshot.error or status == "stale") and source.name in DISCOVERY_FALLBACKS:
                     # Public search is an alternate discovery route, never an access-control bypass.
                     query = DISCOVERY_FALLBACKS[source.name]
                     params = urlencode({"q": f"{query} when:7d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
