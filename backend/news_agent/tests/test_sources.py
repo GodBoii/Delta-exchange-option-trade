@@ -201,3 +201,17 @@ def test_primary_source_catalog_includes_missing_agencies_and_exchange_feeds():
         "Delta announcements",
         "The Block",
     } <= names
+
+
+def test_treasury_listing_uses_each_release_date_and_skips_navigation():
+    from news_agent.sources import parse_listing
+
+    cards = parse_listing(
+        b'<a href="/news/press-releases/statements-remarks">Remarks and Statements</a>'
+        b'<div><p>October 9, 2026</p><h3><a href="/news/press-releases/sb0654/">'
+        b"New official policy announcement</a></h3></div>",
+        Source("Treasury releases", "official_listing", "https://home.treasury.gov/news/press-releases"),
+        "now",
+    )
+    assert len(cards) == 1
+    assert cards[0]["published_at"] == "2026-10-09T00:00:00+00:00"
