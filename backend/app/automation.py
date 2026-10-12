@@ -51,6 +51,7 @@ MAX_PARALLEL_CAPACITY_CHECKS = 8
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
 ANALYSIS_FAILED_MESSAGE = "The analysis failed. No strategy was activated."
+CREDIT_LIMIT_MESSAGE = "Analysis paused because the model provider's credit or key limit was reached."
 NO_TRADE_SLOTS_MESSAGE = "No trade slots are available"
 PENDING_CAPACITY_MESSAGE = "Waiting for capacity committed to another review or entry"
 UNKNOWN_CAPACITY_MESSAGE = "Trade slot availability could not be checked"
@@ -58,6 +59,7 @@ UNKNOWN_CAPACITY_MESSAGE = "Trade slot availability could not be checked"
 # the analyzer and can carry provider, model or infrastructure detail.
 PUBLIC_RUN_ERRORS = frozenset({
     ANALYSIS_FAILED_MESSAGE,
+    CREDIT_LIMIT_MESSAGE,
     NO_TRADE_SLOTS_MESSAGE,
     PENDING_CAPACITY_MESSAGE,
     UNKNOWN_CAPACITY_MESSAGE,
@@ -332,6 +334,7 @@ async def execute_automation_run(
     asset: Asset = DEFAULT_ASSET,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    failure_detail: str | None = None
     # The service stops recheck execution at 300s; allow its cleanup/error response to arrive.
     timeout_seconds = 310 if trigger == "activation_recheck" else AUTOMATION_ANALYSIS_TIMEOUT_SECONDS
     try:
@@ -404,6 +407,12 @@ async def execute_automation_run(
             )
             if isinstance(nested, dict) and nested.get("code") == MARKET_AUTH_ERROR_CODE:
                 raise AppError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE)
+            if isinstance(nested, dict) and nested.get("code") == "model_credit_limit":
+                raise AppError(502, CREDIT_LIMIT_MESSAGE, "model_credit_limit")
+            if isinstance(nested, dict) and nested.get("code") in {
+                "news_synthesis_failed", "model_provider_failed", "model_rate_limited", "model_timeout"
+            }:
+                failure_detail = f"News stage failed [{nested['code']}]: {str(message or '')[:300]}"
             raise AppError(502, ANALYSIS_FAILED_MESSAGE, "automation_agent_failed")
         outcome = str(payload.get("outcome") or "no_trade_for_current_window")
         report = payload.get("report")
@@ -422,7 +431,7 @@ async def execute_automation_run(
                 "agno_run_id": payload.get("runId"),
                 "model_id": payload.get("model") or MODEL_ID,
                 "report_markdown": payload.get("report"),
-                "member_responses": payload.get("memberResponses") or [],
+                **({"member_responses": payload["memberResponses"]} if payload.get("memberResponses") else {}),
                 "tool_calls": payload.get("toolCalls") or [],
                 "error": None,
             },
@@ -475,7 +484,7 @@ async def execute_automation_run(
             )
             logger.warning("Recovered committed automation outcome run_id=%s outcome=%s", run_id, payload["outcome"])
             return payload
-        error_message = str(error).strip() or type(error).__name__
+        error_message = failure_detail or str(error).strip() or type(error).__name__
         await db.update(
             "automation_agent_runs",
             {"status": "failed", "completed_at": iso_now(), "error": error_message},
