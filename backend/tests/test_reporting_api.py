@@ -29,6 +29,7 @@ SETTINGS = SimpleNamespace(
     chart_link_seconds=3600,
     auth_profile_cache_seconds=60,
     trading_writer_enabled=True,
+    credential_encryption_key=os.environ["CREDENTIAL_ENCRYPTION_KEY"],
 )
 FORBIDDEN = ("ciphertext", "fingerprint", "api_key", "api_secret", "service-role-secret", "access_token",
              "refresh_token", "encrypted", "raw exchange body", '"response"')
@@ -68,9 +69,13 @@ class Engine:
         self.owner_id = owner_id
         self.application_data = db.local_data
 
-    async def save_capital_policy(self, user_id, mode, amount, *, actor_id=None):
+    async def save_capital_policy(self, user_id, mode, amount, *, actor_id=None, extensions=None):
         # The real engine method, writing through the real local store.
-        await TradingEngine.save_capital_policy(self, user_id, mode, amount, actor_id=actor_id)
+        await TradingEngine.save_capital_policy(self, user_id, mode, amount, actor_id=actor_id, extensions=extensions)
+
+    async def capital_policy(self, user_id):
+        from app.capital import policy_from_row
+        return policy_from_row(await self.application_data.request("library:getCapital", {"userId": user_id}))
 
     async def client_for_user(self, user_id: str):
         if user_id != self.owner_id:
@@ -334,6 +339,75 @@ async def test_owner_sets_per_strategy_budget_for_any_account(api):
     assert missing_amount.status_code == 400
     unknown = await api.client.put(f"/api/owner/users/{uuid4()}/capital", json={"allocationMode": "half_balance"})
     assert unknown.status_code == 404
+
+async def test_owner_edits_asset_and_overall_capital_for_other_users_and_themself(api):
+    body = {
+        "allocationMode": "equal_parts", "divisionCount": 20,
+        "assetOverrides": {
+            "BTC": {"allocationMode": "custom_percentage", "allocationPercent": 20},
+            "ETH": {"allocationMode": "fixed_amount", "capitalAmount": 10},
+        },
+        "overallLimit": {"mode": "percentage", "value": 60},
+        "assetLimits": {"ETH": {"mode": "fixed_amount", "value": 30}},
+        "maximumConcurrentStrategies": 8,
+    }
+    for target in (api.brother, api.owner):
+        response = await api.client.put(f"/api/owner/users/{target}/capital", json=body)
+        assert response.status_code == 200
+        saved = response.json()["capitalPolicy"]
+        assert saved["divisionCount"] == 20 and saved["assetOverrides"]["BTC"]["allocationPercent"] == "20.0"
+        detail = (await api.client.get(f"/api/owner/users/{target}")).json()
+        assert detail["capitalPolicy"] == saved
+        observation = next(item for item in detail["capitalHistory"] if item["kind"] == "policy")
+        assert observation["policy"]["overallLimit"] == body["overallLimit"]
+        async with api.db.pool.connection() as connection:
+            audit = await (await connection.execute(
+                """select new_policy_json from owner_reporting.capital_policy_changes
+                   where target_user_id=%s order by id desc""",
+                (target,),
+            )).fetchone()
+        assert audit[0]["asset_overrides"]["ETH"]["capitalAmount"] == 10
+    preview = (await api.client.get(f"/api/owner/users/{api.owner}")).json()["budgetPreview"]
+    assert Decimal(preview["assetBudgets"]["BTC"]["budgetPerStrategy"]) == 24
+    assert Decimal(preview["assetBudgets"]["ETH"]["budgetPerStrategy"]) == 10
+    assert Decimal(preview["overallCapitalLimit"]) == 72
+    # An older client updates only the default without silently erasing the new controls.
+    legacy = await api.client.put(f"/api/owner/users/{api.owner}/capital", json={"allocationMode": "half_balance"})
+    assert legacy.json()["capitalPolicy"]["assetOverrides"] == saved["assetOverrides"]
+    api.current["id"] = api.brother
+    denied = await api.client.put(f"/api/owner/users/{api.owner}/capital", json=body)
+    assert denied.status_code == 403
+
+
+async def test_account_holder_uses_the_same_asset_capital_contract(api):
+    response = await api.client.put("/api/capital/settings", json={
+        "allocationMode": "custom_percentage", "allocationPercent": 5,
+        "assetOverrides": {"ETH": {"allocationMode": "custom_percentage", "allocationPercent": 10}},
+        "overallLimit": {"mode": "percentage", "value": 80},
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assetBudgets"]["BTC"]["nominalBudgetPerStrategy"] == 6
+    assert body["assetBudgets"]["ETH"]["nominalBudgetPerStrategy"] == 12
+    assert body["overallCapitalLimit"] == 96
+    assert body["maximumConcurrentStrategies"] == 100
+    settings = (await api.client.get("/api/capital/settings")).json()["settings"]
+    assert settings["assetOverrides"]["ETH"]["allocationPercent"] == "10.0"
+
+
+async def test_owner_cannot_overwrite_a_more_recent_user_capital_edit(api):
+    path = f"/api/owner/users/{api.owner}/capital"
+    initial = (await api.client.get(f"/api/owner/users/{api.owner}")).json()["capitalRevision"]
+    user_edit = await api.client.put("/api/capital/settings", json={
+        "allocationMode": "equal_parts", "divisionCount": 10, "expectedRevision": initial,
+    })
+    assert user_edit.status_code == 200
+    rejected = await api.client.put(path, json={"allocationMode": "half_balance", "expectedRevision": initial})
+    assert rejected.status_code == 409
+    current = (await api.client.get("/api/capital/settings")).json()
+    assert current["settings"]["divisionCount"] == 10
+    assert current["capitalRevision"] == user_edit.json()["capitalRevision"]
+
 
 async def test_account_asset_pause_preserves_other_assets_accounts_live_and_manual_runs(api):
     runtime = api.db.runtime
