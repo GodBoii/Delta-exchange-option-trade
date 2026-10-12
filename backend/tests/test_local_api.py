@@ -1,7 +1,9 @@
 """Authenticated library and private research endpoints; read replicas reject writes."""
 
 import asyncio
+import json
 import os
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,6 +11,7 @@ import httpx
 import pytest
 from psycopg_pool import AsyncConnectionPool
 
+from app.default_strategies import default_strategy_definitions
 from app.local_application_data import LocalApplicationData
 
 pytestmark = pytest.mark.skipif(
@@ -42,8 +45,9 @@ async def test_local_library_and_private_research_endpoint(monkeypatch):
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=main.app), base_url="http://test.local"
             ) as client:
-                body = {"id": identifier, "name": "Saved", "definitionJson":
-                        '{"name":"Saved","enabledForAi":false,"legs":[{}]}',
+                definition = default_strategy_definitions(datetime.now(UTC))[0].model_dump(mode="json")
+                definition.update(name="Saved", enabledForAi=False)
+                body = {"id": identifier, "name": "Saved", "definitionJson": json.dumps(definition),
                         "enabled": False, "expectedVersion": None}
                 saved = await client.put(f"/api/library/{identifier}", json=body)
                 assert saved.status_code == 200
