@@ -215,3 +215,27 @@ def test_treasury_listing_uses_each_release_date_and_skips_navigation():
     )
     assert len(cards) == 1
     assert cards[0]["published_at"] == "2026-10-09T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_stale_publisher_uses_labelled_discovery_fallback(monkeypatch):
+    from news_agent import sources
+    from news_agent.source_cache import SourceCache
+
+    monkeypatch.setattr(sources, "SOURCE_CACHE", SourceCache())
+    monkeypatch.setattr(sources, "_sources", lambda *_: [Source("Blockworks", "publisher", "https://example.com/feed")])
+
+    async def fetch(url, *_args, **_kwargs):
+        discovery = "news.google.com" in url
+        date = datetime.now(UTC).isoformat() if discovery else "2000-01-01T00:00:00Z"
+        original = "https://news.google.com/rss/articles/current" if discovery else "https://example.com/old"
+        body = (
+            f"<rss><channel><item><title>Market news</title><link>{original}</link>"
+            f"<pubDate>{date}</pubDate></item></channel></rss>"
+        ).encode()
+        return FetchResult(url, url, "application/rss+xml", body)
+
+    monkeypatch.setattr(sources, "fetch_public_document", fetch)
+    result = json.loads(await PublicSourceTools(object(), ResearchBudget()).curate_public_sources("BTC", []))
+    assert next(x for x in result["source_health"] if x["source"] == "Blockworks")["status"] == "stale"
+    assert any(x["source"] == "Blockworks discovery" and x["kind"] == "discovery" for x in result["sources"])
