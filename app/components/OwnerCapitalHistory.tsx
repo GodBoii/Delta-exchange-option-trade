@@ -6,6 +6,7 @@ import { Segmented } from "@/app/components/ui";
 import { formatTimestamp } from "@/lib/format";
 import { allocationModeText, observationLabel } from "@/lib/reporting";
 import type { CapitalObservation } from "@/lib/app-types";
+import { capitalRuleText } from "@/lib/capital";
 
 const PAGE_SIZE = 6;
 const OPTIONS = [
@@ -44,7 +45,21 @@ export default function OwnerCapitalHistory({ observations }: { observations: Ca
             {item.availableBalance !== null && <small>{formatMoneyNumber(item.availableBalance)} available</small>}</>}
           {item.kind === "run_allocation" && <>{formatMoneyNumber(item.allocatedBudget)} <small>{currencyCode}</small></>}
           {item.kind === "policy" && <>{allocationModeText(item.allocationMode)}
-            {item.allocationMode === "fixed_amount" && <small>{formatMoneyNumber(item.capitalAmount)} {currencyCode}</small>}</>}
+            {item.allocationMode === "fixed_amount" && <small>{formatMoneyNumber(item.capitalAmount)} {currencyCode}</small>}
+            {item.policy && <>
+              <small>Default {capitalRuleText(item.policy)}</small>
+              {(["BTC", "ETH"] as const).map(asset => {
+                const rule = item.policy?.assetOverrides?.[asset];
+                const cap = item.policy?.assetLimits?.[asset];
+                return rule || cap ? <small key={asset}>{asset} {rule ? capitalRuleText(rule) : "uses default"}
+                  {rule?.allocationMode === "fixed_amount" ? ` ${formatMoneyNumber(rule.capitalAmount)} ${currencyCode}` : ""}
+                  {cap ? ` · cap ${cap.mode === "percentage" ? `${cap.value}%` : `${formatMoneyNumber(cap.value)} ${currencyCode}`}` : ""}</small> : null;
+              })}
+              {item.policy.overallLimit && <small>Overall cap {item.policy.overallLimit.mode === "percentage"
+                ? `${item.policy.overallLimit.value}%` : `${formatMoneyNumber(item.policy.overallLimit.value)} ${currencyCode}`}</small>}
+              {item.policy.maximumConcurrentStrategies && <small>Up to {item.policy.maximumConcurrentStrategies} strategies</small>}
+            </>}
+          </>}
         </span>
       </li>)}
     </ol> : <p className="detail-note">{observations.length ? "No observations of this type in the latest records."
