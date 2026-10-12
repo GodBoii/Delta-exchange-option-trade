@@ -92,6 +92,8 @@ DISCOVERY_FALLBACKS = {
     "CFTC releases": "site:cftc.gov/PressRoom/PressReleases crypto OR derivatives",
     "Polymarket": "site:polymarket.com/event/ Bitcoin OR Ethereum",
     "Blockworks": "site:blockworks.com/news Bitcoin OR Ethereum",
+    "GDELT asset": "Bitcoin OR Ethereum",
+    "GDELT global": '"central bank" OR inflation OR tariffs OR geopolitics',
 }
 
 
