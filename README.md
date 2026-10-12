@@ -150,6 +150,15 @@ Below the candlestick chart, the UI keeps the sources visibly separated:
 
 The expanded Delta section below the Binance analysis remains fully public and read-only. Live ticker, top-15 L2 depth, and the latest 30 public trades refresh every five seconds. Contract/margin/fee specifications and 48 hourly points each for open interest, funding rate, and mark price refresh every five minutes to keep Delta API weight controlled. Private wallet, position, order, and fill data remains in the authenticated trading workspace instead of being exposed on the public market page.
 
+### Capital allocation
+
+Portfolio and the owner's Users editor share the same capital controls. Keep an
+account default or set separate BTC and ETH percentages, fixed amounts or equal
+parts from 1 through 100. Optional overall and asset caps limit reserved budgets;
+an independent concurrency setting limits open strategies. Existing policies and
+open runs keep their previous behavior. See [capital allocation](docs/37-asset-capital-allocation.md)
+for examples, reservation checks, API fields and backend-first rollout.
+
 ### Flexible local ports
 
 The frontend is not tied to port 3000. Next.js may run on 3000, 3001, 3002, or another local port; the Python backend accepts authenticated browser requests from any `localhost` or `127.0.0.1` port.
