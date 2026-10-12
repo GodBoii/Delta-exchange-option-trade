@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 from .assets import ASSETS, Asset
 from .auth import require_owner, require_user
 from .automation import set_account_automation
-from .capital import capital_budget, maximum_concurrent_strategies
+from .capital import fits_capital_limits, limit_budget, policy_budget, policy_from_row
 from .database import Database
 from .errors import AppError
 from .models import CapitalSettingsUpdate
@@ -195,12 +195,21 @@ async def my_trades(
     strategy: StrategyQuery = None,
 ) -> dict[str, Any]:
     page = await _ledger(request).trades(
-        str(user["id"]), deleted="exclude", since=_since(range_key), state=state, cursor=cursor,
-        limit=limit, asset=asset, **({"strategy": strategy} if strategy is not None else {})
+        str(user["id"]),
+        deleted="exclude",
+        since=_since(range_key),
+        state=state,
+        cursor=cursor,
+        limit=limit,
+        asset=asset,
+        **({"strategy": strategy} if strategy is not None else {}),
     )
     return {
-        "success": True, "asset": asset or "all", "strategy": strategy,
-        "items": [trade_item(row) for row in page["items"]], "nextCursor": page["nextCursor"],
+        "success": True,
+        "asset": asset or "all",
+        "strategy": strategy,
+        "items": [trade_item(row) for row in page["items"]],
+        "nextCursor": page["nextCursor"],
     }
 
 
@@ -327,18 +336,46 @@ async def owner_users(
     }
 
 
-def _budget_preview(account: dict[str, Any] | None, wallet: dict[str, Any]) -> dict[str, Any] | None:
+def _budget_preview(
+    account: dict[str, Any] | None,
+    wallet: dict[str, Any],
+    capacity: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Per-strategy budget under the saved policy, from the live wallet. None without a live balance."""
     if not account or wallet.get("state") != "live":
         return None
     mode = account["allocationMode"] or "half_balance"
+    policy = policy_from_row(
+        account.get("capital") or {"allocation_mode": mode, "capital_amount": account["capitalAmount"]}
+    )
     total, available = Decimal(wallet["totalBalance"]), Decimal(wallet["availableBalance"])
     try:
-        return {
-            "budgetPerStrategy": str(capital_budget(total, total, mode, account["capitalAmount"])),
-            "nextStrategyCanUse": str(capital_budget(available, total, mode, account["capitalAmount"])),
-            "maximumConcurrentStrategies": maximum_concurrent_strategies(total, mode, account["capitalAmount"]),
+        preview = {
+            "budgetPerStrategy": str(policy_budget(total, total, policy)),
+            "nextStrategyCanUse": str(policy_budget(available, total, policy)),
+            "maximumConcurrentStrategies": policy.concurrency_limit(total),
         }
+        if len(policy.as_json()) > 2:
+            reserved = Decimal((capacity or {}).get("reservedBudget", "0"))
+            by_asset = {key: Decimal(value) for key, value in (capacity or {}).get("reservedByAsset", {}).items()}
+            has_slot = len((capacity or {}).get("occupiedSlots", [])) < policy.concurrency_limit(total)
+            preview["assetBudgets"] = {
+                asset: {
+                    "budgetPerStrategy": str(policy_budget(total, total, policy, asset)),
+                    "nextStrategyCanUse": str(policy_budget(available, total, policy, asset))
+                    if has_slot
+                    and fits_capital_limits(
+                        policy, total, asset, policy_budget(available, total, policy, asset), reserved, by_asset
+                    )
+                    else "0",
+                    "capitalLimit": str(limit_budget(total, policy.asset_limits.get(asset))),
+                    "reservedBudget": str(by_asset.get(asset, Decimal(0))),
+                }
+                for asset in ASSETS
+            }
+            preview["overallCapitalLimit"] = str(limit_budget(total, policy.overall_limit))
+            preview["reservedBudget"] = str(reserved)
+        return preview
     except AppError:
         return None
 
@@ -363,6 +400,7 @@ async def owner_user_detail(
     connected = bool(account and account["connectionStatus"] == "connected")
     # Read the wallet first so a fresh observation appears in the capital history below.
     wallet = await _probe(request).read(request, target) if connected else {"state": "not_connected"}
+    capacity = await db.rpc("get_strategy_capital_capacity", {"p_user_id": target}) if connected else None
     owner_scope, user_scope, history, capital = await asyncio.gather(
         ledger.summary(target, deleted="include", since=since, asset=asset),
         ledger.summary(target, deleted="exclude", since=since, asset=asset),
@@ -380,11 +418,14 @@ async def owner_user_detail(
         "automation": _automation_fields(
             bool(account and account["automationEnabled"]), account and account["assetAutomation"],
         ),
-        "capitalPolicy": {
+        "capitalPolicy": policy_from_row(account["capital"]).as_json()
+        if account and account.get("capital")
+        else {
             "allocationMode": account["allocationMode"] if account else None,
             "capitalAmount": account["capitalAmount"] if account else None,
         },
-        "budgetPreview": _budget_preview(account, wallet),
+        "capitalRevision": (account["capital"] or {}).get("_revision") if account else None,
+        "budgetPreview": _budget_preview(account, wallet, capacity),
         "wallet": wallet,
         "capitalHistory": [
             {
@@ -397,6 +438,7 @@ async def owner_user_detail(
                 "allocationMode": item["allocation_mode"],
                 "capitalAmount": item["capital_amount"],
                 "allocatedBudget": item["allocated_budget"],
+                "policy": policy_from_row(item["policy_json"]).as_json() if item.get("policy_json") else None,
             }
             for item in capital
         ],
@@ -417,11 +459,20 @@ async def owner_user_trades(
     asset: AssetFilter | None = None,
 ) -> dict[str, Any]:
     page = await _ledger(request).trades(
-        _user_id(user_id), deleted=deleted, since=_since(range_key), state=state,
-        cursor=cursor, limit=limit, asset=asset,
+        _user_id(user_id),
+        deleted=deleted,
+        since=_since(range_key),
+        state=state,
+        cursor=cursor,
+        limit=limit,
+        asset=asset,
     )
-    return {"success": True, "asset": asset or "all", "items": [trade_item(row) for row in page["items"]],
-            "nextCursor": page["nextCursor"]}
+    return {
+        "success": True,
+        "asset": asset or "all",
+        "items": [trade_item(row) for row in page["items"]],
+        "nextCursor": page["nextCursor"],
+    }
 
 
 @router.get("/api/owner/users/{user_id}/pnl/calendar")
@@ -476,19 +527,28 @@ async def owner_user_capital(
     target = _user_id(user_id)
     await _registered(db, target)
     previous = (await db.local_data.account_rows([target])).get(target)
+    extra = {"extensions": body.extensions()} if body.extensions() else {}
     await request.app.state.engine.save_capital_policy(
-        target, body.allocationMode, body.capitalAmount, actor_id=str(owner["id"])
+        target,
+        body.allocationMode,
+        body.capitalAmount,
+        actor_id=str(owner["id"]),
+        **extra,
     )
     saved = (await db.local_data.account_rows([target]))[target]
     logger.info(
         "Owner capital change actor=%s target=%s old=%s/%s new=%s/%s",
-        owner["id"], target,
-        previous and previous["allocationMode"], previous and previous["capitalAmount"],
-        saved["allocationMode"], saved["capitalAmount"],
+        owner["id"],
+        target,
+        previous and previous["allocationMode"],
+        previous and previous["capitalAmount"],
+        saved["allocationMode"],
+        saved["capitalAmount"],
     )
     return {
         "success": True,
-        "capitalPolicy": {"allocationMode": saved["allocationMode"], "capitalAmount": saved["capitalAmount"]},
+        "capitalPolicy": policy_from_row(saved["capital"]).as_json(),
+        "capitalRevision": saved["capital"].get("_revision"),
         "savedAt": datetime.now(UTC).isoformat(),
     }
 
@@ -515,10 +575,20 @@ async def owner_user_asset_automation(
     db: Database = request.app.state.db
     target = _user_id(user_id)
     await _registered(db, target)
-    saved = await db.runtime.data.request("accountAutomation:setAssetEnabled", {
-        "userId": target, "asset": asset, "enabled": body.enabled,
-    }, mutation=True)
-    logger.info("Owner account asset change actor=%s target=%s asset=%s enabled=%s",
-                owner["id"], target, asset, body.enabled)
-    return {"success": True, "automation": _automation_fields(bool(saved["enabled"]), saved.get("asset_enabled")),
-            "savedAt": datetime.now(UTC).isoformat()}
+    saved = await db.runtime.data.request(
+        "accountAutomation:setAssetEnabled",
+        {
+            "userId": target,
+            "asset": asset,
+            "enabled": body.enabled,
+        },
+        mutation=True,
+    )
+    logger.info(
+        "Owner account asset change actor=%s target=%s asset=%s enabled=%s", owner["id"], target, asset, body.enabled
+    )
+    return {
+        "success": True,
+        "automation": _automation_fields(bool(saved["enabled"]), saved.get("asset_enabled")),
+        "savedAt": datetime.now(UTC).isoformat(),
+    }
