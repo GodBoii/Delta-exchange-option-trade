@@ -8,6 +8,7 @@ from uuid import uuid4
 from psycopg.rows import dict_row
 
 from .assets import Asset, asset_run_key, automation_asset_enabled, run_asset
+from .capital import policy_from_row
 from .errors import AppError
 from .exit_schedule import validate_session_schedule
 from .materialized_definition import validate_materialized_definition
@@ -317,12 +318,7 @@ class LocalResearchOperations:
             self._require_asset(saved, asset)
             definition = self._materialized(args, saved["definition_json"])
             self._session_policy(definition, run)
-            maximum = {
-                "full_balance": 1,
-                "half_balance": 2,
-                "one_third_balance": 3,
-                "one_quarter_balance": 4,
-            }.get(user["capital"].get("allocation_mode"))
+            maximum = policy_from_row(user["capital"]).concurrency_limit()
             if maximum is not None:
                 await cursor.execute(
                     """select count(*) from trade.strategy_capital_slots
