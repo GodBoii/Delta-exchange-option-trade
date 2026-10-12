@@ -235,6 +235,19 @@ async def read(runtime, owner, run):
     })
 
 
+async def test_shared_admission_accepts_real_legacy_settings_projection(runtime):
+    owner = await account(runtime)
+    projected = await runtime.select("automation_settings", {
+        "select": "user_id,asset_enabled", "enabled": "eq.true", "user_id": f"eq.{owner}",
+    })
+    assert projected == [{"user_id": owner, "asset_enabled": None}]
+    db = SimpleNamespace(select=AsyncMock(return_value=projected))
+    engine = SimpleNamespace(analysis_trade_capacity=AsyncMock(return_value="ready"))
+    for asset in ("BTC", "ETH"):
+        assert await automation.has_automation_trade_capacity(db, engine, "global", run={"asset": asset})
+    assert engine.analysis_trade_capacity.await_count == 2
+
+
 async def decision(runtime, asset="BTC"):
     now = datetime.now(UTC)
     remaining = session_expiry(now) - now
