@@ -8,7 +8,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from .assets import automation_asset_enabled, run_asset, strategy_asset
-from .capital import capital_budget, maximum_concurrent_strategies, policy_from_row
+from .capital import fits_capital_limits, policy_budget, policy_from_row
 from .errors import AppError
 from .exit_schedule import session_expiry
 
@@ -119,12 +119,16 @@ async def read_snapshot(pool: AsyncConnectionPool, args: dict[str, Any]) -> dict
                         if row["id"] in reserved_ids}
     commitments: dict[tuple[str, str], dict[str, Any]] = {}
 
-    def add(user_id: str, key: str, begin: datetime, finish: datetime) -> None:
+    def add(user_id: str, key: str, begin: datetime, finish: datetime, code: str) -> None:
         if user_id not in aliases or finish <= start or begin >= end:
             return
         commitments[(user_id, key)] = {
-            "owner": user_id, "key": key, "start": max(start, begin).isoformat(),
-            "end": min(end, finish).isoformat(), "capital": aliases[user_id]["capital"],
+            "owner": user_id,
+            "key": key,
+            "start": max(start, begin).isoformat(),
+            "end": min(end, finish).isoformat(),
+            "capital": aliases[user_id]["capital"],
+            "asset": code,
         }
 
     def participates(user_id: str, code: str) -> bool:
@@ -145,11 +149,13 @@ async def read_snapshot(pool: AsyncConnectionPool, args: dict[str, Any]) -> dict
             continue
         if assigned and linked:
             contender = proposals.get(row.get("shared_decision_id")) or linked["data"]
-            if (linked["data"]["id"] == assigned_id
-                    or key == str(assigned.get("shared_decision_id") or assigned["id"])
-                    or proposal_key(contender) > proposal_key(assigned)):
+            if (
+                linked["data"]["id"] == assigned_id
+                or key == str(assigned.get("shared_decision_id") or assigned["id"])
+                or proposal_key(contender) > proposal_key(assigned)
+            ):
                 continue
-        add(row["user_id"], key, instant(row["entry_at"]), instant(row["exit_at"]))
+        add(row["user_id"], key, instant(row["entry_at"]), instant(row["exit_at"]), strategy_asset(row))
     for item in shared:
         row = item["data"]
         if row["id"] in invalid or row.get("allocation_completed_at"):
@@ -161,7 +167,7 @@ async def read_snapshot(pool: AsyncConnectionPool, args: dict[str, Any]) -> dict
                 # An allocated or already funded copy replaces its shared commitment.
                 if (user_id, row["id"]) in funded_decisions:
                     continue
-                add(user_id, row["id"], instant(row["activation_time"]), instant(row["exit_at"]))
+                add(user_id, row["id"], instant(row["activation_time"]), instant(row["exit_at"]), run_asset(row))
     if not assigned:
         for row in jobs:
             if row["id"] == request.get("id") or row.get("outcome") or row.get("trigger") == "activation_recheck":
@@ -175,12 +181,35 @@ async def read_snapshot(pool: AsyncConnectionPool, args: dict[str, Any]) -> dict
             finish = session_expiry(instant(row.get("scheduled_for") or row["started_at"]))
             for user_id in aliases if row["user_id"] == "global" else [row["user_id"]]:
                 if participates(user_id, run_asset(row)):
-                    add(user_id, f"run:{row['id']}", now, finish)
+                    add(user_id, f"run:{row['id']}", now, finish, run_asset(row))
     return {
         "eligible": True, "owner": owner, "capital": account["capital"], "start": start.isoformat(),
         "occupied": sum(row["user_id"] == owner for row in slots),
         "reserved": str(sum((Decimal(str(row.get("reserved_budget") or "0")) for row in slots), Decimal(0))),
         "commitments": list(commitments.values()),
+        "asset": asset,
+        "reservedByAsset": {
+            code: str(
+                sum(
+                    (
+                        Decimal(str(row.get("reserved_budget") or "0"))
+                        for row in slots
+                        if (
+                            row.get("asset")
+                            or strategy_asset(
+                                next(
+                                    (item for item in strategies if item["id"] == row.get("strategy_id")),
+                                    {},
+                                )
+                            )
+                        )
+                        == code
+                    ),
+                    Decimal(0),
+                )
+            )
+            for code in ("BTC", "ETH")
+        },
     }
 
 
@@ -190,27 +219,34 @@ def evaluate(snapshot: dict[str, Any], available: Decimal, total: Decimal) -> Ad
     if not snapshot["eligible"] or available <= 0 or total <= 0:
         return "full"
     policy = policy_from_row(snapshot["capital"])
-    maximum = maximum_concurrent_strategies(total, policy.allocation_mode, policy.capital_amount)
-    budget = capital_budget(available, total, policy.allocation_mode, policy.capital_amount)
+    maximum = policy.concurrency_limit(total)
+    asset = snapshot.get("asset", "BTC")
+    budget = policy_budget(available, total, policy, asset)
     reserved = Decimal(snapshot["reserved"])
     if not reserved.is_finite() or reserved < 0 or not budget.is_finite():
         raise AppError(503, "Committed capacity is invalid", "capital_capacity_unavailable")
-    if snapshot["occupied"] >= maximum or reserved + budget > total:
+    by_asset = {key: Decimal(value) for key, value in snapshot.get("reservedByAsset", {}).items()}
+    if any(not value.is_finite() or value < 0 for value in by_asset.values()):
+        raise AppError(503, "Committed asset capacity is invalid", "capital_capacity_unavailable")
+    if snapshot["occupied"] >= maximum or not fits_capital_limits(policy, total, asset, budget, reserved, by_asset):
         return "full"
     # Half-open intervals permit back-to-back planned trades without summing disjoint holds.
-    events: dict[datetime, list[tuple[int, Decimal]]] = {}
+    events: dict[datetime, list[tuple[int, Decimal, str]]] = {}
     for row in snapshot["commitments"]:
         other = policy_from_row(row["capital"])
-        amount = capital_budget(available, total, other.allocation_mode, other.capital_amount)
+        code = row.get("asset", "BTC")
+        amount = policy_budget(available, total, other, code)
         if not amount.is_finite() or amount <= 0:
             raise AppError(503, "Committed capacity is invalid", "capital_capacity_unavailable")
         count = int(row["owner"] == snapshot["owner"])
-        events.setdefault(instant(row["start"]), []).append((count, amount))
-        events.setdefault(instant(row["end"]), []).append((-count, -amount))
+        events.setdefault(instant(row["start"]), []).append((count, amount, code))
+        events.setdefault(instant(row["end"]), []).append((-count, -amount, code))
     count, committed = snapshot["occupied"], reserved
     for _, changes in sorted(events.items()):
         count += sum(change[0] for change in changes)
         committed += sum((change[1] for change in changes), Decimal(0))
-        if count >= maximum or committed + budget > total:
+        for _, amount, code in changes:
+            by_asset[code] = by_asset.get(code, Decimal(0)) + amount
+        if count >= maximum or not fits_capital_limits(policy, total, asset, budget, committed, by_asset):
             return "pending"
     return "ready"
