@@ -8,6 +8,7 @@ import pytest
 from test_engine import settings
 from test_strategy import base_leg, base_strategy
 
+from app.capital import CapitalPolicy
 from app.delta import DeltaClient
 from app.engine import TradingEngine, optional_decimal
 from app.errors import AppError
@@ -113,13 +114,7 @@ def entry_engine(*, mark="100", emergency=True, failure=None):
     engine.startup_recovered = True
     engine.strategy_by_id = AsyncMock(return_value=row)
     engine.client_for_user = AsyncMock(return_value=client)
-    engine.capital_policy = AsyncMock(
-        return_value=SimpleNamespace(
-            allocation_mode="half_balance",
-            capital_amount=None,
-            as_json=lambda: {},
-        )
-    )
+    engine.capital_policy = AsyncMock(return_value=CapitalPolicy())
     engine.usd_capital = AsyncMock(return_value=(Decimal("100"), Decimal("100")))
     engine.reserve_capital_slot = AsyncMock(return_value={"slot": 1, "created": True})
     engine.release_capital_slot = AsyncMock()
