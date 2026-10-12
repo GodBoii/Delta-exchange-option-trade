@@ -217,6 +217,9 @@ def run_case(
     market.collect_delta_option_context = lambda: {"underlying": asset, "options": deepcopy(options)}
     market._packet_cache = frozen
     settings = NewsAgentSettings.load()
+    if offline:
+        # RecordingAgent replaces model execution; construction still requires a nonempty key.
+        settings = replace(settings, openrouter_api_key="offline-input-construction")
     if model:
         settings = replace(settings, automation_model_id=model)
     record["model"] = settings.automation_model_id
