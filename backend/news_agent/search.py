@@ -79,12 +79,12 @@ class WebSearchTools(AgnoWebSearchTools):
     async def _search(self, name: str, query: str, max_results: int | None) -> str:
         started = time.perf_counter()
         try:
-            self.budget.consume(name)
             limit = max(1, min(max_results or 10, 10))
             query = " ".join(query.split())[:500]
             key = (name, query.casefold(), limit)
             if key in self.cache:
                 return self.cache[key]
+            self.budget.consume(name)
             method = super().search_news if name == "search_news" else super().web_search
             provider_error = None
             try:
