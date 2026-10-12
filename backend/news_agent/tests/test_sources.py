@@ -255,3 +255,56 @@ def test_high_impact_global_events_rank_before_low_impact_us_events():
     )
     selected = select_source_cards(cards, source, datetime(2026, 10, 12, tzinfo=UTC), 48)
     assert selected[0]["title"] == "UK rate decision"
+
+
+@pytest.mark.asyncio
+async def test_threads_discovery_uses_current_domain_and_rejects_other_sites(monkeypatch):
+    tools = PublicSourceTools(object(), ResearchBudget())
+    queries = []
+
+    async def search(query, **_):
+        queries.append(query)
+        return json.dumps(
+            [
+                {"title": "Public view", "url": "https://www.threads.com/@author/post/abc"},
+                {"title": "Unrelated article", "url": "https://news.example/story"},
+            ]
+        )
+
+    monkeypatch.setattr(tools.search, "web_search", search)
+    result = json.loads(await tools.search_public_discussion("Bitcoin", ["threads"]))
+    assert queries == ["site:threads.com Bitcoin"]
+    assert len(result["posts"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_exchange_discovery_searches_all_supported_exchanges(monkeypatch):
+    from news_agent.sources import EXCHANGE_SITES
+
+    tools = PublicSourceTools(object(), ResearchBudget())
+    queries = []
+
+    async def search(query, **_):
+        queries.append(query)
+        site = query.split()[0].removeprefix("site:")
+        return json.dumps(
+            [
+                {"title": "Official notice", "url": f"https://{site}/notice"},
+                {"title": "Publisher speculation", "url": "https://news.example/notice"},
+            ]
+        )
+
+    monkeypatch.setattr(tools.search, "web_search", search)
+    result = json.loads(await tools.search_exchange_announcements("Bitcoin", list(EXCHANGE_SITES)))
+    assert len(queries) == 6
+    assert len(result["announcements"]) == 6
+    assert {row["exchange"] for row in result["announcements"]} == set(EXCHANGE_SITES)
+
+
+def test_site_filters_reject_lookalike_domains_and_unrelated_paths():
+    from news_agent.sources import _matches_site
+
+    assert not _matches_site("https://reddit.com.attacker.example/post", "reddit.com")
+    assert not _matches_site("https://[invalid", "reddit.com")
+    assert not _matches_site("https://binance.com/en/support/notice", "binance.com/en/square")
+    assert _matches_site("https://www.binance.com/en/square/post/1", "binance.com/en/square")
