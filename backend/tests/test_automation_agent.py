@@ -9,10 +9,10 @@ import pytest
 
 from app.automation import automation_overview, build_account_context, verified_decision_report
 from app.automation_schedule import next_fixed_run
-from app.capital import CapitalPolicy
+from app.capital import CapitalPolicy, capital_budget
 from app.default_strategies import default_strategy_definitions
 from app.delta import DeltaClient
-from app.engine import TradingEngine, capital_budget
+from app.engine import TradingEngine
 from app.errors import AppError
 from automation_agent import tools as strategy_tools_module
 from automation_agent.charts import (
