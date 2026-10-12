@@ -5,7 +5,7 @@ import json
 import re
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -202,10 +202,18 @@ class LocalApplicationData:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute("select capital,record from trade.users where user_id=%s for update", (user_id,))
             current = await cursor.fetchone()
+            previous = current["capital"] or {}
+            if "expected_revision" in value and value["expected_revision"] != previous.get("_revision"):
+                raise AppError(
+                    409, "Capital settings changed. Reload before saving your changes.", "capital_policy_changed",
+                )
+            value = {key: item for key, item in value.items() if key != "expected_revision"}
+            value = {**previous, **value}
+            value["_revision"] = str(uuid4())
             record = {**current["record"], "capital": value, "updatedAt": datetime.now(UTC).isoformat()}
             await cursor.execute(
                 "update trade.users set capital=%s,record=%s where user_id=%s",
-                (Jsonb({key: value[key] for key in ("allocation_mode", "capital_amount")}), Jsonb(record), user_id),
+                (Jsonb({key: item for key, item in value.items() if key != "user_id"}), Jsonb(record), user_id),
             )
             actor = args.get("actorId")
             if actor is not None:
@@ -214,8 +222,8 @@ class LocalApplicationData:
                 await cursor.execute(
                     """insert into owner_reporting.capital_policy_changes
                        (actor_user_id,target_user_id,old_allocation_mode,old_capital_amount,
-                        new_allocation_mode,new_capital_amount)
-                       values (%s,%s,%s,%s,%s,%s)""",
+                        new_allocation_mode,new_capital_amount,old_policy_json,new_policy_json)
+                       values (%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
                         actor,
                         user_id,
@@ -223,9 +231,10 @@ class LocalApplicationData:
                         previous.get("capital_amount"),
                         value["allocation_mode"],
                         value["capital_amount"],
+                        Jsonb(previous), Jsonb({key: item for key, item in value.items() if key != "user_id"}),
                     ),
                 )
-            await record_policy(connection, user_id, value["allocation_mode"], value["capital_amount"])
+            await record_policy(connection, user_id, value["allocation_mode"], value["capital_amount"], value)
 
     async def _library_get(self, args: dict[str, Any]) -> dict[str, Any] | None:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -354,7 +363,7 @@ class LocalApplicationData:
                           coalesce((automation->>'enabled')::boolean, false) as automation_enabled,
                           automation->'asset_enabled' as asset_enabled,
                           capital->>'allocation_mode' as allocation_mode,
-                          capital->>'capital_amount' as capital_amount
+                          capital->>'capital_amount' as capital_amount, capital
                      from trade.users where user_id = any(%s)""",
                 (user_ids,),
             )
@@ -369,6 +378,7 @@ class LocalApplicationData:
                 "assetAutomation": {asset: (row["asset_enabled"] or {}).get(asset, True) for asset in ASSETS},
                 "allocationMode": row["allocation_mode"],
                 "capitalAmount": row["capital_amount"],
+                "capital": row["capital"],
             }
             for row in rows
         }
