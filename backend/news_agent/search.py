@@ -93,6 +93,19 @@ class WebSearchTools(AgnoWebSearchTools):
             except (DDGSException, TimeoutError, ValueError) as exc:
                 provider_error = str(exc) or type(exc).__name__
                 rows = []
+                if provider_error.casefold().rstrip(".") == "no results found":
+                    provider_error = None
+                    # Date filters often exclude indexed official notices and public posts.
+                    # Undated results are still discovery leads, never proof of current events.
+                    if name == "web_search" and "site:" in query and self.timelimit:
+                        try:
+                            fallback = AgnoWebSearchTools(timeout=8, fixed_max_results=limit, timelimit=None)
+                            async with asyncio.timeout(self.budget.remaining(10)):
+                                rows = json.loads(await asyncio.to_thread(fallback.web_search, query, max_results=limit))
+                        except (DDGSException, TimeoutError, ValueError) as fallback_error:
+                            reason = str(fallback_error) or type(fallback_error).__name__
+                            if reason.casefold().rstrip(".") != "no results found":
+                                provider_error = reason
             results = []
             seen: set[str] = set()
             for row in rows if isinstance(rows, list) else []:
