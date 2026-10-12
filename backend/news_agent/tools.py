@@ -151,10 +151,9 @@ async def fetch_public_document(
         requested_url = current_url
         headers = {
             "User-Agent": USER_AGENT,
-            "Accept": (
-                "text/html,application/xhtml+xml,application/rss+xml,application/xml,"
-                "text/xml,application/json,text/calendar,text/plain;q=0.9"
-            ),
+            # Some feeds negotiate a blocked or obsolete variant for a mixed HTML/RSS Accept list.
+            # Validate the returned MIME type below instead of advertising unrelated formats.
+            "Accept": "*/*",
         }
         visited: set[str] = set()
         for _ in range(6):
