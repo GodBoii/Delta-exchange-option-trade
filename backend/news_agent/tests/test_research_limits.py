@@ -262,3 +262,31 @@ async def test_site_search_can_recover_indexed_originals_without_date_filter(mon
     result = json.loads(await WebSearchTools(timelimit="w").web_search("site:official.example Bitcoin"))
     assert result[0]["url"] == "https://official.example/notice"
     assert result[0]["date"] is None
+
+
+@pytest.mark.asyncio
+async def test_missing_pages_do_not_disable_other_articles_on_same_publisher(monkeypatch):
+    async def fetch(url, *_, **__):
+        if "missing" in url:
+            response = httpx.Response(404, request=httpx.Request("GET", url))
+            raise httpx.HTTPStatusError("missing page", request=response.request, response=response)
+        return FetchResult(url, url, "text/html", HTML)
+
+    monkeypatch.setattr("news_agent.tools.fetch_public_document", fetch)
+    tools = NewsResearchTools(SETTINGS)
+    for i in range(2):
+        assert not json.loads(await tools.read_news_article(f"https://example.com/missing{i}"))["ok"]
+    assert json.loads(await tools.read_news_article("https://example.com/good"))["ok"]
+
+
+@pytest.mark.asyncio
+async def test_known_blocked_domain_does_not_spend_another_download_allowance(monkeypatch):
+    async def blocked(url, *_, **__):
+        response = httpx.Response(403, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("blocked source", request=response.request, response=response)
+
+    monkeypatch.setattr("news_agent.tools.fetch_public_document", blocked)
+    tools = NewsResearchTools(SETTINGS)
+    for i in range(3):
+        assert not json.loads(await tools.read_news_article(f"https://example.com/{i}"))["ok"]
+    assert tools.budget.calls["read_news_article"] == 2
