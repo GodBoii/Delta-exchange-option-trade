@@ -23,7 +23,6 @@ from .assets import (
 )
 from .auth import current_account, require_owner, require_user
 from .automation_schedule import fixed_runs_between, ist_text, next_fixed_run, utc_text
-from .capital import percentage_concurrency_limit
 from .chart_images import chart_link
 from .database import Database
 from .decision_report import committed_action_text, replace_model_decision
@@ -187,7 +186,8 @@ async def build_account_context(engine: TradingEngine, user_id: str, asset: Asse
             }
             for row in upcoming_runs
         ],
-        "maximumConcurrentStrategies": percentage_concurrency_limit(policy.allocation_mode) or "calculated_at_entry",
+        "maximumConcurrentStrategies": policy.concurrency_limit() or "calculated_at_entry",
+        "capitalPolicy": policy.as_json(),
     }
 
 
@@ -659,7 +659,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "assetAutomation": {asset: automation_asset_enabled(analysis, asset) for asset in ASSETS},
         "settings": {
             "enabled": settings["enabled"],
-            "maximumConcurrentStrategies": percentage_concurrency_limit(capital_policy.allocation_mode),
+            "maximumConcurrentStrategies": capital_policy.concurrency_limit(),
         },
         "enabledStrategies": sum(bool(row["enabled_for_ai"]) for row in strategies),
         "totalStrategies": len(strategies),
