@@ -4,6 +4,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from decimal import Decimal
 from ipaddress import ip_address
 from typing import Annotated, Any, Literal
 
@@ -28,7 +29,7 @@ from .auth import (
 )
 from .automation import AutomationScheduler
 from .automation import router as automation_router
-from .capital import capital_budget, maximum_concurrent_strategies
+from .capital import fits_capital_limits, limit_budget, policy_budget
 from .change_feed import ChangeFeed
 from .config import get_settings
 from .database import Database
@@ -462,39 +463,28 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
             )
         except Exception:
             logger.exception("Could not record a wallet observation user=%s", user_id)
-    maximum_slots = maximum_concurrent_strategies(
-        total_balance,
-        policy.allocation_mode,
-        policy.capital_amount,
-    )
-    slots = await request.app.state.db.select(
-        "strategy_capital_slots",
-        {
-            "select": "id",
-            "user_id": f"eq.{user_id}",
-            "status": "in.(reserved,active)",
-            "limit": "100",
-        },
-    )
-    nominal_budget = capital_budget(
-        total_balance,
-        total_balance,
-        policy.allocation_mode,
-        policy.capital_amount,
-    )
-    next_budget = capital_budget(
-        available,
-        total_balance,
-        policy.allocation_mode,
-        policy.capital_amount,
-    )
-    occupied = len(slots)
+    maximum_slots = policy.concurrency_limit(total_balance)
+    capacity = await request.app.state.db.rpc("get_strategy_capital_capacity", {"p_user_id": user_id})
+    occupied = len(capacity["occupiedSlots"])
+    reserved = Decimal(capacity["reservedBudget"])
+    by_asset = {key: Decimal(value) for key, value in capacity.get("reservedByAsset", {}).items()}
+    nominal_budget = policy_budget(total_balance, total_balance, policy)
+    next_budget = policy_budget(available, total_balance, policy)
+    asset_budgets = {}
+    for asset in ("BTC", "ETH"):
+        budget = policy_budget(available, total_balance, policy, asset)
+        can_enter = (occupied < maximum_slots and budget > 0
+                     and fits_capital_limits(policy, total_balance, asset, budget, reserved, by_asset))
+        asset_budgets[asset] = {
+            "nominalBudgetPerStrategy": float(policy_budget(total_balance, total_balance, policy, asset)),
+            "availableBudgetForNextStrategy": float(budget) if can_enter else 0,
+            "reservedBudget": float(by_asset.get(asset, Decimal(0))),
+            "capitalLimit": float(limit_budget(total_balance, policy.asset_limits.get(asset))),
+        }
     return {
         "success": True,
-        "settings": {
-            "allocationMode": policy.allocation_mode,
-            "capitalAmount": float(policy.capital_amount) if policy.capital_amount is not None else None,
-        },
+        "settings": {**policy.as_json(),
+                     "capitalAmount": float(policy.capital_amount) if policy.capital_amount is not None else None},
         "wallet": {
             "asset": "USD",
             "totalBalance": float(total_balance),
@@ -505,6 +495,10 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
         "maximumConcurrentStrategies": maximum_slots,
         "occupiedAllocations": occupied,
         "availableAllocations": max(0, maximum_slots - occupied),
+        "assetBudgets": asset_budgets,
+        "reservedBudget": float(reserved),
+        "overallCapitalLimit": float(limit_budget(total_balance, policy.overall_limit)),
+        "capitalRevision": policy.revision,
     }
 
 
@@ -521,7 +515,9 @@ async def update_capital_settings(
     user: RequiredUser,
 ) -> dict[str, Any]:
     await current_account(request.app.state.db, user, required=True)
-    await request.app.state.engine.save_capital_policy(str(user["id"]), body.allocationMode, body.capitalAmount)
+    await request.app.state.engine.save_capital_policy(
+        str(user["id"]), body.allocationMode, body.capitalAmount, extensions=body.extensions(),
+    )
     return await capital_overview(request, str(user["id"]))
 
 
