@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
 import xml.etree.ElementTree as ET
 from contextlib import suppress
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from bs4 import BeautifulSoup
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .search import WebSearchTools
+from .source_cache import SOURCE_CACHE, SourceSnapshot
 from .tools import canonicalize_url, fetch_public_document
 
 SOURCE_TYPES = frozenset(
@@ -51,12 +51,20 @@ SOURCES = (
     Source("Federal Reserve monetary policy", "official", "https://www.federalreserve.gov/feeds/press_monetary.xml"),
     Source("Federal Reserve releases", "official", "https://www.federalreserve.gov/feeds/press_all.xml"),
     Source("SEC releases", "official", "https://www.sec.gov/rss/news/press.xml"),
+    Source("BEA releases", "official", "https://apps.bea.gov/rss/rss.xml"),
+    Source("Treasury releases", "official_listing", "https://home.treasury.gov/news/press-releases"),
+    Source("CFTC releases", "official", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"),
+    Source("White House actions", "official_listing", "https://www.whitehouse.gov/presidential-actions/"),
+    Source("White House statements", "official_listing", "https://www.whitehouse.gov/briefings-statements/"),
     Source("ECB releases", "official", "https://www.ecb.europa.eu/rss/press.html"),
     Source("BLS calendar", "calendar", "https://www.bls.gov/schedule/news_release/bls.ics"),
     Source("Forex Factory calendar", "calendar", "https://nfs.faireconomy.media/ff_calendar_thisweek.json"),
     Source("CoinDesk", "publisher", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     Source("Decrypt", "publisher", "https://decrypt.co/feed"),
-    Source("Blockworks", "publisher", "https://blockworks.com/feed"),
+    Source("Blockworks", "publisher", "https://blockworks.co/feed"),
+    Source("The Block", "publisher", "https://www.theblock.co/rss.xml"),
+    Source("Kraken announcements", "organization", "https://blog.kraken.com/feed/"),
+    Source("Delta announcements", "organization_listing", "https://www.delta.exchange/blog"),
     Source("Cointelegraph Bitcoin", "publisher", "https://cointelegraph.com/rss/tag/bitcoin", ("BTC",)),
     Source("Cointelegraph Ethereum", "publisher", "https://cointelegraph.com/rss/tag/ethereum", ("ETH",)),
     Source("Ethereum Foundation", "organization", "https://blog.ethereum.org/en/feed.xml", ("ETH",)),
@@ -78,6 +86,50 @@ EXCHANGE_SITES = {
     "bybit": "announcements.bybit.com",
     "delta": "delta.exchange/blog",
 }
+DISCOVERY_FALLBACKS = {
+    "Decrypt": "site:decrypt.co Bitcoin OR Ethereum",
+    "Binance announcements": "site:binance.com/en/support/announcement/detail/",
+    "CFTC releases": "site:cftc.gov/PressRoom/PressReleases crypto OR derivatives",
+    "Polymarket": "site:polymarket.com/event/ Bitcoin OR Ethereum",
+}
+
+
+def select_source_cards(
+    items: list[dict[str, Any]], source: Source, now: datetime, lookback_hours: int
+) -> list[dict[str, Any]]:
+    """Select dated evidence before limiting; calendars prioritize relevant high-impact events."""
+    cutoff = now - timedelta(hours=lookback_hours)
+    recent, background = [], []
+    for item in items:
+        when = None
+        with suppress(ValueError, TypeError):
+            when = datetime.fromisoformat(item.get("published_at") or "")
+        if when is not None and when.tzinfo is None:
+            when = None
+        item["publication_status"] = "dated" if when else "undated"
+        if source.kind == "calendar":
+            if when and cutoff <= when <= now + timedelta(days=7):
+                recent.append(item)
+        elif when and when < cutoff:
+            item["older_than_window"] = True
+            background.append(item)
+        elif when and when > now + timedelta(minutes=5):
+            item["publication_status"] = "future_date"
+            background.append(item)
+        else:
+            recent.append(item)
+    if source.kind == "calendar":
+        impact = {"High": 0, "Medium": 1, "Low": 2, "Holiday": 3}
+        recent.sort(
+            key=lambda item: (
+                item.get("country") != "USD",
+                impact.get(item.get("impact"), 2),
+                abs((datetime.fromisoformat(item["published_at"]) - now).total_seconds()),
+            )
+        )
+        return recent[:16]
+    # A stale article may provide background, but never substitutes for a recent feed item.
+    return recent[:4] if recent else background[:1]
 
 
 def _text(value: Any, limit: int = 500) -> str:
@@ -88,6 +140,9 @@ def _date(value: Any) -> str | None:
     if not value:
         return None
     raw = str(value).strip()
+    for pattern in ("%B %d, %Y", "%b %d, %Y"):
+        with suppress(ValueError):
+            return datetime.strptime(raw, pattern).replace(tzinfo=UTC).isoformat()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
         return datetime.fromisoformat(raw).replace(tzinfo=UTC).isoformat()
     if re.fullmatch(r"\d{8}T\d{6}Z?", raw):
@@ -136,7 +191,7 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
     root = ET.fromstring(body)
     items = root.findall(".//item") or root.findall("{http://www.w3.org/2005/Atom}entry")
     cards = []
-    for item in items[:20]:
+    for item in items[:50]:
 
         def field(*names: str, current: ET.Element = item) -> str | None:
             for name in names:
@@ -145,14 +200,20 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
                     return element.text
             return None
 
-        link = item.find("link")
-        href = link.get("href") if link is not None and link.get("href") else field("link")
+        links = [*item.findall("link"), *item.findall("{http://www.w3.org/2005/Atom}link")]
+        link = next((link for link in links if link.get("rel", "alternate") == "alternate"), None)
+        href = link.get("href") or link.text if link is not None else None
+        if not href:
+            continue
         card = _card(
             source=source,
             title=field("title", "{http://www.w3.org/2005/Atom}title"),
             url=href,
             published=field(
-                "pubDate", "{http://www.w3.org/2005/Atom}published", "{http://www.w3.org/2005/Atom}updated"
+                "pubDate",
+                "{http://purl.org/dc/elements/1.1/}date",
+                "{http://www.w3.org/2005/Atom}published",
+                "{http://www.w3.org/2005/Atom}updated",
             ),
             excerpt=field("description", "{http://www.w3.org/2005/Atom}summary"),
             retrieved=retrieved,
@@ -192,6 +253,13 @@ def parse_calendar(body: bytes, source: Source, retrieved: str) -> list[dict[str
                 published=entry.get("date"),
                 excerpt=detail,
                 retrieved=retrieved,
+                extra={
+                    "country": entry.get("country"),
+                    "impact": entry.get("impact"),
+                    "forecast": entry.get("forecast"),
+                    "actual": entry.get("actual"),
+                    "previous": entry.get("previous"),
+                },
             )
             if card:
                 cards.append(card)
@@ -222,6 +290,12 @@ def parse_calendar(body: bytes, source: Source, retrieved: str) -> list[dict[str
                 published=starts,
                 excerpt=event.get("DESCRIPTION"),
                 retrieved=retrieved,
+                extra={
+                    "country": "USD",
+                    "impact": "High"
+                    if event.get("SUMMARY") in {"Consumer Price Index", "Producer Price Index", "Employment Situation"}
+                    else "Medium",
+                },
             )
             if card:
                 cards.append(card)
@@ -239,12 +313,38 @@ def parse_listing(body: bytes, source: Source, retrieved: str) -> list[dict[str,
     cards = []
     for link in soup.select("a[href]"):
         href = str(link.get("href") or "")
+        path = urljoin(source.url, href)
+        if source.name.startswith("White House") and not re.search(
+            r"/(presidential-actions|briefings-statements)/\d{4}/\d{2}/[^/]+", path
+        ):
+            continue
+        if source.name == "Treasury releases" and not re.search(r"/news/press-releases/[a-z]+\d+/?$", path):
+            continue
+        if source.name == "Delta announcements" and not re.search(r"/blog/[^/?#]+", path):
+            continue
         if source.name == "Binance announcements" and "/support/announcement/detail/" not in href:
             continue
         if source.name == "Bitcoin Core" and "/en/releases/" not in href:
             continue
         title = link.get_text(" ", strip=True)
         published = None
+        container = (
+            link.find_parent("article")
+            or link.find_parent("li")
+            or link.find_parent(class_=re.compile(r"views-row|featured-stories__item"))
+            or link.parent
+        )
+        if container:
+            dated = container.find("time")
+            if dated:
+                published = dated.get("datetime") or dated.get_text(" ", strip=True)
+            if not published:
+                date_text = re.search(r"[A-Z][a-z]+ \d{1,2}, \d{4}", container.get_text(" ", strip=True))
+                published = date_text.group() if date_text else None
+        if source.name == "Delta announcements":
+            heading = link.select_one('[class*="cardTitle"]')
+            if heading:
+                title = heading.get_text(" ", strip=True)
         if source.name == "Bitcoin Core" and link.parent:
             heading = link.parent.select_one(".post-name")
             date = link.parent.select_one(".post-date")
@@ -304,16 +404,15 @@ def parse_polymarket(body: bytes, source: Source, retrieved: str) -> list[dict[s
 
 def _sources(asset: str, topics: list[str]) -> list[Source]:
     selected = [source for source in SOURCES if asset in source.assets]
-    query = " ".join(topics).strip()[:160]
     for label, term in (
         ("asset", "Ethereum ETH staking ETF" if asset == "ETH" else "Bitcoin BTC ETF"),
-        ("global", query or "central bank inflation geopolitics"),
+        ("global", '"Federal Reserve" OR inflation OR tariffs OR sanctions OR geopolitics'),
     ):
         params = urlencode({"q": f"{term} when:2d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
         selected.append(Source(f"Google News {label}", "discovery", f"https://news.google.com/rss/search?{params}"))
     for label, term in (
         ("asset", "Ethereum OR ETH" if asset == "ETH" else "Bitcoin OR BTC"),
-        ("global", query or "central bank inflation geopolitics"),
+        ("global", '"central bank" OR inflation OR geopolitics'),
     ):
         params = urlencode(
             {
@@ -444,75 +543,117 @@ class PublicSourceTools(Toolkit):
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as client:
 
             async def collect(source: Source) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
-                started = time.perf_counter()
-                try:
-                    async with semaphore, asyncio.timeout(self.budget.remaining(12)):
-                        fetched = await fetch_public_document(
-                            source.url, self.settings, client=client, accepted_types=SOURCE_TYPES
+                async def load() -> SourceSnapshot:
+                    checked = datetime.now(UTC).isoformat()
+                    try:
+                        async with asyncio.timeout(self.budget.remaining(12)):
+                            fetched = await fetch_public_document(
+                                source.url, self.settings, client=client, accepted_types=SOURCE_TYPES
+                            )
+                            body = fetched.body
+                            if source.kind == "calendar":
+                                cards = parse_calendar(body, source, checked)
+                            elif source.name == "Polymarket":
+                                cards = parse_polymarket(body, source, checked)
+                            elif source.name.startswith("GDELT"):
+                                cards = parse_gdelt(body, source, checked)
+                            elif source.kind.endswith("_listing") or source.name in {
+                                "Binance announcements",
+                                "Bitcoin Core",
+                            }:
+                                cards = parse_listing(body, source, checked)
+                            else:
+                                cards = parse_feed(body, source, checked)
+                        return SourceSnapshot(
+                            cards,
+                            checked,
+                            None if cards else "Source returned no usable items",
+                            None if cards else "empty",
+                            60 if cards else 120,
                         )
-                        body = fetched.body
-                        if source.kind == "calendar":
-                            cards = parse_calendar(body, source, retrieved)
-                        elif source.name == "Polymarket":
-                            cards = parse_polymarket(body, source, retrieved)
-                        elif source.name.startswith("GDELT"):
-                            cards = parse_gdelt(body, source, retrieved)
-                        elif source.name in {"Binance announcements", "Bitcoin Core"}:
-                            cards = parse_listing(body, source, retrieved)
-                        else:
-                            cards = parse_feed(body, source, retrieved)
-                    if not cards:
-                        return [], {
-                            "source": source.name,
-                            "error": "Source returned no usable items",
-                            "elapsed_ms": str(round((time.perf_counter() - started) * 1000)),
-                        }
-                    return cards, None
-                except (httpx.HTTPError, TimeoutError, ValueError, ET.ParseError) as error:
-                    return [], {
-                        "source": source.name,
-                        "error": (str(error) or type(error).__name__)[:180],
-                        "elapsed_ms": str(round((time.perf_counter() - started) * 1000)),
-                    }
+                    except (httpx.HTTPError, TimeoutError, ValueError, ET.ParseError) as error:
+                        code, retry = "fetch_failed", 120.0
+                        if isinstance(error, httpx.HTTPStatusError):
+                            status = error.response.status_code
+                            code = (
+                                "rate_limited"
+                                if status == 429
+                                else "blocked"
+                                if status in {401, 403}
+                                else f"http_{status}"
+                            )
+                            retry = 900 if code == "blocked" else 120
+                            if status == 429:
+                                with suppress(ValueError):
+                                    retry = max(120, min(3600, float(error.response.headers.get("retry-after", "120"))))
+                        elif isinstance(error, (TimeoutError, httpx.TimeoutException)):
+                            code = "timeout"
+                        return SourceSnapshot([], checked, (str(error) or type(error).__name__)[:180], code, retry)
 
+                try:
+                    async with semaphore, asyncio.timeout(self.budget.remaining(25)):
+                        snapshot = await SOURCE_CACHE.get(
+                            (source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
+                        )
+                except TimeoutError:
+                    snapshot = SourceSnapshot([], retrieved, "Source collection deadline", "timeout", 120)
+                error = (
+                    {"source": source.name, "error": snapshot.error, "code": snapshot.error_code}
+                    if snapshot.error
+                    else None
+                )
+                selected = select_source_cards(snapshot.cards, source, datetime.now(UTC), lookback_hours)
+                status = snapshot.error_code or (
+                    "stale"
+                    if selected and all(item.get("older_than_window") for item in selected)
+                    else "no_current_items"
+                    if not selected
+                    else "available"
+                )
+                health.append(
+                    {
+                        "source": source.name,
+                        "url": source.url,
+                        "status": status,
+                        "checked_at": snapshot.checked_at,
+                        "last_success_at": snapshot.last_success_at,
+                        "returned_items": len(snapshot.cards),
+                        "selected_items": len(selected),
+                        "newest_published_at": max(
+                            (item.get("published_at") or "" for item in snapshot.cards), default=""
+                        )
+                        or None,
+                    }
+                )
+                if snapshot.error and source.name in DISCOVERY_FALLBACKS:
+                    # Public search is an alternate discovery route, never an access-control bypass.
+                    query = DISCOVERY_FALLBACKS[source.name]
+                    params = urlencode({"q": f"{query} when:7d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
+                    fallback = Source(
+                        f"{source.name} discovery", "discovery", f"https://news.google.com/rss/search?{params}"
+                    )
+                    leads, fallback_error = await collect(fallback)
+                    if not fallback_error:
+                        selected.extend(leads)
+                return selected, error
+
+            health: list[dict[str, Any]] = []
             outcomes = await asyncio.gather(*(collect(source) for source in sources))
-        now = datetime.now(UTC)
-        cutoff = now - timedelta(hours=lookback_hours)
-        calendar_end = now + timedelta(days=7)
         cards: list[dict[str, Any]] = []
         seen: set[str] = set()
         errors = []
         for items, error in outcomes:
             if error:
                 errors.append(error)
-            count = 0
             for item in items:
                 if item["url"] in seen and item["kind"] != "calendar":
                     continue
-                published = item["published_at"]
-                older = False
-                if published:
-                    try:
-                        when = datetime.fromisoformat(published)
-                        if when.tzinfo:
-                            if item["kind"] == "calendar" and not (cutoff <= when <= calendar_end):
-                                continue
-                            older = when < cutoff
-                    except ValueError:
-                        pass
-                if older:
-                    item["older_than_window"] = True
-                    if count >= 1 and item["kind"] != "expectations":
-                        continue
                 seen.add(item["url"])
                 cards.append(item)
                 self.source_index[item["url"]] = {
                     "source": item["source"],
                     "published_at": item["published_at"],
                 }
-                count += 1
-                if count >= (1 if older and item["kind"] != "expectations" else 4):
-                    break
         return json.dumps(
             {
                 "asset": asset,
@@ -520,6 +661,10 @@ class PublicSourceTools(Toolkit):
                 "sources": cards,
                 "errors": errors,
                 "source_count": len(sources),
+                "source_health": sorted(health, key=lambda item: item["source"]),
+                "calendar_note": "Calendar entries are scheduled times, not confirmation that a release occurred. "
+                "Use official delay notices over a calendar entry; "
+                "an unverified delay remains uncertain for both assets.",
             },
             ensure_ascii=False,
         )
