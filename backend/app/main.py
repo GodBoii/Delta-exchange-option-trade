@@ -51,10 +51,12 @@ from .push import PushNotifier
 from .push_api import router as push_router
 from .reporting_api import WalletProbe
 from .reporting_api import router as reporting_router
+from .retained_logs import configure_retained_logs
 from .strategy import delta_expiry
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_retained_logs()
 logger = logging.getLogger(__name__)
 
 
@@ -340,6 +342,7 @@ async def health(request: Request) -> dict[str, Any]:
         "service": "delta-strategy-api",
         "role": "writer" if settings.trading_writer_enabled else "reader",
         "scheduler": scheduler.status(),
+        "automationScheduler": request.app.state.automation_scheduler.status(),
         "database": {
             "poolSize": stats.get("pool_size", 0),
             "poolAvailable": stats.get("pool_available", 0),
