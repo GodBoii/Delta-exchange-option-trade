@@ -12,6 +12,16 @@ from psycopg.types.json import Jsonb
 from .local_client import LocalResearchClient
 
 
+def save_news_evidence(database_url: str, run_id: str, member: dict[str, Any]) -> None:
+    """Commit news before later market/strategy work can fail, including provider failures."""
+    with psycopg.connect(database_url.replace("postgresql+psycopg://", "postgresql://", 1)) as connection:
+        connection.execute(
+            """insert into ai.analysis_reports (id,member_responses) values (%s,%s)
+               on conflict (id) do update set member_responses=excluded.member_responses, updated_at=now()""",
+            (run_id, Jsonb([member])),
+        )
+
+
 class ResearchData:
     def __init__(self, client: LocalResearchClient, database_url: Callable[[], str]) -> None:
         self.client = client
