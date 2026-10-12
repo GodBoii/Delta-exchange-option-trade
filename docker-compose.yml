@@ -117,6 +117,8 @@ services:
 
   news-analyzer:
     container_name: bitcoin-agent
+    volumes:
+      - news-state:/app/data/news-state
     build:
       context: ./backend
       dockerfile: Dockerfile.news-analyzer
@@ -131,6 +133,7 @@ services:
       - trade-data
     environment:
       NEWS_LOG_LEVEL: DEBUG
+      NEWS_STATE_DIR: /app/data/news-state
       # The analysis service uses its own AI_DATABASE_URL role and never sees trading credentials.
       LOCAL_DATABASE_URL: ""
       LOCAL_READER_DATABASE_URL: ""
@@ -220,6 +223,8 @@ volumes:
   market-history:
   market-history-eth:
   trade-postgres:
+
+  news-state:
 
 networks:
   trade-data:
