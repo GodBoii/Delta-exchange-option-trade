@@ -152,14 +152,30 @@ export type CapitalAllocationMode =
   | "half_balance"
   | "one_third_balance"
   | "one_quarter_balance"
-  | "fixed_amount";
+  | "fixed_amount"
+  | "equal_parts"
+  | "custom_percentage";
+
+export type CapitalRule = {
+  allocationMode: CapitalAllocationMode;
+  capitalAmount?: number | string | null;
+  allocationPercent?: number | string | null;
+  divisionCount?: number | null;
+};
+
+export type CapitalLimit = { mode: "percentage" | "fixed_amount"; value: number };
+
+export type CapitalSettings = CapitalRule & {
+  assetOverrides?: Partial<Record<AgentAsset, CapitalRule>> | null;
+  overallLimit?: CapitalLimit | null;
+  assetLimits?: Partial<Record<AgentAsset, CapitalLimit>> | null;
+  maximumConcurrentStrategies?: number | null;
+};
 
 export type CapitalOverview = {
   success: boolean;
-  settings: {
-    allocationMode: CapitalAllocationMode;
-    capitalAmount?: number | null;
-  };
+  capitalRevision?: string | null;
+  settings: CapitalSettings;
   wallet: {
     asset: "USD";
     totalBalance: number;
@@ -170,6 +186,14 @@ export type CapitalOverview = {
   maximumConcurrentStrategies: number;
   occupiedAllocations: number;
   availableAllocations: number;
+  assetBudgets: Record<AgentAsset, {
+    nominalBudgetPerStrategy: number;
+    availableBudgetForNextStrategy: number;
+    reservedBudget: number;
+    capitalLimit: number;
+  }>;
+  reservedBudget: number;
+  overallCapitalLimit: number;
 };
 
 /** Shared built-in template or reusable definition in the account's private library. */
@@ -386,6 +410,7 @@ export type CapitalObservation = {
   allocationMode: string | null;
   capitalAmount: string | null;
   allocatedBudget: string | null;
+  policy?: CapitalSettings | null;
 };
 
 export type OwnerUserDetail = {
@@ -398,12 +423,16 @@ export type OwnerUserDetail = {
   profile: OwnerProfile;
   account: OwnerAccount;
   automation: { enabled: boolean; assetEnabled: Record<AgentAsset, boolean> };
-  capitalPolicy: { allocationMode: string | null; capitalAmount: string | null };
+  capitalPolicy: Omit<CapitalSettings, "allocationMode"> & { allocationMode: string | null };
+  capitalRevision?: string | null;
   /** Per-strategy budget under the saved policy. Null when the live wallet could not be read. */
   budgetPreview: {
     budgetPerStrategy: string;
     nextStrategyCanUse: string;
     maximumConcurrentStrategies: number;
+    assetBudgets?: Record<AgentAsset, { budgetPerStrategy: string; nextStrategyCanUse: string; capitalLimit: string; reservedBudget: string }>;
+    overallCapitalLimit?: string;
+    reservedBudget?: string;
   } | null;
   wallet: LiveWallet;
   capitalHistory: CapitalObservation[];
