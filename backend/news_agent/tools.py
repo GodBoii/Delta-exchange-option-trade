@@ -540,6 +540,12 @@ class NewsResearchTools(Toolkit):
     async def _read(self, url: str, client: httpx.AsyncClient) -> dict[str, Any]:
         try:
             url = canonicalize_url(url)
+            if (urlsplit(url).hostname or "").rstrip(".") == "news.google.com":
+                return {
+                    "ok": False,
+                    "url": url,
+                    "error": "Discovery link only; find and read the original publisher URL",
+                }
             if url in self.cache:
                 return self.cache[url]
             if url not in self.pending:
