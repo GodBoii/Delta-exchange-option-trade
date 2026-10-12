@@ -149,15 +149,55 @@ class StrategyDefinition(StrictModel):
         return self
 
 
-class CapitalSettingsUpdate(StrictModel):
+class CapitalRuleUpdate(StrictModel):
     allocationMode: CapitalAllocationMode = "half_balance"
     capitalAmount: PositiveFloat | None = None
+    allocationPercent: float | None = Field(default=None, gt=0, le=100, allow_inf_nan=False)
+    divisionCount: int | None = Field(default=None, ge=1, le=100, strict=True)
 
     @model_validator(mode="after")
-    def validate_fixed_amount(self) -> "CapitalSettingsUpdate":
+    def validate_fixed_amount(self) -> "CapitalRuleUpdate":
         if self.allocationMode == "fixed_amount" and self.capitalAmount is None:
             raise ValueError("A fixed capital amount is required")
+        if self.capitalAmount is not None and not 0 < self.capitalAmount < float("inf"):
+            raise ValueError("The capital amount must be finite and positive")
+        if self.allocationMode == "custom_percentage" and self.allocationPercent is None:
+            raise ValueError("A capital percentage is required")
+        if self.allocationMode == "equal_parts" and self.divisionCount is None:
+            raise ValueError("A division count is required")
         return self
+
+
+class CapitalLimitUpdate(StrictModel):
+    mode: Literal["percentage", "fixed_amount"]
+    value: float = Field(gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_percentage(self) -> "CapitalLimitUpdate":
+        if self.mode == "percentage" and self.value > 100:
+            raise ValueError("An aggregate percentage cannot exceed 100")
+        return self
+
+
+class CapitalSettingsUpdate(CapitalRuleUpdate):
+    expectedRevision: str | None = Field(default=None, max_length=64)
+    assetOverrides: dict[Literal["BTC", "ETH"], CapitalRuleUpdate] | None = None
+    overallLimit: CapitalLimitUpdate | None = None
+    assetLimits: dict[Literal["BTC", "ETH"], CapitalLimitUpdate] | None = None
+    maximumConcurrentStrategies: int | None = Field(default=None, ge=1, le=100, strict=True)
+
+    def extensions(self) -> dict:
+        """Only supplied fields change; old clients preserve asset settings and caps."""
+        fields = {
+            "allocationPercent": "allocation_percent",
+            "divisionCount": "division_count",
+            "assetOverrides": "asset_overrides",
+            "overallLimit": "overall_limit",
+            "assetLimits": "asset_limits",
+            "expectedRevision": "expected_revision",
+            "maximumConcurrentStrategies": "maximum_concurrent_strategies",
+        }
+        return {fields[key]: value for key, value in self.model_dump(exclude_unset=True).items() if key in fields}
 
 
 class ConnectRequest(StrictModel):
