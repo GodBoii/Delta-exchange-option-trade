@@ -208,15 +208,90 @@ async def test_capacity_counts_both_assets_and_alias_wallet_budgets(runtime: Loc
     args = {"p_user_id": user_id}
     before = await runtime.select("strategy_capital_slots", {"user_id": f"eq.{user_id}"})
     capacity = await runtime.rpc("get_strategy_capital_capacity", args)
-    assert capacity == {"connected": True, "occupiedSlots": [1, 2], "reservedBudget": "100"}
+    assert capacity == {"connected": True, "occupiedSlots": [1, 2], "reservedBudget": "100",
+                        "reservedByAsset": {"BTC": "75", "ETH": "25"}}
     assert await runtime.select("strategy_capital_slots", {"user_id": f"eq.{user_id}"}) == before
     await runtime.update("strategies", {"status": "completed"}, {"id": f"eq.{strategies[0]}"})
     assert await runtime.rpc("get_strategy_capital_capacity", args) == {
         "connected": True, "occupiedSlots": [2], "reservedBudget": "75",
+        "reservedByAsset": {"BTC": "50", "ETH": "25"},
     }
     assert await runtime.rpc("get_strategy_capital_capacity", {"p_user_id": str(uuid4())}) == {
         "connected": False, "occupiedSlots": [], "reservedBudget": "0",
     }
+
+
+async def capital_account(runtime, policy):
+    user_id, wallet_id = str(uuid4()), str(uuid4())
+    async with runtime.pool.connection() as connection:
+        await connection.execute(
+            "insert into trade.users (user_id,connection,automation,capital,record) values (%s,%s,%s,%s,%s)",
+            (user_id, Jsonb({"status": "connected", "delta_user_id": wallet_id}),
+             Jsonb({"enabled": True}), Jsonb(policy), Jsonb({})),
+        )
+    return user_id
+
+
+async def reserve_asset(runtime, owner, asset, amount):
+    from app.capital import policy_from_row
+    row = await runtime.data.request("library:getCapital", {"userId": owner})
+    policy = policy_from_row(row)
+    strategy_id = str(uuid4())
+    await runtime.write("strategies", {"id": strategy_id, "user_id": owner, "asset": asset, "status": "scheduled"})
+    return await runtime.rpc("reserve_strategy_capital_slot", {
+        "p_user_id": owner, "p_strategy_id": strategy_id, "p_maximum_slots": policy.concurrency_limit(Decimal(100)),
+        "p_budget": str(amount), "p_total_balance": "100", "p_policy": policy.as_json(),
+    })
+
+
+async def test_asset_caps_are_atomic_for_simultaneous_entries(runtime):
+    owner = await capital_account(runtime, {
+        "allocation_mode": "custom_percentage", "allocation_percent": 10,
+        "overall_limit": {"mode": "percentage", "value": 50},
+        "asset_limits": {"ETH": {"mode": "percentage", "value": 10}},
+    })
+    outcomes = await asyncio.gather(reserve_asset(runtime, owner, "ETH", 10),
+                                    reserve_asset(runtime, owner, "ETH", 10), return_exceptions=True)
+    assert sum(isinstance(result, dict) for result in outcomes) == 1
+    failure = next(result for result in outcomes if isinstance(result, AppError))
+    assert failure.code == "capital_reserved"
+    assert (await reserve_asset(runtime, owner, "BTC", 10))["created"]
+    capacity = await runtime.rpc("get_strategy_capital_capacity", {"p_user_id": owner})
+    assert capacity["reservedByAsset"] == {"BTC": "10", "ETH": "10"}
+
+
+async def test_overall_cap_blocks_more_entries_and_policy_change_preserves_old_reservations(runtime):
+    owner = await capital_account(runtime, {
+        "allocation_mode": "equal_parts", "division_count": 10,
+        "overall_limit": {"mode": "fixed_amount", "value": 20},
+    })
+    await reserve_asset(runtime, owner, "BTC", 10)
+    await reserve_asset(runtime, owner, "ETH", 10)
+    with pytest.raises(AppError) as error:
+        await reserve_asset(runtime, owner, "BTC", 10)
+    assert error.value.code == "capital_reserved"
+    await runtime.data.request("library:setCapital", {"value": {
+        "user_id": owner, "allocation_mode": "half_balance", "capital_amount": None,
+        "overall_limit": {"mode": "fixed_amount", "value": 5},
+    }}, mutation=True)
+    capacity = await runtime.rpc("get_strategy_capital_capacity", {"p_user_id": owner})
+    assert capacity["reservedBudget"] == "20"
+    with pytest.raises(AppError):
+        await reserve_asset(runtime, owner, "BTC", 50)
+
+
+async def test_unequal_budget_priority_uses_the_due_btc_amount(runtime):
+    owner = await capital_account(runtime, {
+        "allocation_mode": "custom_percentage", "allocation_percent": 10,
+        "asset_overrides": {"BTC": {"allocationMode": "custom_percentage", "allocationPercent": 40}},
+    })
+    await reserve_asset(runtime, owner, "ETH", 55)
+    due = str(uuid4())
+    await runtime.write("strategies", {"id": due, "user_id": owner, "asset": "BTC", "status": "scheduled",
+                                       "entry_at": (datetime.now(UTC) - timedelta(seconds=1)).isoformat()})
+    with pytest.raises(AppError) as error:
+        await reserve_asset(runtime, owner, "ETH", 10)
+    assert error.value.code == "btc_entry_priority"
 
 
 @pytest.mark.parametrize("maximum,occupied,budget", [(1, 0, "100"), (4, 3, "25"), (4, 0, "60")])
