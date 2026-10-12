@@ -474,8 +474,6 @@ class NewsResearchTools(Toolkit):
 
     async def _fetch_article(self, url: str, client: httpx.AsyncClient) -> dict[str, Any]:
         domain = urlsplit(url).hostname or ""
-        if self.domain_failures.get(domain, 0) >= 2:
-            return {"ok": False, "url": url, "error": "Source failed twice in this run; use another source"}
         started = time.perf_counter()
         try:
             async with asyncio.timeout(self.budget.remaining(30)), self.fetch_slots:
@@ -527,7 +525,11 @@ class NewsResearchTools(Toolkit):
                     len(article["text"]),
                 )
         except (httpx.HTTPError, TimeoutError, ValueError, PdfReadError) as exc:
-            self.domain_failures[domain] = self.domain_failures.get(domain, 0) + 1
+            # A missing or unreadable individual page does not make every article on its domain unavailable.
+            if isinstance(exc, (TimeoutError, httpx.TransportError)) or (
+                isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {401, 403, 429}
+            ):
+                self.domain_failures[domain] = self.domain_failures.get(domain, 0) + 1
             result = {"ok": False, "url": url, "error": str(exc) or "Article timed out"}
         self.cache[url] = result
         logger.info(
@@ -541,6 +543,8 @@ class NewsResearchTools(Toolkit):
             if url in self.cache:
                 return self.cache[url]
             if url not in self.pending:
+                if self.domain_failures.get(urlsplit(url).hostname or "", 0) >= 2:
+                    return {"ok": False, "url": url, "error": "Source failed twice in this run; use another source"}
                 self.budget.consume("read_news_article")
                 self.pending[url] = asyncio.create_task(self._fetch_article(url, client))
             return await self.pending[url]
