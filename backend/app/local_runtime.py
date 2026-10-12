@@ -12,6 +12,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from .analysis_admission import read_snapshot
 from .assets import automation_asset_enabled, run_asset, strategy_asset
+from .capital import fits_capital_limits, policy_budget, policy_from_row
 from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
@@ -307,10 +308,19 @@ class LocalRuntimeStore:
                 "select data from trade.strategy_capital_slots where relation_id=%s for update", (row["id"],)
             )
             for item in await slots.fetchall():
-                await self._save(connection, "strategy_capital_slots", {
-                    **item[0], "status": "available", "strategy_id": None, "proposal_id": None,
-                    "reserved_at": None, "released_at": datetime.now(UTC).isoformat(),
-                }, existing=True)
+                await self._save(
+                    connection,
+                    "strategy_capital_slots",
+                    {
+                        **item[0],
+                        "status": "available",
+                        "strategy_id": None,
+                        "proposal_id": None,
+                        "reserved_at": None,
+                        "released_at": datetime.now(UTC).isoformat(),
+                    },
+                    existing=True,
+                )
         return row
 
     @staticmethod
@@ -435,10 +445,19 @@ class LocalRuntimeStore:
             "select data from trade.strategy_capital_slots where relation_id=%s for update", (strategy_id,)
         )
         for item in await slots.fetchall():
-            await self._save(connection, "strategy_capital_slots", {
-                **item[0], "status": "available", "strategy_id": None, "proposal_id": None,
-                "reserved_at": None, "released_at": datetime.now(UTC).isoformat(),
-            }, existing=True)
+            await self._save(
+                connection,
+                "strategy_capital_slots",
+                {
+                    **item[0],
+                    "status": "available",
+                    "strategy_id": None,
+                    "proposal_id": None,
+                    "reserved_at": None,
+                    "released_at": datetime.now(UTC).isoformat(),
+                },
+                existing=True,
+            )
 
     async def rpc(self, name: str, payload: dict[str, Any]) -> Any:
         operations = {
@@ -469,9 +488,12 @@ class LocalRuntimeStore:
                 raise AppError(503, "The exchange account identity is missing", "journal_not_configured")
             await cursor.execute(
                 """select slots.owner_id,slots.data->>'slot_number' as slot_number,
-                          slots.data->>'reserved_budget' as reserved_budget
+                          slots.data->>'reserved_budget' as reserved_budget,
+                          coalesce(slots.data->>'asset', strategies.data#>>'{definition_json,instrument,underlying}',
+                                   strategies.data->>'asset', 'BTC') as asset
                    from trade.strategy_capital_slots as slots
                    join trade.users as users on users.user_id=slots.owner_id
+                   left join trade.strategies as strategies on strategies.id=slots.relation_id
                    where users.connection->>'delta_user_id'=%s and slots.status in ('reserved','active')""",
                 (str(account_id),),
             )
@@ -479,9 +501,16 @@ class LocalRuntimeStore:
         return {
             "connected": True,
             "occupiedSlots": sorted(int(slot["slot_number"]) for slot in slots if slot["owner_id"] == user_id),
-            "reservedBudget": str(
-                sum((Decimal(slot["reserved_budget"] or "0") for slot in slots), Decimal("0"))
-            ),
+            "reservedBudget": str(sum((Decimal(slot["reserved_budget"] or "0") for slot in slots), Decimal("0"))),
+            "reservedByAsset": {
+                asset: str(
+                    sum(
+                        (Decimal(slot["reserved_budget"] or "0") for slot in slots if slot["asset"] == asset),
+                        Decimal(0),
+                    )
+                )
+                for asset in ("BTC", "ETH")
+            },
         }
 
     async def _reserve_capital(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -490,14 +519,23 @@ class LocalRuntimeStore:
         maximum = int(args["p_maximum_slots"])
         budget = Decimal(str(args["p_budget"]))
         balance = Decimal(str(args["p_total_balance"]))
-        if maximum < 1 or maximum > 100 or budget <= 0 or balance <= 0:
+        if (
+            maximum < 1
+            or maximum > 100
+            or not budget.is_finite()
+            or not balance.is_finite()
+            or budget <= 0
+            or balance <= 0
+        ):
             raise AppError(422, "Invalid capital reservation", "capital_reservation_invalid")
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
             await cursor.execute("select owner_id,data from trade.strategies where id=%s", (strategy_id,))
             strategy = await cursor.fetchone()
             if not strategy or strategy["owner_id"] != user_id:
                 raise AppError(404, "Strategy unavailable", "strategy_not_found")
-            await cursor.execute("select connection,automation from trade.users where user_id=%s for share", (user_id,))
+            await cursor.execute(
+                "select connection,automation,capital from trade.users where user_id=%s for share", (user_id,)
+            )
             user = await cursor.fetchone()
             await cursor.execute("select 1 from trade.strategy_proposals where relation_id=%s limit 1", (strategy_id,))
             automated = await cursor.fetchone()
@@ -509,30 +547,50 @@ class LocalRuntimeStore:
             if not connection_record or connection_record.get("status") != "connected":
                 raise AppError(409, "Delta account required", "delta_not_connected")
             account_id = str(connection_record["delta_user_id"])
+            policy = policy_from_row(user["capital"])
+            if args.get("p_policy") is not None and args["p_policy"] != policy.as_json():
+                raise AppError(409, "Capital settings changed before entry; retry the entry", "capital_policy_changed")
+            if args.get("p_policy") is not None:
+                maximum = policy.concurrency_limit(balance)
             await cursor.execute("select pg_advisory_xact_lock(hashtextextended(%s, 41))", (account_id,))
             await cursor.execute("select user_id from trade.users where connection->>'delta_user_id'=%s", (account_id,))
             aliases = [row["user_id"] for row in await cursor.fetchall()]
             await cursor.execute(
-                """select data from trade.strategy_capital_slots
-                   where owner_id = any(%s) and status in ('reserved','active') for update""",
+                """select slots.data,
+                          coalesce(slots.data->>'asset', strategies.data#>>'{definition_json,instrument,underlying}',
+                                   strategies.data->>'asset', 'BTC') as asset
+                   from trade.strategy_capital_slots as slots
+                   left join trade.strategies as strategies on strategies.id=slots.relation_id
+                   where slots.owner_id = any(%s) and slots.status in ('reserved','active') for update of slots""",
                 (aliases,),
             )
-            active = [row["data"] for row in await cursor.fetchall()]
+            active = [{**row["data"], "asset": row["asset"]} for row in await cursor.fetchall()]
             owned = [row for row in active if row["user_id"] == user_id]
             existing = next((row for row in owned if row.get("strategy_id") == strategy_id), None)
             if existing:
+                if args.get("p_policy") is not None and Decimal(str(existing.get("reserved_budget") or "0")) != budget:
+                    raise AppError(
+                        409, "The existing reservation has a different budget", "capital_reservation_changed",
+                    )
                 return {"slot": existing["slot_number"], "created": False, "occupiedBefore": len(owned) - 1}
             reserved = sum((Decimal(str(row.get("reserved_budget") or "0")) for row in active), Decimal("0"))
+            by_asset = {
+                asset: sum(
+                    (Decimal(str(row.get("reserved_budget") or "0")) for row in active if row["asset"] == asset),
+                    Decimal(0),
+                )
+                for asset in ("BTC", "ETH")
+            }
+            asset = strategy_asset(strategy["data"])
             if len(owned) >= maximum:
                 raise AppError(409, f"All {maximum} strategy slots are occupied", "capital_slots_full")
-            if reserved + budget > balance:
+            if not fits_capital_limits(policy, balance, asset, budget, reserved, by_asset):
                 raise AppError(409, "Account capital is already reserved", "capital_reserved")
-            if strategy_asset(strategy["data"]) == "ETH" and (
-                len(owned) == maximum - 1 or reserved + budget * 2 > balance
-            ):
+            if asset == "ETH":
                 # This check runs under the same wallet lock as the reservation, including aliases.
                 await cursor.execute(
-                    """select 1 from trade.strategies as candidate
+                    """select candidate.owner_id, account.capital from trade.strategies as candidate
+                       join trade.users as account on account.user_id=candidate.owner_id
                        where candidate.owner_id=any(%s) and candidate.status='scheduled'
                          and candidate.data->>'entry_execution_at' is null
                          and candidate.entry_at<=now()
@@ -554,13 +612,34 @@ class LocalRuntimeStore:
                                and recheck.data->>'trigger'='activation_recheck'
                                and (recheck.status in ('failed','cancelled')
                                     or recheck.data->>'outcome'='strategy_dropped')
-                         ) limit 1""",
+                         )""",
                     (aliases, int(args.get("p_max_entry_lateness_seconds", 180))),
                 )
-                if await cursor.fetchone():
-                    raise AppError(
-                        409, "Waiting for a due BTC entry before using the last allocation", "btc_entry_priority"
+                for candidate in await cursor.fetchall():
+                    btc_policy = policy_from_row(candidate["capital"])
+                    btc_budget = policy_budget(
+                        Decimal(str(args.get("p_available_balance", balance))), balance, btc_policy, "BTC"
                     )
+                    btc_count = sum(row["user_id"] == candidate["owner_id"] for row in active)
+                    btc_maximum = btc_policy.concurrency_limit(balance)
+                    if args.get("p_policy") is None and candidate["owner_id"] == user_id:
+                        # Older internal callers supplied their evaluated budget and slot count.
+                        btc_budget, btc_maximum = budget, maximum
+                    before = btc_count < btc_maximum and fits_capital_limits(
+                        btc_policy, balance, "BTC", btc_budget, reserved, by_asset
+                    )
+                    after = btc_count + int(candidate["owner_id"] == user_id) < btc_maximum and fits_capital_limits(
+                        btc_policy,
+                        balance,
+                        "BTC",
+                        btc_budget,
+                        reserved + budget,
+                        {**by_asset, "ETH": by_asset["ETH"] + budget},
+                    )
+                    if before and not after:
+                        raise AppError(
+                            409, "Waiting for a due BTC entry before using the last allocation", "btc_entry_priority"
+                        )
             await cursor.execute(
                 "select data from trade.strategy_capital_slots where owner_id=%s for update", (user_id,)
             )
@@ -580,6 +659,7 @@ class LocalRuntimeStore:
                     "reserved_at": now,
                     "released_at": None,
                     "reserved_budget": str(budget),
+                    "asset": asset,
                     "created_at": current.get("created_at", now) if current else now,
                 }
                 await self._save(connection, "strategy_capital_slots", row, existing=bool(current))
