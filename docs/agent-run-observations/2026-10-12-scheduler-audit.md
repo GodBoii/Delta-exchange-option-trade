@@ -45,6 +45,8 @@ Health checks expose failure; Docker's `unless-stopped` policy alone does not re
 
 ## Live review and external limits
 
-The repaired BTC review started at 19:02:02 IST. News research completed at approximately 19:07:14, and strategy analysis followed. ETH was waiting on `analysis_capacity_pending` under the existing full-balance policy, rather than failing on the null-settings exception.
+The repaired BTC review started at 19:02:02 IST. News research completed at approximately 19:07:14. The full review completed at 19:10:01 with `strategy_selected`, and the analyzer returned HTTP 200.
+
+ETH expired at 19:10:10 while waiting on `analysis_capacity_pending` under the existing full-balance policy. Its retained `expiry_reason` is also `analysis_capacity_pending`. This was a capital-admission decision after the null-settings bug was fixed, not a provider or settings exception. Successful BTC analysis does not guarantee that ETH also receives capacity in the same session.
 
 The credential-safe provider metadata check reported a USD 25 key limit, USD 22.8648 usage, approximately USD 2.1352 remaining, and no automatic reset. Funding remains a constraint on future runs. Analyzer readiness does not prove remaining provider credit or guarantee exchange/network availability. The live model request, rather than health alone, established that this review could reach the provider.
