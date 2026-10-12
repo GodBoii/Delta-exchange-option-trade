@@ -81,3 +81,53 @@ def test_source_classification_is_transparent_and_subdomain_aware() -> None:
     assert classify_source_url("https://www.whitehouse.gov/news/")["source_class"] == "primary_official"
     assert classify_source_url("https://markets.reuters.com/article")["source_class"] == "licensed_financial_news"
     assert classify_source_url("https://random.example/article")["source_class"] == "unknown"
+
+
+def test_pdf_extracts_real_document_text_without_inventing_dates():
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    from news_agent.tools import parse_article_pdf
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
+    )
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 50 750 Td (Official monetary policy statement with supporting evidence.) Tj ET")
+    page[NameObject("/Contents")] = stream
+    output = BytesIO()
+    writer.write(output)
+    result = parse_article_pdf(output.getvalue(), "https://official.example/statement.pdf")
+    assert "Official monetary policy statement" in result["text"]
+    assert result["published_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_access_challenge_is_not_counted_as_successful_article(monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from news_agent.tools import FetchResult, NewsResearchTools
+
+    async def fetch(url, *_, **__):
+        return FetchResult(
+            url, url, "text/html", b"<title>Access Denied</title><article><p>" + b"blocked " * 100 + b"</p></article>"
+        )
+
+    monkeypatch.setattr("news_agent.tools.fetch_public_document", fetch)
+    result = json.loads(
+        await NewsResearchTools(SimpleNamespace(allowed_domains=())).read_news_article("https://example.com/a")
+    )
+    assert not result["ok"]
+    assert "access challenge" in result["error"]
