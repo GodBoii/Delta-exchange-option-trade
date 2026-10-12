@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, Profile, RefreshCw, Save, Search } from "@/app/components/icons";
-import { CAPITAL_MODE_OPTIONS, isCapitalAllocationMode } from "@/lib/capital";
+import { capitalRuleText, capitalSettingsError, normalizeCapitalRule, normalizeCapitalSettings } from "@/lib/capital";
+import CapitalPolicyFields from "@/app/components/CapitalPolicyFields";
 import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { EM_DASH, errorMessage, formatDateTime, formatTimestamp, relativeTime, toNumber } from "@/lib/format";
 import {
-  allocationModeText, runStub, tradeQuery, walletUnavailableText
+  runStub, tradeQuery, walletUnavailableText
 } from "@/lib/reporting";
 import type {
-  CapitalAllocationMode, OwnerTradeDetail, OwnerUserDetail, OwnerUserRow, OwnerUsersResponse, ReportRange, TradeItem
+  OwnerTradeDetail, OwnerUserDetail, OwnerUserRow, OwnerUsersResponse, ReportRange, TradeItem
 } from "@/lib/app-types";
 import { RunDetailDialog } from "@/app/components/RunHistory";
 import PnlCharts from "@/app/components/PnlCharts";
@@ -21,7 +22,7 @@ import {
   PnlTiles, RangeControl, StateSelect, TradeTable, useTradePages, type StateFilter
 } from "@/app/components/TradeReport";
 import {
-  DetailList, EmptyState, InlineMessage, NumberField, Panel, PanelHeader, SectionHeading, Select, StatusChip,
+  DetailList, EmptyState, InlineMessage, Panel, PanelHeader, SectionHeading, Select, StatusChip,
   StatusDot, TableSkeleton, TileSkeleton, Segmented, type NoticeHandler
 } from "@/app/components/ui";
 
@@ -402,7 +403,7 @@ function UserDetail({ userId, onNotice, onAutomationSaved, refreshToken }: {
             )}
           </div>
           <div className="detail-tile">
-            <span>Budget per strategy</span>
+            <span>Default budget per strategy</span>
             {budgetPreview ? (
               <>
                 <strong>{formatMoneyNumber(budgetPreview.budgetPerStrategy)}<small>{currencyCode}</small></strong>
@@ -412,16 +413,27 @@ function UserDetail({ userId, onNotice, onAutomationSaved, refreshToken }: {
               </>
             ) : (
               <>
-                <strong className="is-text">{allocationModeText(capitalPolicy.allocationMode)}</strong>
+                <strong className="is-text">{capitalRuleText(normalizeCapitalRule(capitalPolicy))}</strong>
                 <small className="detail-tile-note">The amount needs a live wallet balance.</small>
               </>
             )}
           </div>
         </div>
+        {budgetPreview?.assetBudgets && <dl className="capital-figures">
+          <div><dt>Overall capital cap</dt><dd>{formatMoneyNumber(budgetPreview.overallCapitalLimit)}</dd></div>
+          <div><dt>Reserved across wallet</dt><dd>{formatMoneyNumber(budgetPreview.reservedBudget)}</dd></div>
+          {(["BTC", "ETH"] as const).map(code => <div className="capital-asset-figure" key={code}>
+            <dt>{code} budget per strategy</dt><dd>{formatMoneyNumber(budgetPreview.assetBudgets?.[code].budgetPerStrategy)} {currencyCode}
+            <small className="field-hint">Next entry {formatMoneyNumber(budgetPreview.assetBudgets?.[code].nextStrategyCanUse)} ·
+              Reserved {formatMoneyNumber(budgetPreview.assetBudgets?.[code].reservedBudget)} ·
+              Cap {formatMoneyNumber(budgetPreview.assetBudgets?.[code].capitalLimit)}</small></dd>
+          </div>)}
+        </dl>}
         <CapitalPolicyEditor
           userId={userId}
           name={displayName(profile)}
           policy={capitalPolicy}
+          revision={detail.data.capitalRevision ?? null}
           onNotice={onNotice}
           onSaved={() => setToken(value => value + 1)}
         />
@@ -516,25 +528,25 @@ function OwnerReportControls({ asset, range, onAssetChange, onRangeChange }: {
   </div>;
 }
 
-function CapitalPolicyEditor({ userId, name, policy, onNotice, onSaved }: {
+function CapitalPolicyEditor({ userId, name, policy, revision, onNotice, onSaved }: {
   userId: string;
   name: string;
   policy: OwnerUserDetail["capitalPolicy"];
+  revision: string | null;
   onNotice: NoticeHandler;
   onSaved: () => void;
 }) {
-  const { currencyCode, convertFromUsd, convertToUsd } = useCurrency();
-  const savedMode: CapitalAllocationMode = isCapitalAllocationMode(policy.allocationMode) ? policy.allocationMode : "half_balance";
-  const savedAmountUsd = toNumber(policy.capitalAmount);
-  const [mode, setMode] = useState<CapitalAllocationMode>(savedMode);
-  const [amount, setAmount] = useState(() => convertFromUsd(savedAmountUsd ?? 100));
+  const saved = normalizeCapitalSettings(policy);
+  const [draft, setDraft] = useState(saved);
   const [status, setStatus] = useState<{ kind: "idle" } | { kind: "saving" } | { kind: "error"; message: string }>({ kind: "idle" });
 
-  const dirty = mode !== savedMode
-    || (mode === "fixed_amount" && Math.abs((savedAmountUsd ?? 0) - convertToUsd(amount)) > 0.00001);
-  const invalid = mode === "fixed_amount" && !(amount > 0);
-  const options = CAPITAL_MODE_OPTIONS.map(option => option.value === "fixed_amount"
-    ? { ...option, label: `Fixed ${currencyCode} amount` } : { ...option });
+  useEffect(() => {
+    setDraft(normalizeCapitalSettings(policy));
+    setStatus({ kind: "idle" });
+  }, [policy, revision]);
+
+  const dirty = JSON.stringify(normalizeCapitalSettings(draft)) !== JSON.stringify(saved);
+  const invalid = capitalSettingsError(draft);
 
   async function save() {
     if (invalid || status.kind === "saving") return;
@@ -544,7 +556,7 @@ function CapitalPolicyEditor({ userId, name, policy, onNotice, onSaved }: {
         `/api/owner/users/${encodeURIComponent(userId)}/capital`,
         {
           method: "PUT",
-          body: JSON.stringify({ allocationMode: mode, capitalAmount: mode === "fixed_amount" ? convertToUsd(amount) : null })
+          body: JSON.stringify({ ...draft, expectedRevision: revision })
         }
       );
       setStatus({ kind: "idle" });
@@ -558,26 +570,16 @@ function CapitalPolicyEditor({ userId, name, policy, onNotice, onSaved }: {
 
   return (
     <div className="owner-capital-editor">
-      <div className="owner-capital-fields">
-        <Select
-          label="Budget per strategy"
-          value={mode}
-          options={options}
-          onChange={value => { if (isCapitalAllocationMode(value)) setMode(value); }}
-          hint={`Calculated from the account's total USD balance, capped by what is available. ${name} can also change this from Portfolio.`}
-        />
-        {mode === "fixed_amount" && (
-          <NumberField label="Amount" value={amount} min={0.01} step={0.01} suffix={currencyCode} invalid={invalid} onChange={setAmount} />
-        )}
-      </div>
+      <CapitalPolicyFields value={draft} onChange={setDraft} disabled={status.kind === "saving"} />
+      {invalid && <InlineMessage tone="error">{invalid}</InlineMessage>}
       <div className="owner-capital-actions">
         {dirty && (
           <>
             <button type="button" className="button ghost small" disabled={status.kind === "saving"}
-              onClick={() => { setMode(savedMode); setAmount(convertFromUsd(savedAmountUsd ?? 100)); setStatus({ kind: "idle" }); }}>
+              onClick={() => { setDraft(saved); setStatus({ kind: "idle" }); }}>
               Reset
             </button>
-            <button type="button" className="button primary small" disabled={invalid || status.kind === "saving"} onClick={() => void save()}>
+            <button type="button" className="button primary small" disabled={!!invalid || status.kind === "saving"} onClick={() => void save()}>
               <Save aria-hidden="true" />{status.kind === "saving" ? "Saving…" : "Save budget"}
             </button>
           </>
