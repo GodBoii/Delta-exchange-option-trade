@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import uuid
+from contextlib import suppress
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Annotated, Any
@@ -60,8 +61,9 @@ def _configure_logging() -> None:
         retained.setFormatter(_SafeLogFormatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
         root.addHandler(retained)
         for old in directory.glob("analysis-*.log*"):
-            if old.stat().st_mtime < time.time() - 30 * 24 * 3600:
-                old.unlink(missing_ok=True)
+            with suppress(FileNotFoundError):
+                if old.stat().st_mtime < time.time() - 30 * 24 * 3600:
+                    old.unlink(missing_ok=True)
     for logger_name in ("news_analyzer", "news_agent", "agno"):
         logging.getLogger(logger_name).setLevel(LOG_LEVEL)
     # Keep application and Agno traces detailed without drowning them in HTTP/2,
