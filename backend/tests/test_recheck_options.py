@@ -128,7 +128,7 @@ def test_failed_refresh_invalidates_previous_evidence(monkeypatch, fault):
     assert toolkit.evidence_valid is True
 
 
-def test_assigned_overview_preserves_legacy_expiry_and_excludes_other_maturities():
+def test_assigned_overview_preserves_scheduled_expiry_and_excludes_other_maturities():
     packet = {"enrichment": {"options": [
         {"expiry": "2026-10-08T12:00:00Z", "atmIvPercent": 26},
         {"expiry": "2026-10-09T12:00:00Z", "atmIvPercent": 31},
