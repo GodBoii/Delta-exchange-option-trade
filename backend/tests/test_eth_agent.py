@@ -147,10 +147,10 @@ def test_eth_market_tool_rejects_cross_asset_data(monkeypatch, wrong_symbol, wro
 
 def test_eth_packet_and_charts_use_eth_units():
     packet = {"orderBook": {"bids": [[2690, 3]], "asks": [[2691, 1]]}, "timeframes": {}}
-    compact = market_summary(packet, "ETH")
+    market_evidence = market_summary(packet, "ETH")
 
-    assert compact["spotOrderBook"]["bidDepthTop20Eth"] == 3
-    assert "bidDepthTop20Btc" not in compact["spotOrderBook"]
+    assert market_evidence["spotOrderBook"]["bidDepthTop20Eth"] == 3
+    assert "bidDepthTop20Btc" not in market_evidence["spotOrderBook"]
 
 
 def test_analysis_request_defaults_to_btc_and_accepts_eth():
