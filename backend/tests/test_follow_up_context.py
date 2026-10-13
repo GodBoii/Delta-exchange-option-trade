@@ -131,7 +131,11 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         asset=team.PROFILES[asset],
     )
     assert captured["instructions"][0].startswith(f"Assess {asset}USD direction")
-    assert captured["name"] == f"{asset} Strategy Automation Team"
+    assert captured["name"] == f"{asset} Automation agent"
+    assert captured["id"] == team.PROFILES[asset].agent_id
+    assert len(captured["instructions"]) == 9
+    assert all("Only at-the-money" not in text and "moves more than BTC" not in text
+               for text in captured["instructions"])
     assert captured["model"].reasoning_effort == "max"
     assert "max_tokens" not in captured["model"].get_request_params()
     assert "max_completion_tokens" not in captured["model"].get_request_params()
