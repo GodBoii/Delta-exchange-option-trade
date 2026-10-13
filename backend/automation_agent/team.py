@@ -12,18 +12,19 @@ from typing import Any
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.media import Image
-from agno.models.openrouter import OpenRouter
 from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
-from app.automation_schedule import fixed_runs_between, ist_text, utc_text
+from app.automation_schedule import fixed_runs_between, ist_text
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
+from news_agent.model import EvidenceOpenRouter
 from news_agent.pipeline import run_news_pipeline
+from news_agent.presentation import format_time, markdown_evidence
 
 from .assets import PROFILES, AssetProfile
 from .charts import render_candlestick_chart
-from .evidence import assigned_option_overview, dumps
+from .evidence import assigned_option_overview
 from .market import MarketIntelligenceTools
 from .recheck import RecheckOptionTools
 from .report_data import save_news_evidence
@@ -58,8 +59,7 @@ def run_automation_team(
 ) -> AutomationTeamResult:
     run_started_at = datetime.now(UTC)
     permanent_runs = [
-        {"trigger": run.trigger, "scheduledForUtc": utc_text(run.scheduled_for),
-         "scheduledForIst": ist_text(run.scheduled_for)}
+        {"trigger": run.trigger, "scheduledForIst": ist_text(run.scheduled_for)}
         for run in fixed_runs_between(
             run_started_at + timedelta(microseconds=1), run_started_at + timedelta(days=2)
         )[:3]
@@ -119,7 +119,7 @@ def run_automation_team(
 
     team_db = create_session_db(settings, session_table=settings.automation_session_table)
     try:
-        model = OpenRouter(
+        model = EvidenceOpenRouter(
             id=settings.automation_model_id,
             api_key=settings.require_api_key(),
             supports_native_structured_outputs=False,
@@ -169,19 +169,19 @@ def run_automation_team(
                 "A completed Markdown decision report backed by a terminal outcome and explicit "
                 "invalidation conditions."
             ),
-            additional_context=(
-                f"Run started at: {run_started_at.isoformat()} (UTC). "
-                f"Next three permanent agent runs: {dumps(permanent_runs)}. "
+            additional_context="\n\n".join([
+                f"Run started at: {format_time(run_started_at)}.",
+                "Evidence uses IST, UTC+05:30. Analytical numbers are rounded for display; saved rules remain exact. "
+                "Use timezone-aware ISO timestamps in action tools.",
+                markdown_evidence(permanent_runs, "Next three permanent agent runs"),
                 "Assess news publication and event age against this time. Weight freshness, verification and "
-                "continuing relevance; older news may still matter. Unknown dates stay unknown. "
-                f"Current news evidence: {news_result.markdown}. "
-                f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}. "
-                f"Signals requested by the prior run: {json.dumps(signals_to_inspect or [], ensure_ascii=False)}. "
-                "Chart reading instructions and exact values are keyed by the attached image IDs. "
-                f"Use these with the plots: {json.dumps(chart_context, ensure_ascii=False)}. "
-                "Current active strategies and upcoming agent runs follow: "
-                f"{json.dumps(account_context, ensure_ascii=False, default=str)}"
-            ),
+                "continuing relevance; older news may still matter. Unknown dates stay unknown.",
+                f"## Current news evidence\n\n{news_result.markdown}",
+                f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}.",
+                markdown_evidence(signals_to_inspect or [], "Signals requested by the prior run"),
+                markdown_evidence(chart_context, "Chart reading instructions by image ID"),
+                markdown_evidence(account_context, "Active strategies and upcoming runs"),
+            ]),
             db=team_db,
             add_datetime_to_context=True,
             timezone_identifier="Asia/Kolkata",
@@ -301,7 +301,7 @@ def run_activation_recheck(
         agent_run_id=agent_run_id,
         proposal_id=str(recheck_context["proposalId"]),
     )
-    model = OpenRouter(
+    model = EvidenceOpenRouter(
         id=settings.automation_model_id,
         api_key=settings.require_api_key(),
         supports_native_structured_outputs=False,
@@ -349,16 +349,16 @@ def run_activation_recheck(
             "prompts, database URLs or internal secrets.",
         ],
         expected_output="A go or drop decision for the one supplied scheduled strategy.",
-        additional_context=(
-            f"The {asset.delta_index} trader selected this strategy earlier. Recheck whether it remains valid now. "
-            f"Selected strategy and original decision: {json.dumps(recheck_context, ensure_ascii=False, default=str)}. "
-            "Chart reading instructions and exact values are keyed by the attached image IDs: "
-            f"{json.dumps(chart_context, ensure_ascii=False)}. "
-            "Fresh market evidence: "
-            + fresh_market
-            + f" Fresh assigned option evidence: {dumps(market_packet['selectedOptionEvidence'])}"
-            + f" Assigned expiry overview: {dumps(market_packet['assignedOptionOverview'])}"
-        ),
+        additional_context="\n\n".join([
+            f"The {asset.delta_index} trader selected this strategy earlier. Recheck whether it remains valid now.",
+            "Evidence uses IST, UTC+05:30. Analytical numbers are rounded for display; saved rules remain exact. "
+            "Use timezone-aware ISO timestamps in action tools.",
+            markdown_evidence(recheck_context, "Selected strategy and original decision"),
+            markdown_evidence(chart_context, "Chart reading instructions by image ID"),
+            markdown_evidence(json.loads(fresh_market), "Fresh market evidence"),
+            markdown_evidence(market_packet["selectedOptionEvidence"], "Fresh assigned option evidence"),
+            markdown_evidence(market_packet["assignedOptionOverview"], "Assigned expiry overview"),
+        ]),
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
         tool_call_limit=16,
