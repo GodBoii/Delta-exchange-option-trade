@@ -589,9 +589,9 @@ The AI receives analysis data and saved strategies. It does not receive authorit
 
 ```text
 1-minute, 15-minute, and daily price charts
-15-minute spot-volume chart
-rolling realized-volatility chart
-Binance Spot order-book depth chart
+spot-volume summaries through the market tool
+realized-volatility values through the market tool
+order-book depth and liquidity through the market tool
 returns and market structure
 VWAP and distance from VWAP
 ATR and realized volatility
@@ -672,7 +672,7 @@ History failure is reported in the packet without breaking the existing market t
 
 Agent PNGs use a 1600 x 900 full-width plot with labeled axes and a small boxed legend in the upper-right margin. There is no side panel or prose footer. Both main runs and activation rechecks use the same candlestick renderer. Images identify Binance Spot BTCUSDT, price/volume units, and UTC capture time.
 
-Detailed values, source timestamps, formulas, and reading instructions are sent as text keyed by image ID and persisted under `market_json.chartContext`. Main agents and activation rechecks receive this alongside the images, generated from the same snapshot. The items below describe the combined image and text context, not a statistics panel within the PNG.
+Detailed values, source timestamps, formulas, and reading instructions are sent as text keyed by image ID and persisted under `market_json.chartContext`. Main agents and activation rechecks receive this alongside the images, generated from the same snapshot. Main analysis attaches only the three price images; recheck attaches the two shorter-timeframe price images. Volume, volatility and depth arrive numerically through the market tool. The additional renderers remain available for diagnostic use. The items below describe renderer capabilities, not a statistics panel within the PNG.
 
 - Candlesticks show time ticks, OHLC, live/completed status, shown high/low and close-to-close return, EMA20/50, and a labeled window VWAP. EMA periods refer to that chart's bars; VWAP is HLC3 weighted by traded BTC from the left edge, not session VWAP.
 - Volume uses a zero-based BTC-per-bar axis, candle-direction colors, a previous-20-completed-bar mean, and a completed-bar relative-volume comparison. Partial volume is marked, not compared as a finished bar.
@@ -681,7 +681,7 @@ Detailed values, source timestamps, formulas, and reading instructions are sent 
 
 To inspect the exact renderer output without running an agent, use `python -m scripts.render_agent_charts --binance-url http://127.0.0.1:8001 --output-dir <review-directory>` from `backend`. The output includes `chart-context.json` for the companion text. Reuse its `market.json` with `--packet <path>` for a same-snapshot comparison. These review files stay separate from trade history.
 
-Each chart is uploaded to the private Supabase `automation-charts` bucket. The model and Automation UI receive time-limited signed URLs for the same stored PNG objects. Account balances are never added to model context.
+Each chart is stored in local PostgreSQL under `ai.chart_images`. The model receives the PNG bytes, and the Automation UI uses backend chart links. Account balances are never added to model context.
 
 ## 9. AI tools
 
