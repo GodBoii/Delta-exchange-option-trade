@@ -136,7 +136,7 @@ def run_automation_team(
         )
         team = Agent(
             id=asset.agent_id,
-            name=f"{code} Strategy Automation Team",
+            name=f"{code} Automation agent",
             role=(
                 f"{code} options analysis agent that identifies sideways, bullish, bearish, and volatility trends, "
                 "then schedules the saved strategy most likely to profit."
@@ -150,7 +150,6 @@ def run_automation_team(
                 f"Assess {pair} direction, sideways conditions, breakouts and volatility using supplied market "
                 "data, charts and news. Judge news freshness against the supplied current time. Do not repeat "
                 "news research or infer current option prices from spot; activation recheck evaluates actual options.",
-                *_asset_specific_instructions(code),
                 "Call show_available_strategy for saved strategies and strategyRef values. Choose using their "
                 "descriptions and rules. Preserve legs, strikes, sizing, stops, targets and order types.",
                 "Select a strategy and entry time. The backend calculates the default exit. Choose a duration "
@@ -327,7 +326,6 @@ def run_activation_recheck(
             f"Recheck only the assigned {code} strategy. Do not replace it, change its schedule, research news, "
             "delegate or use outside data. Its actual entry, exit, expiry and explicit holding policy override "
             "historical defaults in its description.",
-            *_asset_specific_instructions(code),
             "Compare fresh Binance Spot charts, numerical evidence and dated sessionHistory with the original "
             "selection report. Earlier reports/news are historical evidence, not current facts. Missing "
             "observations remain unknown, not zero. Absent scheduled catalysts do not prove no event can occur "
@@ -499,24 +497,6 @@ def _recheck_chart_artifacts(market_packet: dict[str, Any], base: str = "BTC") -
                 )
             )
     return charts
-
-
-def _asset_specific_instructions(code: str) -> list[str]:
-    """Extra guidance for agents other than the original BTC agent, whose prompt stays unchanged."""
-    if code == "BTC":
-        return []
-    return [
-        (
-            f"Every strategy offered to you is a separate {code} built-in. Only at-the-money {code} strategies are "
-            "available; do not describe or request out-of-the-money, in-the-money, or spread structures."
-        ),
-        (
-            f"{code} moves more than BTC. Judge the sideways score, realized volatility, ATR, and volume against "
-            f"{code}'s own sessionHistory averages, never against BTC levels. Quantities in the packet and charts "
-            f"are {code}, and fields ending in {code.capitalize()} or labelled volumeBtc in raw history hold {code} "
-            "base-asset volume."
-        ),
-    ]
 
 
 def _response_summary(response: Any) -> dict[str, Any]:
