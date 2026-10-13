@@ -8310,6 +8310,14 @@ kbd {
 }
 
 .trade-table { min-width: 760px; }
+.trade-monitor-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); color: var(--text-3); font-size: var(--t-xs); }
+.trade-monitor-message { margin-block: var(--s-4); color: var(--text-1); line-height: 1.6; }
+.trade-monitor .detail-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.trade-monitor-activity { display: grid; gap: var(--s-4); margin: 0; padding: 0; list-style: none; }
+.trade-monitor-activity li { display: grid; gap: var(--s-1); padding-inline-start: var(--s-4); border-inline-start: 2px solid var(--line-strong); }
+.trade-monitor-activity strong { font-size: var(--t-sm); font-weight: 500; }
+.trade-monitor-activity span { color: var(--text-3); font-size: var(--t-xs); }
+.trade-monitor .mono { overflow-wrap: anywhere; }
 
 .trade-row.is-deleted th strong { color: var(--text-2); }
 
@@ -8592,6 +8600,7 @@ kbd {
   .capital-history-value { grid-column: 2; justify-self: start; text-align: left; }
   .report-filters > * { max-width: none; }
   .trade-table { min-width: 0; }
+  .trade-monitor .detail-tiles { grid-template-columns: minmax(0, 1fr); }
 }
 
 .owner-capital-editor {
