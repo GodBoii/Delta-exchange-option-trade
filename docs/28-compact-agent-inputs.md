@@ -18,16 +18,23 @@ targets, size policies and order rules. It no longer contains indicative premium
 quote spreads or short-strike-distance comparisons. Main market input has no option
 expiry overview, IV movement scales or option unit fields.
 
-`calculate_exit_time(strategy_ref, activation_time, exit_choice)` returns only validity
-and the resolved schedule. It replaces `preview_strategy` on the compact main path.
-Contract availability, strike rules, asset, saved version and snapshot validation remain
-private backend checks. Compact selection requires a successful calculation for the same
-strategy version, activation and exit choice. Failed recalculation clears that cached result.
-The backend still collects and stores private option evidence for resolution and audit.
+Main agents select a saved strategy and entry time with `select_strategy_and_time`.
+The backend calculates a seven-hour exit, shortened by the saved expiry cutoff.
+Only `new_york_session` exposes an optional `holding_hours` choice of 7 or 11.
+Other reviews omit that field from the model's tool schema. The model no longer
+calls `calculate_exit_time` before selection. Selection checks the saved version,
+current snapshot, contract availability and session policy directly before publishing.
+Private option evidence remains stored for resolution and audit.
 
-Main action tools remain `select_strategy_and_time` and `scheduled_next_agent_run`.
-The legacy main path also retains `show_available_strategy` and its asset market tool.
-Calculator tools remain on the compact main path for general numerical analysis.
+Main action tools are `select_strategy_and_time` and `scheduled_next_agent_run`.
+The legacy path additionally exposes `show_available_strategy` and its asset market tool.
+Optional calculator tools remain on the compact path. Every main run receives its UTC
+start time and the next three permanent reviews in UTC and IST, calculated by the
+same timezone-aware fixed-session scheduler. `previousRun` contains only the parent
+review that requested the current follow-up, including its full report; unrelated
+recent decisions are not supplied. The backend schedules activation recheck seven
+minutes before entry and rejects entries that leave insufficient time.
+Follow-up limits remain backend-enforced.
 
 Both legacy and compact rechecks receive a fresh preview for their assigned strategy.
 It includes selected-contract premiums, multipliers, IV, spreads, depth fill estimates,
