@@ -48,14 +48,12 @@ class AutomationStrategyTools(Toolkit):
         market_snapshot_id: str,
         news_analysis_id: str | None = None,
         asset: Asset = DEFAULT_ASSET,
-        curated: bool = False,
         trigger: str | None = None,
         review_at: datetime | None = None,
         **kwargs: Any,
     ) -> None:
         self.settings = settings
         self.asset = asset
-        self.curated = curated
         self.trigger = trigger
         self.review_at = review_at
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
@@ -69,22 +67,8 @@ class AutomationStrategyTools(Toolkit):
         self.runtime_data = runtime_data(settings)
         super().__init__(
             name="automation_strategy_tools",
-            tools=(
-                [
-                    self.select_strategy_and_time,
-                    self.scheduled_next_agent_run,
-                ]
-                if curated
-                else [
-                    self.show_available_strategy,
-                    self.select_strategy_and_time,
-                    self.scheduled_next_agent_run,
-                ]
-            ),
-            instructions=(
-                "Use the starting catalogue's strategyRef values."
-                if curated else "Call show_available_strategy and use its strategyRef values."
-            ),
+            tools=[self.show_available_strategy, self.select_strategy_and_time, self.scheduled_next_agent_run],
+            instructions="Call show_available_strategy and use its strategyRef values.",
             add_instructions=True,
             **kwargs,
         )
@@ -92,55 +76,6 @@ class AutomationStrategyTools(Toolkit):
         selection.process_entrypoint()
         if self.trigger != "new_york_session":
             selection.parameters["properties"].pop("holding_hours", None)
-
-    def starting_catalogue(self) -> dict:
-        source = json.loads(self.show_available_strategy())
-        rows = []
-        for strategy in source["strategies"]:
-            definition = strategy.pop("definition")
-            rows.append(
-                {
-                    **strategy,
-                    "rules": {
-                        k: definition[k]
-                        for k in (
-                            "category",
-                            "marketOutlook",
-                            "riskMode",
-                            "riskBasis",
-                            "stopLossPercent",
-                            "takeProfitPercent",
-                            "sizePolicy",
-                            "exitMinutesBeforeExpiry",
-                        )
-                        if k in definition
-                    },
-                    "legs": [
-                        {
-                            k: leg[k]
-                            for k in (
-                                "position",
-                                "optionType",
-                                "strikeMode",
-                                "strikeSteps",
-                                "exactStrike",
-                                "lots",
-                                "orderType",
-                                "limitPrice",
-                                "targetProfit",
-                                "stopLoss",
-                                "trailStop",
-                            )
-                            if k in leg
-                        }
-                        for leg in definition.get("legs", [])
-                    ],
-                }
-            )
-        return {
-            **source,
-            "strategies": rows,
-        }
 
     def show_available_strategy(self) -> str:
         """Return enabled strategies with descriptions, run-local references, and complete definitions."""
@@ -446,23 +381,8 @@ class AutomationStrategyTools(Toolkit):
             options=option_context.get("options") or [],
             trigger=getattr(self, "trigger", None), review_at=getattr(self, "review_at", None),
         )
-        if self.curated:
-            # Retain the former preview's private saved-policy validation without exposing quotes.
-            resolve_contracts(definition, option_context.get("options") or [])
+        resolve_contracts(definition, option_context.get("options") or [])
         return definition, schedule
-
-    def calculate_exit_time(self, strategy_ref: str, activation_time: str, exit_choice: ExitChoice) -> str:
-        """Preview the exact holding duration, option expiry and safety cutoff without scheduling."""
-        try:
-            selection = self.strategy_references.get(strategy_ref.strip().upper())
-            if selection is None:
-                raise ValueError("Unknown strategyRef. Call show_available_strategy first")
-            activation = _aware_datetime(activation_time, "activation_time")
-            choice = ExitChoice.model_validate(exit_choice)
-            _, schedule = self._resolve_selection(*selection, activation, choice)
-            return json.dumps({"valid": True, "schedule": schedule})
-        except (ValueError, AppError) as error:
-            return json.dumps({"valid": False, "reason": str(error)})
 
     def scheduled_next_agent_run(
         self,
