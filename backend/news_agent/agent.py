@@ -134,7 +134,7 @@ def create_news_agent(
         tools=tools,
         tool_call_limit=50,
         add_datetime_to_context=True,
-        timezone_identifier="UTC",
+        timezone_identifier="Asia/Kolkata",
         debug_mode=debug_mode,
     )
     return agent
