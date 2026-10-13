@@ -6,7 +6,8 @@ import re
 from dataclasses import dataclass, field
 
 from agno.exceptions import ModelProviderError
-from agno.models.openrouter import OpenRouter
+
+from .model import EvidenceOpenRouter
 
 
 def provider_failure(error: Exception, api_key: str | None = None) -> dict:
@@ -26,7 +27,7 @@ def provider_failure(error: Exception, api_key: str | None = None) -> dict:
 
 
 @dataclass
-class ResearchOpenRouter(OpenRouter):
+class ResearchOpenRouter(EvidenceOpenRouter):
     last_failure: dict | None = field(default=None, init=False, repr=False)
 
     async def ainvoke(self, *args, **kwargs):
