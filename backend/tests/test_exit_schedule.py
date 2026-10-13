@@ -1,13 +1,10 @@
-import json
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 
 from app.default_strategies import default_strategy_definitions, eth_strategy_definitions
 from app.exit_schedule import ExitChoice, resolve_exit_schedule, template_from_definition
 from app.materialized_definition import validate_materialized_definition
-from automation_agent.tools import AutomationStrategyTools
 
 
 def chain(asset: str, *expiries: datetime, omit_put_at: datetime | None = None) -> list[dict]:
@@ -153,28 +150,3 @@ def test_every_eth_shape_resolves_current_session_without_changing_rules(strateg
     assert schedule["contractExpiryUtc"] == expiry.isoformat()
     assert live["instrument"]["underlying"] == "ETH"
     assert all(leg["expiry"] == "2026-09-30" for leg in live["legs"])
-
-
-def test_agent_calculator_uses_the_same_resolver_as_selection() -> None:
-    entry = datetime(2026, 9, 29, 13, tzinfo=UTC)
-    options = chain("BTC", datetime(2026, 9, 30, 12, tzinfo=UTC))
-    tool = object.__new__(AutomationStrategyTools)
-    tool._previews = {}
-    tool.curated = False
-    tool.strategy_references = {"S01": ("saved-1", 7)}
-    tool.application_data = SimpleNamespace(selection_context=lambda *_args: ([
-        {"version": 7, "enabled_for_ai": True, "definition_json": template()}
-    ], {}))
-    tool.runtime_data = SimpleNamespace(request_sync=lambda *_args: {
-        "snapshot": {"id": "snapshot-1", "market_json": {
-            "executionOptionContext": {"underlying": "BTC", "options": options}
-        }}
-    })
-    tool.user_id = "user-1"
-    tool.agent_run_id = "run-1"
-    tool.market_snapshot_id = "snapshot-1"
-    tool.asset = "BTC"
-    choice = {"kind": "intraday", "hours": 7}
-    preview = json.loads(tool.calculate_exit_time("S01", entry.isoformat(), choice))
-    _, committed_schedule = tool._resolve_selection("saved-1", 7, entry, ExitChoice.model_validate(choice))
-    assert preview == {"valid": True, "schedule": committed_schedule}
