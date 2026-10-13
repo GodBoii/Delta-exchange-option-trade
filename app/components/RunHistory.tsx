@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Ban, CircleStop, Info, RefreshCw, Trash2
+  Activity, AlertTriangle, Ban, CircleStop, Eye, Info, RefreshCw, Trash2
 } from "@/app/components/icons";
+import TradeMonitor from "@/app/components/TradeMonitor";
 import { requestJson } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { useCurrency } from "@/app/components/currency";
@@ -96,6 +97,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterId>("all");
   const [detail, setDetail] = useState<StrategyRun | null>(null);
+  const [viewing, setViewing] = useState<StrategyRun | null>(null);
   const [detailToken, setDetailToken] = useState(0);
   const [action, setAction] = useState<{ run: StrategyRun; kind: ActionKind } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -235,6 +237,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
                     key={run.id}
                     run={run}
                     onInspect={() => setDetail(run)}
+                    onView={() => setViewing(run)}
                     onAction={kind => setAction({ run, kind })}
                   />
                 ))}
@@ -251,6 +254,10 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
           />
         )}
       </Panel>
+
+      {viewing && <TradeMonitor key={viewing.id} run={viewing}
+        endpoint={`/api/strategies/${encodeURIComponent(viewing.id)}/monitor`}
+        onClose={() => setViewing(null)} onDetails={() => { setViewing(null); setDetail(viewing); }} />}
 
       {detail && (
         <RunDetailDialog
@@ -276,9 +283,10 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   );
 }
 
-function RunRow({ run, onInspect, onAction }: {
+function RunRow({ run, onInspect, onView, onAction }: {
   run: StrategyRun;
   onInspect: () => void;
+  onView: () => void;
   onAction: (kind: ActionKind) => void;
 }) {
   const canCancel = ["draft", "scheduled"].includes(run.status);
@@ -287,11 +295,12 @@ function RunRow({ run, onInspect, onAction }: {
   const items: RowMenuItem[] = [
     {
       id: "information",
-      label: "View details",
+      label: "Details",
       hint: "Timing, criteria, fills and P&L",
       icon: <Info />,
       onSelect: onInspect
     },
+    { id: "view", label: "View", hint: "Current status, prices and execution activity", icon: <Eye />, onSelect: onView },
     ...(canExit ? [{
       id: "exit",
       label: "Exit now",
