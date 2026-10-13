@@ -67,3 +67,17 @@ cancel and delete rules remain owned by their existing workflows.
   page overflow or browser warnings/errors occurred in the checked states.
 - Monitoring did not submit exchange orders or change automation preferences.
   Signed-in production account interactions were not exercised.
+
+## Deployment
+
+On October 13, 2026, main was pulled on `ubuntu-server` at
+`/home/arun/apps/delta-exchange`. Only the Delta-exchange service was rebuilt and
+recreated. Its Docker health check passed. Both schedulers are running, their last
+errors are null, and the risk failure count is zero. The previous image is retained
+as `delta-exchange-delta-exchange:before-trade-monitor-20261013`.
+
+The public API identifies itself as healthy and OpenAPI includes both monitor
+routes. Unauthenticated requests to both routes return 401. The public frontend
+returns 200 and serves the new monitor stylesheet and page bundle, including its
+View menu and status window. The temporary fixture page and disposable test
+database were removed.
