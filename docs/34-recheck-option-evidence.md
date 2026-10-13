@@ -50,8 +50,8 @@ The initial preview is collected before model invocation and stored in the decis
 snapshot. Later preview results are retained through existing tool-call records.
 The preview supplies normalized debit/credit, fees, selected quotes, multipliers, IV,
 Greeks, gross expiry payoff, local value-change scenarios and advisory depth fills.
-Movement scales use the actual assigned entry-to-exit duration. Compact overview history
-is restricted to the assigned expiry dates, including previously scheduled legacy dates.
+Movement scales use the actual assigned entry-to-exit duration. Assigned-option overview history
+is restricted to the assigned expiry dates, including previously scheduled dates.
 
 Selected quotes must satisfy the existing 30-second observation limit. Asset, option type,
 strike and expiry must match the assigned trade; expired contracts fail. An initial read
