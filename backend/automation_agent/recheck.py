@@ -13,7 +13,7 @@ from app.automation_schedule import IST
 from app.errors import AppError
 
 from .assets import AssetProfile
-from .curated import dumps
+from .evidence import dumps
 from .preview import build_preview, resolve_contracts
 
 logger = logging.getLogger(__name__)
