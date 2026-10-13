@@ -22,7 +22,7 @@ def dumps(value: Any) -> str:
 
 
 def assigned_option_overview(packet: dict, expiry_dates: list[str]) -> list[dict]:
-    """Keep recheck overview history tied to the assigned legs, including existing legacy expiries."""
+    """Keep recheck overview history tied to the assigned legs, including previously scheduled expiries."""
     rows = []
     for row in (packet.get("enrichment") or {}).get("options", []):
         try:
