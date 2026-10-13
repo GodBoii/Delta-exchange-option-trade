@@ -18,6 +18,7 @@ from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
 from .failures import NewsResearchError, provider_failure
+from .presentation import format_time
 from .report_quality import clean_report
 
 logger = logging.getLogger(__name__)
@@ -214,7 +215,7 @@ def run_news_pipeline(
             research_budget=ResearchBudget(limits={"web_search": 20, "read_news_article": 16}),
         )
         research_prompt = (
-            f"Run started at: {run_started_at.isoformat()} (UTC).\n\n"
+            f"Run started at: {format_time(run_started_at)}. Times use IST, UTC+05:30.\n\n"
             f"{prompt}\n\nFocus query: {focus_query}. Gather current material from public sources and "
             "search the web yourself. Investigate related global developments, scheduled meetings, "
             "crypto announcements, and public discussion. Open useful source pages before citing them. "
