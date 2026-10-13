@@ -664,10 +664,10 @@ def test_agent_market_packet_excludes_raw_candles_and_delta_data() -> None:
         "deltaExecutionContext": {"openInterestUsd": 5_000_000},
         "timeframes": {"15 minute": {"candles": candles, "summary": {"returnPercent": 1.2}}},
     }
-    compact_market = market_summary(market)
+    market_evidence = market_summary(market)
 
-    assert "candles" not in json.dumps(compact_market)
-    assert "delta" not in json.dumps(compact_market).casefold()
+    assert "candles" not in json.dumps(market_evidence)
+    assert "delta" not in json.dumps(market_evidence).casefold()
 
 
 @pytest.mark.asyncio
