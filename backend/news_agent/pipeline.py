@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from agno.db.base import BaseDb
@@ -195,6 +196,7 @@ def run_news_pipeline(
     evidence_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> NewsPipelineResult:
     """Let the analyst choose source collection, web searches, and article reads."""
+    run_started_at = datetime.now(UTC)
     settings = settings or NewsAgentSettings.load()
     effective_session_id = session_id or settings.default_session_id
     effective_user_id = user_id or settings.default_user_id
@@ -212,6 +214,7 @@ def run_news_pipeline(
             research_budget=ResearchBudget(limits={"web_search": 20, "read_news_article": 16}),
         )
         research_prompt = (
+            f"Run started at: {run_started_at.isoformat()} (UTC).\n\n"
             f"{prompt}\n\nFocus query: {focus_query}. Gather current material from public sources and "
             "search the web yourself. Investigate related global developments, scheduled meetings, "
             "crypto announcements, and public discussion. Open useful source pages before citing them. "
