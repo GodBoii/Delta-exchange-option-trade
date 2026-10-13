@@ -21,7 +21,7 @@ from automation_agent.charts import (
     render_volatility_chart,
     render_volume_chart,
 )
-from automation_agent.market import compact_btc_market_packet
+from automation_agent.market import market_summary
 from automation_agent.tools import AutomationStrategyTools, materialize_live_definition
 from news_agent.config import NewsAgentSettings
 
@@ -664,7 +664,7 @@ def test_agent_market_packet_excludes_raw_candles_and_delta_data() -> None:
         "deltaExecutionContext": {"openInterestUsd": 5_000_000},
         "timeframes": {"15 minute": {"candles": candles, "summary": {"returnPercent": 1.2}}},
     }
-    compact_market = compact_btc_market_packet(market)
+    compact_market = market_summary(market)
 
     assert "candles" not in json.dumps(compact_market)
     assert "delta" not in json.dumps(compact_market).casefold()
