@@ -60,7 +60,7 @@ def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
     assert analyst.calls[0]["session_id"] == "btc-thread"
     assert analyst.calls[0]["user_id"] == "alice"
     assert "search the web yourself" in analyst.calls[0]["prompt"]
-    assert analyst.calls[0]["prompt"].startswith("Run started at: 2026-10-13T23:59:58+00:00 (UTC).")
+    assert analyst.calls[0]["prompt"].startswith("Run started at: 2026-10-14 05:29:58 IST.")
 
 
 @pytest.mark.parametrize("content", ["", "The operation was aborted"])
