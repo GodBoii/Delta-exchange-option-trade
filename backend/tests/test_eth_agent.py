@@ -11,7 +11,7 @@ from app.automation import AutomationScheduler
 from app.default_strategies import builtin_strategy_definitions, default_strategy_definitions, eth_strategy_definitions
 from automation_agent import team
 from automation_agent.assets import PROFILES, asset_profile
-from automation_agent.market import MarketIntelligenceTools, compact_btc_market_packet
+from automation_agent.market import MarketIntelligenceTools, market_summary
 from news_analyzer.main import AutomationAnalysisRequest
 
 NOW = datetime(2026, 9, 27, 6, tzinfo=UTC)
@@ -94,9 +94,10 @@ def test_eth_market_tool_reads_the_eth_market_service_and_delta_eth_options(monk
         requested.append(str(request.url))
         if request.url.path.endswith("/history"):
             return httpx.Response(200, json={"available": True, "observations": []})
-        if request.url.path == "/v2/tickers":
-            assert request.url.params["underlying_asset_symbols"] == "ETH"
-            return httpx.Response(200, json={"result": []})
+        if request.url.path.endswith("/agent-summary"):
+            return httpx.Response(200, json={"asset": "ETH", "schemaVersion": 1})
+        if request.url.path.endswith("/option-catalogue"):
+            return httpx.Response(200, json={"underlying": "ETH", "options": []})
         return httpx.Response(
             200,
             json={
@@ -112,7 +113,7 @@ def test_eth_market_tool_reads_the_eth_market_service_and_delta_eth_options(monk
         "automation_agent.market.httpx.Client",
         lambda **kwargs: client(transport=httpx.MockTransport(handler), **kwargs),
     )
-    tools = MarketIntelligenceTools(asset=PROFILES["ETH"], binance_url="http://eth.test", delta_url="http://delta.test")
+    tools = MarketIntelligenceTools(asset=PROFILES["ETH"], binance_url="http://eth.test")
 
     assert set(tools.functions) == {"get_eth_market_packet"}
     packet = tools.collect_market_packet()
@@ -147,7 +148,7 @@ def test_eth_market_tool_rejects_cross_asset_data(monkeypatch, wrong_symbol, wro
 
 def test_eth_packet_and_charts_use_eth_units():
     packet = {"orderBook": {"bids": [[2690, 3]], "asks": [[2691, 1]]}, "timeframes": {}}
-    compact = compact_btc_market_packet(packet, "ETH")
+    compact = market_summary(packet, "ETH")
 
     assert compact["spotOrderBook"]["bidDepthTop20Eth"] == 3
     assert "bidDepthTop20Btc" not in compact["spotOrderBook"]
