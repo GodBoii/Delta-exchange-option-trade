@@ -178,6 +178,7 @@ async def test_ordinary_user_cannot_call_owner_endpoints(api):
         ("GET", f"/api/owner/users/{api.brother}/pnl/calendar"),
         ("PUT", f"/api/owner/users/{api.brother}/automation/assets/ETH"),
         ("GET", f"/api/owner/users/{api.brother}/trades/{uuid4()}"),
+        ("GET", f"/api/owner/users/{api.brother}/trades/{uuid4()}/monitor"),
         ("PUT", f"/api/owner/users/{api.brother}/automation"),
         ("PUT", f"/api/owner/users/{api.owner}/capital"),
     ):
@@ -219,6 +220,42 @@ async def test_owner_own_personal_pnl_excludes_other_users(api):
     body = (await api.client.get("/api/me/pnl", params={"range": "30d"})).json()
     assert body["summary"]["totalRuns"] == 0
     assert (await api.client.get("/api/me/pnl", params={"range": "5y"})).status_code == 400
+
+
+async def test_trade_monitor_scopes_live_and_archive_reads_to_the_selected_account(api, monkeypatch):
+    from app import main
+
+    run_id = await settled_run(api.db.runtime, api.brother)
+    await api.db.runtime.update("strategies", {
+        "risk_state": {"profit": "1.25", "pricedAt": "2026-10-13T10:00:00Z", "exchangeAccount": "private-id"},
+    }, {"id": f"eq.{run_id}"})
+    engine = TradingEngine(api.db, SETTINGS)
+    monkeypatch.setattr(main.app.state, "engine", engine)
+    path = f"/api/owner/users/{api.brother}/trades/{run_id}/monitor"
+    try:
+        live = await api.client.get(path)
+        assert live.status_code == 200
+        assert live.json()["source"] == "live"
+        assert live.json()["run"]["riskState"]["profit"] == "1.25"
+        assert live.json()["privateStream"] == "unavailable"
+        assert "private-id" not in live.text
+        assert not any(word in live.text for word in FORBIDDEN)
+        assert (await api.client.get(f"/api/owner/users/{api.owner}/trades/{run_id}/monitor")).status_code == 404
+        # A normal user can observe their own run but cannot change the account scope.
+        api.current["id"] = api.owner
+        assert (await api.client.get(f"/api/strategies/{run_id}/monitor")).status_code == 404
+        api.current["id"] = api.brother
+        personal = await api.client.get(f"/api/strategies/{run_id}/monitor")
+        assert personal.status_code == 200 and personal.json()["run"]["id"] == run_id
+        assert (await api.client.get(path)).status_code == 403
+        api.current["id"] = api.owner
+        await api.db.runtime.update("strategies", {}, {"id": f"eq.{run_id}"}, remove=True)
+        archive = await api.client.get(path)
+        assert archive.status_code == 200 and archive.json()["source"] == "archive"
+        assert all(quote["markPrice"] is None for quote in archive.json()["quotes"])
+        assert not any(word in archive.text for word in FORBIDDEN)
+    finally:
+        await engine.close()
 
 
 async def test_personal_asset_filter_matches_totals_and_paginated_chart_trades(api):
