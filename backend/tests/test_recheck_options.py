@@ -9,12 +9,12 @@ from uuid import uuid4
 import httpx
 import pytest
 from agno.run.agent import RunOutput
-from test_curated_input import fixture
+from test_option_evidence import fixture
 
 from app import automation_schedule
 from automation_agent import recheck, team, tools
 from automation_agent.assets import PROFILES
-from automation_agent.curated import assigned_option_overview
+from automation_agent.evidence import assigned_option_overview
 from automation_agent.recheck import RecheckOptionTools
 
 
@@ -140,10 +140,8 @@ def test_assigned_overview_preserves_legacy_expiry_and_excludes_other_maturities
     assert packet["enrichment"]["options"][1]["atmIvPercent"] == 31
 
 
-@pytest.mark.parametrize("curated", [False, True])
 @pytest.mark.parametrize("asset", ["BTC", "ETH"])
-def test_main_receives_no_live_option_evidence_and_keeps_private_resolution(monkeypatch, curated, asset):
-    monkeypatch.setenv("CURATED_AGENT_INPUT_ENABLED", str(curated).lower())
+def test_main_receives_no_live_option_evidence_and_keeps_private_resolution(monkeypatch, asset):
     raw, strategy = assigned(asset)
     freeze(monkeypatch, raw["observedAt"])
     definition = strategy["definition"]
@@ -169,12 +167,12 @@ def test_main_receives_no_live_option_evidence_and_keeps_private_resolution(monk
             "name": definition["name"], "definition_json": definition,
         }], {"allocation_mode": "half_balance"}),
     ))
-    from automation_agent.market import compact_btc_market_packet
+    from automation_agent.market import market_summary
 
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
         collect_market_packet=lambda: packet,
         collect_delta_option_context=lambda: {"underlying": asset, "options": [raw]},
-        functions={}, market_packet_json=lambda: json.dumps(compact_btc_market_packet(packet, asset)),
+        functions={}, market_packet_json=lambda: json.dumps(market_summary(packet, asset)),
     ))
     monkeypatch.setattr(team, "read_parent_run_context", lambda *_, **__: None)
     monkeypatch.setattr(team, "ChartStorage", lambda _: SimpleNamespace(save_run_charts=lambda **_: []))
@@ -214,22 +212,18 @@ def test_main_receives_no_live_option_evidence_and_keeps_private_resolution(monk
     assert "holdingMoveScales" not in agent.additional_context
     assert "netCreditUsd" not in agent.additional_context
     assert captured["snapshot"]["executionOptionContext"]["options"] == [raw]
-    strategy_tools = agent.tools[0] if curated else agent.tools[1]
+    strategy_tools = agent.tools[1]
     assert "preview_strategy" not in strategy_tools.functions
     assert "calculate_exit_time" not in strategy_tools.functions
-    if not curated:
-        strategy_tools.show_available_strategy()
-    schedule = json.loads(strategy_tools.calculate_exit_time(
-        "S01", strategy["activationTime"], {"kind": "specific_time", "exit_at": strategy["exitTime"]},
-    ))
-    assert schedule["valid"] is True
-    assert set(schedule) == {"valid", "schedule"}
-    assert schedule["schedule"]["exitUtc"] == strategy["exitTime"]
+    strategy_tools.show_available_strategy()
+    _, schedule = strategy_tools._resolve_selection(
+        saved_id, 1, datetime.fromisoformat(strategy["activationTime"]),
+        tools.ExitChoice(kind="specific_time", exit_at=datetime.fromisoformat(strategy["exitTime"])),
+    )
+    assert schedule["exitUtc"] == strategy["exitTime"]
 
 
-@pytest.mark.parametrize("curated", [False, True])
-def test_initial_recheck_evidence_failure_never_invokes_model(monkeypatch, curated):
-    monkeypatch.setenv("CURATED_AGENT_INPUT_ENABLED", str(curated).lower())
+def test_initial_recheck_evidence_failure_never_invokes_model(monkeypatch):
     _, strategy = assigned()
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
         collect_market_packet=lambda: {"timeframes": {}},
@@ -282,9 +276,9 @@ def test_selection_calculates_exit_without_preview_and_rejects_changed_evidence(
     toolkit = tools.AutomationStrategyTools(
         SimpleNamespace(trade_backend_internal_url="http://writer.test", analysis_service_secret="secret"),
         user_id="global", agent_run_id=str(uuid4()), market_snapshot_id=snapshot_id,
-        curated=True, trigger=trigger, asset=asset,
+        trigger=trigger, asset=asset,
     )
-    catalogue = toolkit.starting_catalogue()
+    catalogue = json.loads(toolkit.show_available_strategy())
     assert catalogue["defaultHoldingHours"] == 7
     assert ("holdingChoices" in catalogue) == (trigger == "new_york_session")
     activation = strategy["activationTime"]
