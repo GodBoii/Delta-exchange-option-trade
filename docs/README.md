@@ -20,7 +20,7 @@ Verified: **2026-08-08**. Exchange capabilities, product listings, limits, and d
 12. [Change watch and migration notes](12-change-watch.md)
 13. [Research questions and verified answers](questions-and-answers.md)
 14. [Automated strategy system](14-automated-strategy-system.md)
-15. [Compact market inputs and focused tools](28-compact-agent-inputs.md)
+15. [Market evidence and agent tools](28-compact-agent-inputs.md)
 16. [Trading state migration and execution corrections](15-trading-state-migration.md)
 17. [Agent trade capacity checks and deployment verification](30-agent-trade-capacity.md)
 18. [Current-session options and short holding limits](32-current-session-options.md)
