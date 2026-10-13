@@ -18,7 +18,7 @@ def main() -> None:
     packet = (
         json.loads(args.packet.read_text(encoding="utf-8"))
         if args.packet
-        else MarketIntelligenceTools(binance_url=args.binance_url).collect_btc_market_packet()
+        else MarketIntelligenceTools(binance_url=args.binance_url).collect_market_packet()
     )
     packet.setdefault("capturedAt", int(datetime.now(UTC).timestamp() * 1000))
     args.output_dir.mkdir(parents=True, exist_ok=True)
