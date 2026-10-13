@@ -33,7 +33,7 @@ def test_market_tool_collects_rich_evidence_once_and_keeps_options_private(monke
             return httpx.Response(200, json={"underlying": asset, "options": []})
         return httpx.Response(200, json={
             "symbol": f"{asset}USDT", "deltaContext": {"symbol": f"{asset}USD"},
-            "ticker": {"lastPrice": 100}, "candles": [],
+            "ticker": {"lastPrice": 100, "baseVolume": 12, "quoteVolume": 1200}, "candles": [],
             "analysis": {
                 "vwap": 99, "atr": {"value": 1}, "sidewaysProbability": 70,
                 "marketStructure": {"ema20": 98, "ema50": 97, "state": "bullish"},
@@ -64,6 +64,12 @@ def test_market_tool_collects_rich_evidence_once_and_keeps_options_private(monke
     assert result["computedAnalysis"]["vwapDistancePercent"] == pytest.approx((100 / 99 - 1) * 100)
     assert result["recentTradeFlow"]["start"] == result["recentTradeFlow"]["end"] == now
     assert result["realtime"]["eventAgeMs"] == 90
+    assert result["ticker"]["baseVolume"] == 12
+    assert result["ticker"]["quoteVolume"] == 1200
+    assert result["computedAnalysis"]["historicalVolatility"]["annualizedPercent"] == 40
+    assert result["spotOrderBook"][f"bidDepthTop20{asset.capitalize()}"] == 2
+    assert result["spotOrderBook"][f"askDepthTop20{asset.capitalize()}"] == 3
+    assert result["spotOrderBook"]["imbalance"] == pytest.approx(-0.2)
     assert result["units"]["cvdWindowSeconds"] == 900
     assert "atmIvPercent" not in json.dumps(result)
     assert packet["enrichment"]["options"] == enrichment["options"]
