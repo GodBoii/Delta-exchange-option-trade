@@ -1,9 +1,8 @@
-"""Compare production agent paths on frozen evidence. All action tools are simulated."""
+"""Exercise production agent inputs on frozen evidence. All action tools are simulated."""
 
 import argparse
 import asyncio
 import json
-import os
 import time
 from contextlib import suppress
 from copy import deepcopy
@@ -49,7 +48,7 @@ def catalogue(asset: str) -> list[dict]:
 async def capture_asset(asset: str, url: str) -> dict:
     profile = PROFILES[asset]
     started = time.perf_counter()
-    market = MarketIntelligenceTools(binance_url=url, asset=profile, curated=True)
+    market = MarketIntelligenceTools(binance_url=url, asset=profile)
     packet, context = await asyncio.gather(
         asyncio.to_thread(market.collect_market_packet), asyncio.to_thread(market.collect_delta_option_context)
     )
@@ -91,7 +90,6 @@ def run_case(
     case: dict,
     news: str,
     *,
-    curated: bool,
     recheck: bool,
     offline: bool,
     model: str | None = None,
@@ -107,7 +105,6 @@ def run_case(
     rows = case["catalogue"]
     record = {
         "asset": asset,
-        "path": "curated" if curated else "legacy",
         "stage": "recheck" if recheck else "main",
         "collectionSeconds": case.get("collectionSeconds"),
         "simulatedActions": [],
@@ -212,7 +209,7 @@ def run_case(
         def save_run_charts(self, *, agent_run_id, charts, **kwargs):
             return [StoredChart(c.id, c.label, c.alt_text, agent_run_id, c.content) for c in charts]
 
-    market = MarketIntelligenceTools(asset=profile, curated=curated)
+    market = MarketIntelligenceTools(asset=profile)
     market.collect_market_packet = lambda: deepcopy(frozen)
     market.collect_delta_option_context = lambda: {"underlying": asset, "options": deepcopy(options)}
     market._packet_cache = frozen
@@ -252,7 +249,6 @@ def run_case(
 
     started = time.perf_counter()
     with (
-        patch.dict(os.environ, {"CURATED_AGENT_INPUT_ENABLED": str(curated).lower()}),
         patch("automation_agent.tools.runtime_data", return_value=MemoryResearch()),
         patch("automation_agent.tools.LocalResearchClient", return_value=MemoryResearch()),
         patch("automation_agent.tools.datetime", FrozenDatetime),
@@ -271,6 +267,7 @@ def run_case(
             ),
         ),
         patch.object(team, "Agent", RecordingAgent),
+        patch.object(team, "datetime", FrozenDatetime),
         patch.object(
             recheck_module,
             "httpx",
@@ -329,7 +326,6 @@ def main() -> None:
     run.add_argument("--offline", action="store_true")
     run.add_argument("--asset", choices=["BTC", "ETH"])
     run.add_argument("--stage", choices=["main", "recheck"])
-    run.add_argument("--path", choices=["legacy", "curated"])
     run.add_argument("--model", help="Dry-run model override; never changes live or news-agent settings")
     run.add_argument(
         "--reasoning", choices=["low", "medium", "high", "max"], help="Main-agent dry-run override; recheck stays low"
@@ -356,42 +352,38 @@ def main() -> None:
             for recheck in (False, True):
                 if args.stage and args.stage != ("recheck" if recheck else "main"):
                     continue
-                for curated in (False, True):
-                    if args.path and args.path != ("curated" if curated else "legacy"):
-                        continue
-                    name = f"{case['asset']}-{'recheck' if recheck else 'main'}-{'curated' if curated else 'legacy'}"
-                    started = time.perf_counter()
-                    try:
-                        result = run_case(
-                            case,
-                            bundle["news"],
-                            curated=curated,
-                            recheck=recheck,
-                            offline=args.offline,
-                            model=args.model,
-                            reasoning=args.reasoning,
-                        )
-                    except Exception as error:
-                        result = {
-                            "status": "failed",
-                            "errorType": type(error).__name__,
-                            "durationSeconds": time.perf_counter() - started,
+                name = f"{case['asset']}-{'recheck' if recheck else 'main'}"
+                started = time.perf_counter()
+                try:
+                    result = run_case(
+                        case,
+                        bundle["news"],
+                        recheck=recheck,
+                        offline=args.offline,
+                        model=args.model,
+                        reasoning=args.reasoning,
+                    )
+                except Exception as error:
+                    result = {
+                        "status": "failed",
+                        "errorType": type(error).__name__,
+                        "durationSeconds": time.perf_counter() - started,
+                    }
+                (args.output / f"{name}.json").write_text(
+                    json.dumps(result, indent=2, default=str), encoding="utf-8"
+                )
+                print(
+                    json.dumps(
+                        {
+                            "case": name,
+                            "status": result.get("status", "completed"),
+                            "startingTextBytes": result.get("startingTextBytes"),
+                            "usage": result.get("usage"),
+                            "tools": [t["name"] for t in result.get("tools", [])],
                         }
-                    (args.output / f"{name}.json").write_text(
-                        json.dumps(result, indent=2, default=str), encoding="utf-8"
-                    )
-                    print(
-                        json.dumps(
-                            {
-                                "case": name,
-                                "status": result.get("status", "completed"),
-                                "startingTextBytes": result.get("startingTextBytes"),
-                                "usage": result.get("usage"),
-                                "tools": [t["name"] for t in result.get("tools", [])],
-                            }
-                        ),
-                        flush=True,
-                    )
+                    ),
+                    flush=True,
+                )
 
 
 if __name__ == "__main__":
