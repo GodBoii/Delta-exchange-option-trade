@@ -22,7 +22,7 @@ from app.automation_schedule import (
 )
 from app.capital import policy_from_row
 from app.errors import AppError
-from app.exit_schedule import ExitChoice, maximum_hold_hours, resolve_exit_schedule, template_from_definition
+from app.exit_schedule import ExitChoice, resolve_exit_schedule, template_from_definition
 from app.models import StrategyDefinition
 from app.shared_analysis import SHARED_USER_ID
 from news_agent.config import RECHECK_LEAD_SECONDS, NewsAgentSettings
@@ -58,7 +58,6 @@ class AutomationStrategyTools(Toolkit):
         self.curated = curated
         self.trigger = trigger
         self.review_at = review_at
-        self._previews: dict[tuple, tuple[dict, dict]] = {}
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.market_snapshot_id = str(UUID(market_snapshot_id))
@@ -72,37 +71,27 @@ class AutomationStrategyTools(Toolkit):
             name="automation_strategy_tools",
             tools=(
                 [
-                    self.calculate_exit_time,
                     self.select_strategy_and_time,
                     self.scheduled_next_agent_run,
                 ]
                 if curated
                 else [
                     self.show_available_strategy,
-                    self.calculate_exit_time,
                     self.select_strategy_and_time,
                     self.scheduled_next_agent_run,
                 ]
             ),
             instructions=(
-                "Use the starting strategy catalogue. Call calculate_exit_time before selecting with identical "
-                "strategyRef, activation_time and exit_choice. Option valuation happens during activation recheck. "
-                "Once an action commits, do not schedule another action."
-                if curated
-                else "Call show_available_strategy before selecting. "
-                "Use its short strategyRef in select_strategy_and_time. "
-                "A committed result confirms only the action named in the result. A shared proposal requires a later "
-                "recheck and account allocation; no order is submitted inside the tool call. Retry rejected calls with "
-                "corrected inputs. Once either action is committed, do not call another scheduling tool in this run."
+                "Use the starting catalogue's strategyRef values."
+                if curated else "Call show_available_strategy and use its strategyRef values."
             ),
             add_instructions=True,
             **kwargs,
         )
-        if curated:
-            self.functions["select_strategy_and_time"].description = (
-                "Commit one previously previewed starting strategyRef and time. Use the identical "
-                "activation_time and exit_choice from calculate_exit_time. No order is placed by this call."
-            )
+        selection = self.functions["select_strategy_and_time"]
+        selection.process_entrypoint()
+        if self.trigger != "new_york_session":
+            selection.parameters["properties"].pop("holding_hours", None)
 
     def starting_catalogue(self) -> dict:
         source = json.loads(self.show_available_strategy())
@@ -151,10 +140,6 @@ class AutomationStrategyTools(Toolkit):
         return {
             **source,
             "strategies": rows,
-            "holdingChoices": {
-                "intradayHours": [7, 11] if maximum_hold_hours(self.trigger) == 11 else [7],
-                "other": ["specific_time within the session maximum"],
-            },
         }
 
     def show_available_strategy(self) -> str:
@@ -198,6 +183,9 @@ class AutomationStrategyTools(Toolkit):
                     }
                     for index, row in enumerate(visible, start=1)
                 ],
+                "defaultHoldingHours": 7,
+                **({"holdingChoices": {"intradayHours": [7, 11]}}
+                   if getattr(self, "trigger", None) == "new_york_session" else {}),
                 "activeSlotCount": occupied,
                 "maximumSlots": maximum or "calculated_at_entry",
             }
@@ -295,16 +283,14 @@ class AutomationStrategyTools(Toolkit):
         reasoning_summary: str,
         supporting_signals: list[str],
         invalidation_signals: list[str],
-        exit_choice: dict[str, Any],
+        holding_hours: Literal[7, 11] = 7,
     ) -> str:
-        """Schedule the strategyRef returned by show_available_strategy.
+        """Schedule a saved strategyRef at activation_time.
 
-        First call calculate_exit_time with the same entry time, strategyRef and exit_choice.
-        exit_choice is {kind: intraday, hours: 7}, with 11 allowed only for the evening review,
-        or {kind: specific_time, exit_at: aware ISO timestamp} within the session maximum.
-        The server selects the upcoming session expiry. Risk, legs and sizing remain saved.
-        Returns JSON confirming a scheduled account strategy or a shared proposal.
-        Rejected calls may be corrected and retried. A committed run cannot schedule again.
+        The backend calculates exit/expiry with a default seven-hour hold and expiry cutoff.
+        Choose holding_hours only from the catalogue's offered durations; eleven is allowed
+        only for new_york_session. Recheck runs seven minutes before activation.
+        Returns confirmation or an error. No order executes inside this call.
         """
         try:
             committed = self._committed_action()
@@ -326,7 +312,7 @@ class AutomationStrategyTools(Toolkit):
                     reasoning_summary=reasoning_summary,
                     supporting_signals=supporting_signals,
                     invalidation_signals=invalidation_signals,
-                    exit_choice=exit_choice,
+                    exit_choice={"kind": "intraday", "hours": holding_hours},
                 )
             )
             shared = self.user_id == SHARED_USER_ID
@@ -382,21 +368,7 @@ class AutomationStrategyTools(Toolkit):
             raise ValueError("reasoning_summary is required")
 
         choice = ExitChoice.model_validate(exit_choice)
-        if self.curated:
-            key = (saved_id, saved_strategy_version, activation.isoformat(), choice.model_dump_json())
-            if key not in self._previews:
-                raise ValueError("Call calculate_exit_time with these exact selection arguments first")
-            rows, _ = self.application_data.selection_context(self.user_id, saved_id)
-            if not rows or not rows[0]["enabled_for_ai"] or rows[0]["version"] != saved_strategy_version:
-                raise ValueError("Saved strategy is unavailable or changed")
-            context = self.runtime_data.request_sync(
-                "runtimeAutomation:context", {"userId": self.user_id, "runId": self.agent_run_id}
-            )
-            if not context.get("snapshot") or context["snapshot"]["id"] != self.market_snapshot_id:
-                raise ValueError("Current market snapshot is unavailable")
-            live_definition, schedule = deepcopy(self._previews[key])
-        else:
-            live_definition, schedule = self._resolve_selection(saved_id, saved_strategy_version, activation, choice)
+        live_definition, schedule = self._resolve_selection(saved_id, saved_strategy_version, activation, choice)
         exit_at = datetime.fromisoformat(schedule["exitUtc"])
         if self.user_id == SHARED_USER_ID:
             return json.dumps(
@@ -487,10 +459,7 @@ class AutomationStrategyTools(Toolkit):
                 raise ValueError("Unknown strategyRef. Call show_available_strategy first")
             activation = _aware_datetime(activation_time, "activation_time")
             choice = ExitChoice.model_validate(exit_choice)
-            key = (*selection, activation.isoformat(), choice.model_dump_json())
-            self._previews.pop(key, None)
-            definition, schedule = self._resolve_selection(*selection, activation, choice)
-            self._previews[key] = (definition, schedule)
+            _, schedule = self._resolve_selection(*selection, activation, choice)
             return json.dumps({"valid": True, "schedule": schedule})
         except (ValueError, AppError) as error:
             return json.dumps({"valid": False, "reason": str(error)})
