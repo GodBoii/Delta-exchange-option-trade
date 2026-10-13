@@ -1,7 +1,7 @@
 # Market evidence and agent tools
 
 BTC and ETH use one tool-based workflow. There is no input-mode flag.
-The system collects a run-bound market snapshot and six main-analysis charts.
+The system collects a run-bound market snapshot and three main-analysis price charts.
 The main agent calls its asset market tool and `show_available_strategy` to read
 market evidence and saved strategies before deciding. News research, saved financial
 controls, account sizing and order execution remain separate responsibilities.
@@ -15,8 +15,8 @@ Units, timestamps, observation coverage and missing values remain available. Raw
 trades, books and complete option chains stay in private snapshots rather than model text.
 Option overview data is not included in the main market tool result.
 
-Main runs receive 1-minute, 15-minute and daily price charts, spot volume, realized
-volatility and order-book depth. Captions retain axes, legends, reading notes and
+Main runs receive 1-minute, 15-minute and daily price charts. Volume, realized
+volatility and order-book evidence arrive in the market tool result. Captions retain axes, legends, reading notes and
 chart-specific values. The starting context includes the current news report, UTC
 run-start time, next three permanent reviews in UTC and IST, and scheduling context.
 `previousRun` contains the full parent report only when a parent requested this review.
