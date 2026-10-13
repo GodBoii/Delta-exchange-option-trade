@@ -122,7 +122,8 @@ def test_market_tool_and_charts_exclude_delta():
     '{"decision": "go", "report": "unfinished',
 ])
 @pytest.mark.parametrize("evidence_valid", [True, False])
-def test_recheck_without_drop_uses_plain_report(monkeypatch, report, evidence_valid):
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+def test_recheck_without_drop_uses_plain_report(monkeypatch, report, evidence_valid, asset):
     captured = {}
     packet = {"source": "Binance Spot", "timeframes": {}}
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
@@ -159,12 +160,18 @@ def test_recheck_without_drop_uses_plain_report(monkeypatch, report, evidence_va
         recheck_context={"proposalId": PROPOSAL_ID,
                          "selectedStrategy": {"name": "Short strangle", "activationTime": ACTIVATION.isoformat()},
                          "originalSelection": {"finalResponse": "Exact original report"}},
+        asset=team.PROFILES[asset],
     )
     if not evidence_valid:
         with pytest.raises(RuntimeError, match="cannot approve"):
             team.run_activation_recheck(**kwargs)
         return
     result = team.run_activation_recheck(**kwargs)
+    assert captured["id"] == team.PROFILES[asset].recheck_agent_id
+    assert captured["name"] == f"{asset} Strategy Activation Recheck"
+    assert len(captured["instructions"]) == 8
+    assert all("Only at-the-money" not in text and "moves more than BTC" not in text
+               for text in captured["instructions"])
     assert captured["model"].reasoning_effort == "low"
     assert "max_tokens" not in captured["model"].get_request_params()
     assert "max_completion_tokens" not in captured["model"].get_request_params()
