@@ -28,6 +28,7 @@ from .database import Database
 from .errors import AppError
 from .models import CapitalSettingsUpdate
 from .owner_ledger import AssetFilter, DeletedFilter, OwnerLedger
+from .trade_monitor import monitor_snapshot
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["reporting"])
@@ -516,6 +517,19 @@ async def owner_user_trade(request: Request, user_id: str, run_id: str, _owner: 
         "firstCapturedAt": row["first_captured_at"],
         "run": detail,
     }
+
+
+@router.get("/api/owner/users/{user_id}/trades/{run_id}/monitor")
+async def owner_trade_monitor(request: Request, user_id: str, run_id: str, owner: OwnerUser) -> dict[str, Any]:
+    record = await owner_user_trade(request, user_id, run_id, owner)
+    return monitor_snapshot(request.app.state.engine, _user_id(user_id), record["run"], source=record["source"])
+
+
+@router.get("/api/strategies/{run_id}/monitor")
+async def personal_trade_monitor(request: Request, run_id: str, user: RequiredUser) -> dict[str, Any]:
+    user_id = str(user["id"])
+    detail = await request.app.state.engine.run_detail(run_id, user_id, include_raw=False)
+    return monitor_snapshot(request.app.state.engine, user_id, detail)
 
 
 @router.put("/api/owner/users/{user_id}/capital")
