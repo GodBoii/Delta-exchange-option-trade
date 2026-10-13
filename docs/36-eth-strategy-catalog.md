@@ -42,6 +42,12 @@ new automated entries referencing a retired template. Open trades retain their
 own saved definitions and risk exits. The normal agent catalog reads current
 enabled templates from PostgreSQL and filters them by asset.
 
+The main agents are named `BTC Automation agent` and `ETH Automation agent`.
+Their stable agent IDs are unchanged. ETH main analysis and activation recheck
+use the shared instructions without the former ATM-only restriction or the
+assertion that ETH moves more than BTC. Saved catalogue rules still determine
+which strategies each agent may select.
+
 The two credit-spread definitions remain in the canonical BTC source catalog but
 are retired in this installation's database. Use the targeted `eth-catalog`
 operation rather than applying unrelated catalog changes during this rollout.
