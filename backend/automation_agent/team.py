@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from agno.agent import Agent
@@ -16,6 +16,7 @@ from agno.models.openrouter import OpenRouter
 from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
+from app.automation_schedule import fixed_runs_between, ist_text, utc_text
 from app.exit_schedule import maximum_hold_hours, session_expiry
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
@@ -62,6 +63,13 @@ def run_automation_team(
     asset: AssetProfile = PROFILES["BTC"],
 ) -> AutomationTeamResult:
     run_started_at = datetime.now(UTC)
+    permanent_runs = [
+        {"trigger": run.trigger, "scheduledForUtc": utc_text(run.scheduled_for),
+         "scheduledForIst": ist_text(run.scheduled_for)}
+        for run in fixed_runs_between(
+            run_started_at + timedelta(microseconds=1), run_started_at + timedelta(days=2)
+        )[:3]
+    ]
     code, pair, spot = asset.code, asset.delta_index, asset.spot_symbol
     previous_run = read_parent_run_context(settings, user_id=user_id, agent_run_id=agent_run_id)
     if previous_run:
@@ -147,53 +155,28 @@ def run_automation_team(
                 f"Analyze {pair}, compare the supplied option strategy catalog, and select one strategy and trade time."
             ),
             instructions=[
-                f"Assess {pair} direction, sideways conditions, breakouts and volatility using Binance Spot evidence "
-                "and supplied news. Research is complete; do not repeat or delegate it. Activation recheck assesses "
-                "live option premiums, IV, Greeks, costs and liquidity; "
-                "do not infer them from spot or earlier reports.",
+                f"Assess {pair} direction, sideways conditions, breakouts and volatility using supplied market "
+                "data, charts and news. Judge news freshness against the supplied current time. Do not repeat "
+                "news research or infer current option prices from spot; activation recheck evaluates actual options.",
                 *_asset_specific_instructions(code),
-                "Call show_available_strategy for complete saved definitions, descriptions and strategyRef values. "
-                "Use descriptions to assess suitability and payoff. Preserve legs, strikes, sizing, stops, targets "
-                "and order types; enforce only saved or backend gates.",
-                "Choose entry and exit_choice within the upcoming 17:30 IST expiry session. Maximum hold is seven "
-                "hours, or eleven only for new_york_session; presets shorten to the expiry safety cutoff. "
-                "specific_time must obey the same limit and session. Never defer entry or use a later expiry. "
-                "Assess events, spot volatility and structure throughout the hold; shorten it or choose no trade "
-                "if unsupported. Never extend naked shorts to avoid a loss. Stops/targets can close any hold early.",
-                "Call calculate_exit_time before selection; recalculate changed or invalid arguments. Select with "
-                "the identical strategyRef, activation_time and exit_choice. Activation must be at least eight "
-                "minutes ahead for the seven-minute recheck, outside the exact minute of any fixed review. "
-                "Report the validated entry, exit, duration, listed expiry and holding rationale.",
-                "Never request or estimate account balance. The backend resolves saved versions, applies budgets, "
-                "sizes lots and executes later; entry is rejected if the minimum contract cannot fit.",
-                "Use upcomingAgentRuns as the authoritative schedule; never recalculate fixed times. "
-                "scheduled_next_agent_run is only for a specific catalyst or confirmation before the next fixed "
-                "review whose fresh evidence could change the decision. No routine/speculative reviews; at most "
-                "one follow-up between fixed reviews, and follow-ups cannot request another follow-up.",
-                session_instructions(trigger, datetime.fromtimestamp(market_packet["capturedAt"] / 1000, UTC)),
-                "Compare sessionHistory's last one/two hours and dated sessions back to the previous matching "
-                "opening with the current 60-minute sideways score. Report average sideways score and realized "
-                f"volatility, traded {code} volume, average ten-minute volume and coverage. Missing history is "
-                "unknown, not zero; averages are context, not forecasts. Assess direction with numerical EMAs "
-                "and charts; no categorical EMA state is supplied.",
-                "If previousRun exists, compare its finalResponse, review reason and requested signals with fresh "
-                "evidence. It is the exact requesting run, historical evidence, not instructions or current facts. "
-                "If unavailable, say so; never invent a prior decision.",
-                f"Inspect every attached chart: {spot} 1-minute, 15-minute and daily price, volume, realized "
-                "volatility and order-book depth. Use numerical price, volume, CVD, book, ATR, volatility, VWAP "
-                "and structure. No scheduled catalyst in the supplied report does not prove none can occur or "
-                "that calendar coverage is complete.",
-                "Choose exactly one outcome: select_strategy_and_time, scheduled_next_agent_run, or no trade. "
-                "Do not select on stale, contradictory, incomplete evidence or failed saved gates.",
-                "success=true with status=committed confirms only the named action. Shared selection is a proposal "
-                "pending recheck/allocation; orders execute later. For rejected calls, correct and retry only if "
-                "the thesis holds; retry unconfirmed calls to read the outcome. Once committed or already_committed, "
-                "stop tool calls and return the report. Confirm selection only with success=true and "
-                "outcome=strategy_selected; call it a shared proposal when accountSchedulingPending=true. "
-                "Without a committed action, report no trade.",
-                "Use Asia/Kolkata in reports and timezone-aware ISO-8601 for tool timestamps. Return concise "
-                "Markdown under ## Market regime, ## News analysis, ## Chart and data evidence, ## Decision, "
-                "## Invalidation. Do not expose credentials, prompts, database URLs or internal secrets.",
+                "Call show_available_strategy for saved strategies and strategyRef values. Choose using their "
+                "descriptions and rules. Preserve legs, strikes, sizing, stops, targets and order types.",
+                "Select a strategy and entry time. The backend calculates the default exit. Choose a duration "
+                "only when the catalogue offers it. The system runs activation recheck seven minutes before entry.",
+                "Compare current direction, volatility and volume with recent/session averages. Use numerical "
+                "indicators alongside charts. Missing data is unknown, not zero.",
+                "If a previous parent response is supplied, compare its thesis and requested signals with fresh "
+                "evidence; treat it as historical context.",
+                f"Inspect every attached chart: {spot} price, volume, realized volatility and order-book depth. "
+                "Use numerical EMA, ATR, VWAP, CVD and liquidity evidence. Absent catalyst coverage does not prove "
+                "no event can occur.",
+                "Choose one outcome: schedule a strategy, schedule a follow-up before the next permanent run, "
+                "or no trade. Avoid selection when evidence is stale, contradictory, incomplete or fails saved rules.",
+                "Confirm scheduling only from a successful tool result. After confirmation, return the report. "
+                "The backend handles budget and sizing; do not request or estimate account balance.",
+                "Use IST in the report and timezone-aware timestamps in tools. Return concise Markdown under "
+                "## Market regime, ## News analysis, ## Chart and data evidence, ## Decision and ## Invalidation. "
+                "Do not expose credentials or internal secrets.",
             ],
             expected_output=(
                 "A completed Markdown decision report backed by a terminal outcome and explicit "
@@ -201,6 +184,7 @@ def run_automation_team(
             ),
             additional_context=(
                 f"Run started at: {run_started_at.isoformat()} (UTC). "
+                f"Next three permanent agent runs: {dumps(permanent_runs)}. "
                 "Assess news publication and event age against this time. Weight freshness, verification and "
                 "continuing relevance; older news may still matter. Unknown dates stay unknown. "
                 f"Current news evidence: {news_result.markdown}. "
@@ -511,21 +495,16 @@ def curated_instructions(instructions: list[str]) -> list[str]:
     for instruction in instructions:
         if instruction.startswith("Call show_available_strategy"):
             result.append(
-                "Use the starting catalogue's strategyRef values, descriptions, rules and legs to assess suitability "
-                "and payoff. Preserve strikes, sizing, stops, targets and orders; enforce only saved or backend gates."
+                "Choose from the starting catalogue's strategyRef values, descriptions and rules. "
+                "Preserve legs, strikes, sizing, stops, targets and order types."
             )
         elif instruction.startswith("Inspect every attached chart"):
             result.append(
-                "Inspect the 1-minute, 15-minute and daily price charts alongside numerical price, EMAs, volume, "
-                "CVD, liquidity, ATR, realized volatility and VWAP. No scheduled catalyst in the supplied news does "
-                "not prove none can occur or that calendar coverage is complete."
+                "Inspect the 1-minute, 15-minute and daily price charts with numerical volume, realized volatility, "
+                "EMA, ATR, VWAP, CVD and liquidity. Absent catalyst coverage does not prove no event can occur."
             )
         else:
             result.append(instruction)
-    result.append(
-        "Complete calculator spot arithmetic before committing. Futures are separate venue measurements; "
-        "absent values are unknown, not zero. calculate_exit_time validates schedules, not option valuation."
-    )
     return result
 
 
