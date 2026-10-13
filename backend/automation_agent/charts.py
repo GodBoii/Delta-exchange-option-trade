@@ -9,6 +9,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from news_agent.presentation import IST, format_number
+
 WIDTH, HEIGHT = 1600, 900
 LEFT, RIGHT, TOP, BOTTOM = 120, 1560, 180, 780
 BACKGROUND, GRID, TEXT, MUTED = "#071018", "#203746", "#e5edf4", "#9db2c2"
@@ -32,17 +34,15 @@ def _number(value: Any) -> float | None:
 def _fmt(value: float | None) -> str:
     if value is None:
         return "Unavailable"
-    if abs(value) >= 1e9 or 0 < abs(value) < 0.01:
-        return f"{value:.5g}"
-    return f"{value:,.2f}"
+    return format_number(value)
 
 
-def _time(value: Any, pattern: str = "%d %b %Y %H:%M:%S UTC") -> str:
+def _time(value: Any, pattern: str = "%d %b %Y %H:%M:%S IST") -> str:
     timestamp = _number(value)
     if timestamp is None or timestamp <= 0:
         return "Time unavailable"
     try:
-        return datetime.fromtimestamp(timestamp / 1000, UTC).strftime(pattern)
+        return datetime.fromtimestamp(timestamp / 1000, UTC).astimezone(IST).strftime(pattern)
     except (ValueError, OSError, OverflowError):
         return "Time unavailable"
 
@@ -78,7 +78,11 @@ class _Chart:
             value = self.low + (self.high - self.low) * index / 5
             y = self.y(value)
             self.draw.line((LEFT, y, RIGHT, y), fill=GRID)
-            _text(self.draw, (LEFT - 12, y), _fmt(value), 17, MUTED, "rm")
+            label = _fmt(value)
+            size = 17
+            while size > 8 and self.draw.textlength(label, font=_font(size)) > LEFT - 20:
+                size -= 1
+            _text(self.draw, (LEFT - 12, y), label, size, MUTED, "rm")
         for value, label in ticks:
             x = self.x(value)
             self.draw.line((x, TOP, x, BOTTOM), fill=GRID)
@@ -180,7 +184,7 @@ def _timeline(candles: list[dict[str, Any]]) -> tuple[list[float], list[tuple[fl
     else:
         indices = sorted({round(i * (len(xs) - 1) / 4) for i in range(5)})
         ticks = [(xs[i], str(i + 1)) for i in indices]
-    return xs, ticks, "Bar open time | UTC" if dated else "Bar index | timestamps unavailable"
+    return xs, ticks, "Bar open time | IST" if dated else "Bar index | timestamps unavailable"
 
 
 def _ema(values: list[float], period: int) -> list[float]:
@@ -234,7 +238,7 @@ def render_candlestick_chart(
             volume += v
         vwap_values.append(notional / volume if volume and complete_volume else None)
     for values, color in ((ema20, BLUE), (ema50, PURPLE), (vwap_values, ACCENT)):
-        chart.line(xs, values, color, INTERVAL_MS.get(label) if "UTC" in title else None)
+        chart.line(xs, values, color, INTERVAL_MS.get(label) if "IST" in title else None)
     chart.legend(
         [
             ("Up", UP, "bar"),
@@ -302,7 +306,7 @@ def render_volume_chart(
         )
         if _status(c, chart.now) == "Completed":
             completed.append(volume)
-    chart.line(xs, baseline, BLUE, INTERVAL_MS.get(label) if "UTC" in title else None)
+    chart.line(xs, baseline, BLUE, INTERVAL_MS.get(label) if "IST" in title else None)
     chart.legend(
         [
             ("Up bar", UP, "bar"),
@@ -372,7 +376,7 @@ def render_volatility_chart(
         return b""
     xs, ticks, title = _timeline(usable)
     chart.axes(xs, 0, max(max(available) * 1.12, 1), "Annualized realized volatility | %", ticks, title)
-    chart.line(xs, values, BLUE, INTERVAL_MS.get(label) if "UTC" in title else None)
+    chart.line(xs, values, BLUE, INTERVAL_MS.get(label) if "IST" in title else None)
     chart.legend([("20-return realized volatility", BLUE, "line")])
     hours = 20 * 365 * 24 / periods_per_year
     chart.describe(
