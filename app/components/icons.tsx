@@ -21,7 +21,7 @@ import type { ComponentType, SVGProps } from "react";
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowsClockwise, ArrowSquareOut,
   ArrowsOutLineHorizontal, Bank, Bell as BellGlyph, BellSlash, CalendarBlank, CaretDown, CaretUp, ChartBar, ChartDonut,
-  Check, CirclesThreePlus, ClockCounterClockwise, Command, Copy, CurrencyDollar,
+  Check, DotsThree, ClockCounterClockwise, Command, Copy, CurrencyDollar,
   DownloadSimple, Equalizer, Eye, FileText, Fingerprint, FloppyDisk, Folders, Gauge,
   DeviceMobile, Export, Info, Key, Lightning, List, Lock, MagnifyingGlass, MagnifyingGlassMinus,
   MagnifyingGlassPlus, Monitor, MoonStars, Path, Play as PlayGlyph, Plus,
@@ -38,7 +38,7 @@ export const ChevronUp = CaretUp as Icon;
 export const Close = X as Icon;
 export { X };
 export { ArrowLeft, ArrowRight, ArrowUp, ArrowDown };
-export const MoreHorizontal = CirclesThreePlus as Icon;
+export const MoreHorizontal = DotsThree as Icon;
 export const Maximize2 = ArrowSquareOut as Icon;
 export const LogOut = SignOut as Icon;
 export const Profile = User as Icon;
