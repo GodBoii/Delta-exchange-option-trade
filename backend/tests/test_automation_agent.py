@@ -77,6 +77,49 @@ def test_strategy_activation_rejects_a_fixed_session_minute() -> None:
         )
 
 
+@pytest.mark.parametrize("lead_minutes", [7, 10])
+def test_selection_schedules_recheck_seven_minutes_before_entry(monkeypatch, lead_minutes):
+    now = datetime(2026, 10, 13, 0, 30, tzinfo=UTC)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(strategy_tools_module, "datetime", FrozenDatetime)
+    monkeypatch.setattr("app.automation_schedule.datetime", FrozenDatetime)
+    activation = now + timedelta(minutes=lead_minutes)
+    schedule = {"exitUtc": (activation + timedelta(hours=7)).isoformat()}
+    tool = object.__new__(AutomationStrategyTools)
+    tool.user_id = "11111111-1111-4111-8111-111111111111"
+    tool.agent_run_id = "run-1"
+    tool.market_snapshot_id = "snapshot-1"
+    tool.news_analysis_id = None
+    tool._resolve_selection = lambda *_: ({"name": "Saved strategy"}, schedule)
+    sent = {}
+
+    def request(path, args, *, mutation=False):
+        sent.update(path=path, args=args, mutation=mutation)
+        return {"outcome": "strategy_selected"}
+
+    tool.runtime_data = SimpleNamespace(request_sync=request)
+    arguments = dict(
+        saved_id="saved-1", saved_strategy_version=1, activation_time=activation.isoformat(),
+        ai_confidence=0.7, reasoning_summary="Confirmed setup", supporting_signals=["price"],
+        invalidation_signals=["range break"], exit_choice={"kind": "intraday", "hours": 7},
+    )
+    if lead_minutes == 7:
+        with pytest.raises(ValueError, match="more than seven minutes"):
+            tool._select_strategy_and_time(**arguments)
+        assert sent == {}
+    else:
+        result = json.loads(tool._select_strategy_and_time(**arguments))
+        assert result["outcome"] == "strategy_selected"
+        assert sent["mutation"] is True
+        assert sent["args"]["recheck"] == (activation - timedelta(minutes=7)).isoformat()
+        assert sent["args"]["exit"] == schedule["exitUtc"]
+
+
 def test_strategy_catalog_uses_short_references() -> None:
     tool = object.__new__(AutomationStrategyTools)
     tool.user_id = "global"
@@ -170,7 +213,7 @@ def test_strategy_tool_retries_rejection_then_reports_duplicate(monkeypatch) -> 
         "reasoning_summary": "Confirmed range",
         "supporting_signals": ["range"],
         "invalidation_signals": ["breakout"],
-        "exit_choice": {"kind": "intraday", "hours": 7},
+        "holding_hours": 7,
     }
 
     rejected = json.loads(tool.select_strategy_and_time(**args))
@@ -184,6 +227,7 @@ def test_strategy_tool_retries_rejection_then_reports_duplicate(monkeypatch) -> 
     assert duplicate["status"] == "already_committed" and duplicate["canRetry"] is False
     assert len(attempts) == 2
     assert attempts[0]["saved_strategy_version"] == 7
+    assert attempts[0]["exit_choice"] == {"kind": "intraday", "hours": 7}
 
 
 def test_follow_up_tool_confirms_schedule_and_blocks_second_action(monkeypatch) -> None:
@@ -236,7 +280,7 @@ def test_tool_recovers_commit_after_response_is_lost(monkeypatch) -> None:
             reasoning_summary="Confirmed range",
             supporting_signals=["range"],
             invalidation_signals=["breakout"],
-            exit_choice={"kind": "intraday", "hours": 7},
+            holding_hours=7,
         )
     )
 
@@ -265,7 +309,7 @@ def test_tool_does_not_claim_rejection_when_commit_status_cannot_be_read(monkeyp
             reasoning_summary="Confirmed range",
             supporting_signals=["range"],
             invalidation_signals=["breakout"],
-            exit_choice={"kind": "intraday", "hours": 7},
+            holding_hours=7,
         )
     )
 
