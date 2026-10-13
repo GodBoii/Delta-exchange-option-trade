@@ -5,7 +5,7 @@ import pytest
 
 from app.automation_schedule import fixed_runs_between
 from automation_agent.history import STEP_MS, session_history
-from automation_agent.market import MarketIntelligenceTools, compact_btc_market_packet
+from automation_agent.market import MarketIntelligenceTools, market_summary
 
 
 def payload(now):
@@ -66,7 +66,7 @@ def test_agent_context_removes_classification_without_mutating_source():
         },
         "sessionHistory": {"available": False},
     }
-    compact = compact_btc_market_packet(packet)
+    compact = market_summary(packet)
     assert "marketStructure" not in compact["computedAnalysis"]
     assert compact["computedAnalysis"]["emaIndicators"]["ema20"] == 10
     assert compact["computedAnalysis"]["sidewaysProbability"] == 89.7
@@ -84,6 +84,8 @@ def test_collected_packet_includes_history_and_survives_history_failure(monkeypa
         history["observations"][1] = history["observations"][0]
 
     def handler(request):
+        if request.url.path.endswith("/agent-summary"):
+            return httpx.Response(200, json={"asset": "BTC", "schemaVersion": 1})
         if request.url.path.endswith("/history"):
             return httpx.Response(503 if failure == "offline" else 200, json=history)
         return httpx.Response(
