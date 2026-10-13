@@ -200,7 +200,9 @@ def test_calculation_then_drop_uses_only_the_assigned_proposal(monkeypatch):
     assert calls[0][1]["drop"] is True
 
 
-def test_curated_tools_require_matching_preview_without_scheduling(monkeypatch):
+@pytest.mark.parametrize("curated", [False, True])
+@pytest.mark.parametrize("trigger", ["manual", "new_york_session"])
+def test_main_tools_offer_duration_only_for_evening_without_exit_calculator(monkeypatch, curated, trigger):
     from uuid import uuid4
 
     from automation_agent.tools import AutomationStrategyTools
@@ -208,27 +210,21 @@ def test_curated_tools_require_matching_preview_without_scheduling(monkeypatch):
     monkeypatch.setattr("automation_agent.tools.runtime_data", lambda _: object())
     toolkit = AutomationStrategyTools(
         SimpleNamespace(trade_backend_internal_url="http://writer.test", analysis_service_secret="secret"),
-        user_id="global",
-        agent_run_id=str(uuid4()),
-        market_snapshot_id=str(uuid4()),
-        curated=True,
+        user_id="global", agent_run_id=str(uuid4()), market_snapshot_id=str(uuid4()),
+        curated=curated, trigger=trigger,
     )
-    assert set(toolkit.functions) == {"calculate_exit_time", "select_strategy_and_time", "scheduled_next_agent_run"}
-    toolkit.functions["calculate_exit_time"].process_entrypoint()
-    schema = toolkit.functions["calculate_exit_time"].parameters["properties"]["exit_choice"]
-    assert "kind" in str(schema)
-    activation = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
-    with pytest.raises(ValueError, match="calculate_exit_time"):
-        toolkit._select_strategy_and_time(
-            saved_id=str(uuid4()),
-            saved_strategy_version=1,
-            activation_time=activation,
-            ai_confidence=0.5,
-            reasoning_summary="test",
-            supporting_signals=[],
-            invalidation_signals=[],
-            exit_choice={"kind": "specific_time", "exit_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat()},
-        )
+    expected = {"select_strategy_and_time", "scheduled_next_agent_run"}
+    if not curated:
+        expected.add("show_available_strategy")
+    assert set(toolkit.functions) == expected
+    selection = toolkit.functions["select_strategy_and_time"]
+    selection.process_entrypoint()
+    properties = selection.parameters["properties"]
+    assert "exit_choice" not in properties
+    assert ("holding_hours" in properties) == (trigger == "new_york_session")
+    if trigger == "new_york_session":
+        assert properties["holding_hours"]["enum"] == [7, 11]
+        assert "holding_hours" not in selection.parameters["required"]
 
 
 def test_paired_dry_run_constructs_inputs_without_provider_or_actions(monkeypatch):
