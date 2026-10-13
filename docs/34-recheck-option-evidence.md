@@ -10,28 +10,26 @@ should proceed using fresh option evidence. It can approve or cancel, not replac
    recheck context, confirmation and shared allocation before editing.
 2. Remove live option overview, premium comparisons, IV scales and payoff preview
    from main analysis. Preserve saved strategy rules and private contract resolution.
-3. Replace compact main preview with a schedule-only calculation and retain exact
+3. Calculate main exits during selection and retain exact
    argument, saved-version and snapshot checks before selection.
-4. Add fresh assigned-option evidence and a bound refresh tool to both recheck paths.
+4. Add fresh assigned-option evidence and a bound refresh tool to recheck.
    Keep scheduling, sizing, allocation and execution in the existing backend.
 5. Distinguish read-only calls from cancellation attempts. Failed evidence reads
    must not become approval; failed cancellation must not be reconfirmed.
-6. Verify BTC/ETH, both input paths, schedule guards, approval/cancellation, stale
+6. Verify BTC/ETH, the tool workflow, schedule guards, approval/cancellation, stale
    evidence and offline replay. Update documentation, push focused commits and deploy.
 
 ## Runtime responsibilities
 
 | Stage | Input and tools | Responsibility |
 |---|---|---|
-| Main | Spot, news, saved strategy catalogue, current-session constraints; `calculate_exit_time`, selection and follow-up scheduling | Choose a saved strategy and schedule, or wait/no trade |
+| Main | Spot, news, saved strategy catalogue, current-session constraints; selection and follow-up scheduling | Choose a saved strategy and schedule, or wait/no trade |
 | Recheck | Spot, original decision, actual assigned schedule, fresh selected-contract option preview; `preview_selected_strategy`, calculators, `drop_strategy` | Approve or cancel that one candidate |
 | Backend | Private contracts and snapshots, saved rules, account policies and live execution data | Validate schedules, allocate capital, size, execute, reconcile and monitor |
 
-The compact main path no longer exposes `preview_strategy`. `calculate_exit_time`
-returns only `valid` and `schedule`, without premiums, spreads, IV, Greeks or P&L.
-The main catalogue no longer has an indicative `comparison` or `comparisonBasis`.
-Its numerical market input has no `options`, `holdingMoveScales` or option unit labels.
-Futures measurements remain separate; Spot liquidity and realized volatility remain.
+Main agents fetch market evidence and saved strategies through tools. Selection calculates
+the default seven-hour exit in the backend; only the New York review offers 7/11 hours.
+There is no main option-preview or exit-calculation tool.
 
 Saved option leg shapes, risk controls, user-authored limit prices and expiry constraints
 remain necessary strategy metadata. Earlier reports are retained without rewriting their
@@ -66,14 +64,14 @@ calculator calls allow normal confirmation when evidence is valid. A cancellatio
 must have a persisted `strategy_dropped` outcome; a failed attempt is never approved.
 Existing writer checks continue to bind the cancellation to the exact proposal and run.
 
-Both recheck paths use sixteen tool calls. The configured model, low recheck reasoning,
+Rechecks allow sixteen tool calls. The configured model, low recheck reasoning,
 seven-minute lead time, saved financial controls and account sizing remain unchanged.
 The engine still reads execution data at entry; a recheck quote is not a guaranteed fill.
 
 ## Deployment
 
-No database migration or frontend change is required. Both input modes use this stage split;
-`CURATED_AGENT_INPUT_ENABLED=false` does not return options analysis to the main agent.
+No database migration or frontend change is required. The single tool-based workflow
+keeps live option analysis in activation recheck.
 Update the repository on Ubuntu and rebuild the writer and analysis service:
 
 ```sh
@@ -97,4 +95,4 @@ fields and tools in main analysis, schedule-only outputs, exact selection argume
 saved-version and snapshot checks, successful shared publication, failed recalculation,
 assigned-contract refresh, stale/missing/mismatched/nonfinite evidence, successful retry,
 read-only calls followed by approval, and failed cancellation without reconfirmation.
-The offline paired harness constructs both stages without invoking a model or scheduling trades.
+The offline input harness constructs both stages without invoking a model or scheduling trades.
