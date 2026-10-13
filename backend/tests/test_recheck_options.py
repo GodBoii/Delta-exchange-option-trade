@@ -205,6 +205,10 @@ def test_main_receives_no_live_option_evidence_and_keeps_private_resolution(monk
         trigger="manual", asset=PROFILES[asset],
     )
     agent = captured["agent"]
+    assert agent.instructions[0].startswith(f"Assess {asset}USD direction")
+    assert any("backend calculates the default exit" in instruction for instruction in agent.instructions)
+    assert any("After confirmation, return the report" in instruction for instruction in agent.instructions)
+    assert all("calculate_exit_time" not in instruction for instruction in agent.instructions)
     assert "atmIvPercent" not in agent.additional_context
     assert "comparisonBasis" not in agent.additional_context
     assert "holdingMoveScales" not in agent.additional_context
@@ -212,7 +216,7 @@ def test_main_receives_no_live_option_evidence_and_keeps_private_resolution(monk
     assert captured["snapshot"]["executionOptionContext"]["options"] == [raw]
     strategy_tools = agent.tools[0] if curated else agent.tools[1]
     assert "preview_strategy" not in strategy_tools.functions
-    assert "calculate_exit_time" in strategy_tools.functions
+    assert "calculate_exit_time" not in strategy_tools.functions
     if not curated:
         strategy_tools.show_available_strategy()
     schedule = json.loads(strategy_tools.calculate_exit_time(
@@ -243,9 +247,13 @@ def test_initial_recheck_evidence_failure_never_invokes_model(monkeypatch, curat
         )
 
 
-@pytest.mark.parametrize("fault", [None, "arguments", "version", "snapshot", "recalculation"])
-def test_compact_selection_uses_validated_schedule_and_rejects_changed_evidence(monkeypatch, fault):
-    raw, strategy = assigned()
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+@pytest.mark.parametrize("trigger,holding_hours", [("manual", None), ("new_york_session", 11), ("manual", 11)])
+@pytest.mark.parametrize("fault", [None, "version", "snapshot", "recalculation"])
+def test_selection_calculates_exit_without_preview_and_rejects_changed_evidence(
+    monkeypatch, fault, trigger, holding_hours, asset,
+):
+    raw, strategy = assigned(asset)
     frozen_datetime = freeze(monkeypatch, raw["observedAt"])
     monkeypatch.setattr(automation_schedule, "datetime", frozen_datetime)
     saved_id, snapshot_id = str(uuid4()), str(uuid4())
@@ -254,7 +262,7 @@ def test_compact_selection_uses_validated_schedule_and_rejects_changed_evidence(
         "definition_json": strategy["definition"], "user_id": None,
     }
     snapshot = {
-        "id": snapshot_id, "market_json": {"executionOptionContext": {"underlying": "BTC", "options": [raw]}},
+        "id": snapshot_id, "market_json": {"executionOptionContext": {"underlying": asset, "options": [raw]}},
     }
     published = []
 
@@ -270,41 +278,42 @@ def test_compact_selection_uses_validated_schedule_and_rejects_changed_evidence(
     monkeypatch.setattr(tools, "LocalResearchClient", lambda *_: SimpleNamespace(
         selection_context=lambda *_: ([row], {"allocation_mode": "half_balance"}),
     ))
+    monkeypatch.setattr(tools, "read_automation_state", lambda *_, **__: {"outcome": None})
     toolkit = tools.AutomationStrategyTools(
         SimpleNamespace(trade_backend_internal_url="http://writer.test", analysis_service_secret="secret"),
-        user_id="global", agent_run_id=str(uuid4()), market_snapshot_id=snapshot_id, curated=True,
+        user_id="global", agent_run_id=str(uuid4()), market_snapshot_id=snapshot_id,
+        curated=True, trigger=trigger, asset=asset,
     )
-    toolkit.starting_catalogue()
-    choice = {"kind": "specific_time", "exit_at": strategy["exitTime"]}
-    calculation = json.loads(toolkit.calculate_exit_time("S01", strategy["activationTime"], choice))
-    assert calculation["valid"] is True
+    catalogue = toolkit.starting_catalogue()
+    assert catalogue["defaultHoldingHours"] == 7
+    assert ("holdingChoices" in catalogue) == (trigger == "new_york_session")
     activation = strategy["activationTime"]
-    errors = {"arguments": "calculate_exit_time", "version": "changed", "snapshot": "snapshot",
-              "recalculation": "calculate_exit_time"}
-    if fault == "arguments":
-        activation = (datetime.fromisoformat(activation) + timedelta(minutes=1)).isoformat()
-    elif fault == "version":
+    errors = {"version": "changed", "snapshot": "snapshot", "recalculation": "listed options"}
+    if fault == "version":
         row["version"] += 1
     elif fault == "snapshot":
         snapshot["id"] = str(uuid4())
     elif fault == "recalculation":
         snapshot["market_json"]["executionOptionContext"]["options"] = []
-        assert json.loads(toolkit.calculate_exit_time("S01", activation, choice))["valid"] is False
 
-    def select():
-        return toolkit._select_strategy_and_time(
-            saved_id=saved_id, saved_strategy_version=1, activation_time=activation,
-            ai_confidence=0.7, reasoning_summary="Spot setup holds", supporting_signals=["spot"],
-            invalidation_signals=["range break"], exit_choice=choice,
-        )
-
-    if fault:
-        with pytest.raises(ValueError, match=errors[fault]):
-            select()
+    result = json.loads(toolkit.select_strategy_and_time(
+        strategy_ref="S01", activation_time=activation, ai_confidence=0.7,
+        reasoning_summary="Spot setup holds", supporting_signals=["spot"], invalidation_signals=["range break"],
+        **({"holding_hours": holding_hours} if holding_hours is not None else {}),
+    ))
+    if fault or (holding_hours == 11 and trigger != "new_york_session"):
+        assert result["status"] == "rejected"
+        assert (errors[fault] if fault else "evening review") in result["message"]
         assert published == []
     else:
-        assert json.loads(select())["outcome"] == "strategy_selected"
-        assert published[0]["exit"] == strategy["exitTime"]
+        assert result["outcome"] == "strategy_selected"
+        entry = datetime.fromisoformat(activation)
+        expected_exit = min(
+            entry + timedelta(hours=holding_hours or 7),
+            datetime.fromisoformat(raw["expiry"]) - timedelta(minutes=5),
+        )
+        assert published[0]["exit"] == expected_exit.isoformat()
+        assert result["schedule"]["choice"]["hours"] == (holding_hours or 7)
         live = json.loads(published[0]["definitionJson"])
         assert live["legs"] == strategy["definition"]["legs"]
         assert live["stopLossPercent"] == strategy["definition"]["stopLossPercent"]
