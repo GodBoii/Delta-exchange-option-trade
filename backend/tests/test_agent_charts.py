@@ -126,7 +126,8 @@ def test_depth_sorts_aggregates_and_preserves_price_distance():
     assert chart.x(99) - chart.x(90) == pytest.approx(9 * (chart.x(100) - chart.x(99)))
 
 
-def test_chart_details_travel_with_main_and_recheck_images():
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+def test_chart_details_travel_with_main_and_recheck_images(asset):
     from automation_agent.team import _chart_artifacts, _recheck_chart_artifacts
 
     packet = {
@@ -134,9 +135,10 @@ def test_chart_details_travel_with_main_and_recheck_images():
         "timeframes": {label: {"candles": candles()} for label in ("1 minute", "15 minute", "1 day")},
         "orderBook": {"bids": [[79999, 1]], "asks": [[80001, 2]], "eventTime": NOW},
     }
-    main, recheck = _chart_artifacts(packet), _recheck_chart_artifacts(packet)
-    assert len(main) == 6
-    assert len(recheck) == 2
+    main, recheck = _chart_artifacts(packet, asset), _recheck_chart_artifacts(packet, asset)
+    assert [chart.id for chart in main] == [f"{asset.lower()}-{label}" for label in ("1-minute", "15-minute", "1-day")]
+    assert [chart.id for chart in recheck] == [f"{asset.lower()}-{label}" for label in ("1-minute", "15-minute")]
+    assert all(chart.context["title"].startswith(f"{asset}USDT | Candlesticks") for chart in main + recheck)
     for chart in main + recheck:
         assert chart.context["capturedAt"] == NOW
         assert chart.context["xAxis"]
