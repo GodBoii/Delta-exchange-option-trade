@@ -579,10 +579,9 @@ leg role, such as short_call or protective_put
 
 ## 8. AI market packet
 
-The legacy tool-based path below remains available while `CURATED_AGENT_INPUT_ENABLED=false`.
-The compact starting-input, calculator and strategy-preview protocol is documented in
-[Compact market inputs and focused tools](28-compact-agent-inputs.md). It leaves news analysis
-and execution policies unchanged.
+BTC and ETH use the tool-based workflow below. Rich market evidence is collected before
+the run and returned through the asset market tool. Input and recheck details are documented
+in [Market evidence and agent tools](28-compact-agent-inputs.md).
 
 The AI receives analysis data and saved strategies. It does not receive authority to edit risk parameters or lots.
 
@@ -875,7 +874,7 @@ Execute and monitor
 - The strategy-level controller monitors combined credit and combined debit take profit and stop loss.
 - The thirteen approved strategies have validated constructors and are stored once as shared, read-only defaults. User-created strategies remain private account rows.
 - The main vision team receives Binance Spot price, volume, volatility, and order-book charts plus one news sub-agent. Delta market data is excluded from model input.
-- Every AI-selected strategy receives a separate activation recheck seven minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy. The compact path also supplies fresh selected-option evidence and the calculator.
+- Every AI-selected strategy receives a separate activation recheck seven minutes before entry. The recheck has no members or news tools and can only keep or drop its assigned strategy. Every recheck receives fresh selected-option evidence and calculator tools.
 - `select_strategy_and_time` writes a live scheduled strategy. The existing scheduler retains order and monitoring authority.
 - Asia, London, and New York triggers use their local timezones, so daylight-saving changes convert correctly.
 - The daily `pre_expiry` review runs at 15:30 Asia/Kolkata, two hours before the 17:30 IST options expiry, including weekends. It shares the existing automation switch, per-user run lock, ten-minute lateness limit, and fixed-review follow-up boundaries. This is one daily review per enabled user, regardless of the number of positions or expiries held.
