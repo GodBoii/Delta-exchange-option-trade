@@ -446,3 +446,12 @@ export type OwnerTradeDetail = {
   firstCapturedAt: string;
   run: RunDetail;
 };
+
+export type TradeMonitorSnapshot = {
+  success: boolean;
+  source: "live" | "archive";
+  observedAt: string;
+  privateStream: "live" | "unavailable";
+  quotes: { symbol: string; markPrice: string | null }[];
+  run: RunDetail;
+};
