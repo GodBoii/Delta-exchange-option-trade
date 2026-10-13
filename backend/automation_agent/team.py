@@ -22,12 +22,7 @@ from news_agent.database import create_session_db
 from news_agent.pipeline import run_news_pipeline
 
 from .assets import PROFILES, AssetProfile
-from .charts import (
-    render_candlestick_chart,
-    render_order_book_chart,
-    render_volatility_chart,
-    render_volume_chart,
-)
+from .charts import render_candlestick_chart
 from .evidence import assigned_option_overview, dumps
 from .market import MarketIntelligenceTools
 from .recheck import RecheckOptionTools
@@ -158,8 +153,9 @@ def run_automation_team(
                 "indicators alongside charts. Missing data is unknown, not zero.",
                 "If a previous parent response is supplied, compare its thesis and requested signals with fresh "
                 "evidence; treat it as historical context.",
-                f"Inspect every attached chart: {spot} price, volume, realized volatility and order-book depth. "
-                "Use numerical EMA, ATR, VWAP, CVD and liquidity evidence. Absent catalyst coverage does not prove "
+                f"Inspect the {spot} 1-minute, 15-minute and daily price charts. Get volume, realized volatility "
+                "and order-book evidence from the market tool. Use numerical EMA, ATR, VWAP, CVD and liquidity. "
+                "Absent catalyst coverage does not prove "
                 "no event can occur.",
                 "Choose one outcome: schedule a strategy, schedule a follow-up before the next permanent run, "
                 "or no trade. Avoid selection when evidence is stale, contradictory, incomplete or fails saved rules.",
@@ -439,7 +435,8 @@ def _chart_artifacts(
             )
 
     prefix, spot = base.lower(), f"{base}USDT"
-    for label, payload in (market_packet.get("timeframes") or {}).items():
+    for label in ("1 minute", "15 minute", "1 day"):
+        payload = (market_packet.get("timeframes") or {}).get(label) or {}
         add(
             render_candlestick_chart,
             (label, payload.get("candles") or []),
@@ -447,29 +444,6 @@ def _chart_artifacts(
             f"{spot} {label} price",
             f"{spot} {label} candlestick chart from Binance Spot",
         )
-    fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
-    candles = fifteen_minute.get("candles") or []
-    add(
-        render_volume_chart,
-        ("15 minute", candles),
-        f"{prefix}-volume",
-        f"{spot} 15-minute volume",
-        f"{spot} 15-minute spot volume chart",
-    )
-    add(
-        render_volatility_chart,
-        ("15 minute", candles, 365 * 24 * 4),
-        f"{prefix}-volatility",
-        f"{spot} realized volatility",
-        f"{spot} rolling realized volatility chart",
-    )
-    add(
-        render_order_book_chart,
-        (market_packet.get("orderBook") or {},),
-        f"{prefix}-order-book",
-        "Binance Spot order-book depth",
-        f"{spot} Binance Spot cumulative order-book depth chart",
-    )
     return charts
 
 
