@@ -17,7 +17,6 @@ from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
 from app.automation_schedule import fixed_runs_between, ist_text, utc_text
-from app.exit_schedule import maximum_hold_hours, session_expiry
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
 from news_agent.pipeline import run_news_pipeline
@@ -29,7 +28,7 @@ from .charts import (
     render_volatility_chart,
     render_volume_chart,
 )
-from .curated import assigned_option_overview, chart_notes, dumps, enabled, market_input
+from .evidence import assigned_option_overview, dumps
 from .market import MarketIntelligenceTools
 from .recheck import RecheckOptionTools
 from .report_data import save_news_evidence
@@ -74,8 +73,7 @@ def run_automation_team(
     previous_run = read_parent_run_context(settings, user_id=user_id, agent_run_id=agent_run_id)
     if previous_run:
         account_context = {**account_context, "previousRun": previous_run}
-    curated = enabled()
-    market_tools = MarketIntelligenceTools(session_trigger=trigger, asset=asset, curated=curated)
+    market_tools = MarketIntelligenceTools(session_trigger=trigger, asset=asset)
     # News and market I/O are independent. Only one news synthesis is performed per decision.
     with ThreadPoolExecutor(max_workers=2) as executor:
         news_future = executor.submit(
@@ -94,12 +92,8 @@ def run_automation_team(
         market_packet = market_tools.collect_market_packet()
         option_context = option_future.result()
         news_result = news_future.result()
-    chart_artifacts = (
-        _chart_artifacts(market_packet, code, price_only=True) if curated else _chart_artifacts(market_packet, code)
-    )
+    chart_artifacts = _chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
-    if curated:
-        chart_context = chart_notes(chart_context)
     stored_charts = ChartStorage(settings).save_run_charts(
         user_id=user_id,
         agent_run_id=agent_run_id,
@@ -124,11 +118,9 @@ def run_automation_team(
         agent_run_id=agent_run_id,
         market_snapshot_id=market_snapshot_id,
         asset=code,
-        curated=curated,
         trigger=trigger,
         review_at=datetime.fromtimestamp(market_packet["capturedAt"] / 1000, UTC),
     )
-    catalogue = strategy_tools.starting_catalogue() if curated else None
 
     team_db = create_session_db(settings, session_table=settings.automation_session_table)
     try:
@@ -150,7 +142,7 @@ def run_automation_team(
                 "then schedules the saved strategy most likely to profit."
             ),
             model=model,
-            tools=[strategy_tools, calculator()] if curated else [market_tools, strategy_tools],
+            tools=[market_tools, strategy_tools],
             description=(
                 f"Analyze {pair}, compare the supplied option strategy catalog, and select one strategy and trade time."
             ),
@@ -205,13 +197,6 @@ def run_automation_team(
             debug_mode=True,
             telemetry=False,
         )
-        if curated:
-            team.instructions = curated_instructions(team.instructions)
-            team.additional_context += (
-                f" Starting market evidence: {dumps(market_input(market_packet, code, trigger))}. "
-                f"Starting strategy catalogue: {dumps(catalogue)}"
-            )
-
         images = [
             Image(
                 content=chart.content,
@@ -240,7 +225,7 @@ def run_automation_team(
         )
         if not isinstance(response, RunOutput):
             raise RuntimeError("Automation team returned an unexpected streaming response")
-        if curated and str(getattr(response.status, "value", response.status)).upper() == "ERROR":
+        if str(getattr(response.status, "value", response.status)).upper() == "ERROR":
             raise RuntimeError("Market analysis model failed")
         report = (
             response.content.strip() if isinstance(response.content, str) else json.dumps(response.content, default=str)
@@ -286,10 +271,8 @@ def run_activation_recheck(
     asset: AssetProfile = PROFILES["BTC"],
 ) -> AutomationTeamResult:
     code = asset.code
-    curated = enabled()
     market_tools = MarketIntelligenceTools(
         asset=asset,
-        curated=curated,
         assigned_expiries=[
             leg["expiry"] for leg in recheck_context["selectedStrategy"].get("definition", {}).get("legs", [])
         ],
@@ -297,8 +280,6 @@ def run_activation_recheck(
     market_packet = market_tools.collect_market_packet()
     chart_artifacts = _recheck_chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
-    if curated:
-        chart_context = chart_notes(chart_context)
     option_tools = RecheckOptionTools(asset=asset, selected_strategy=recheck_context["selectedStrategy"])
     market_packet["selectedOptionEvidence"] = option_tools.collect_evidence()
     market_packet["assignedOptionOverview"] = assigned_option_overview(market_packet, market_tools.assigned_expiries)
@@ -335,9 +316,7 @@ def run_activation_recheck(
         max_tokens=None,
         max_completion_tokens=None,
     )
-    fresh_market = market_input(market_packet, code) if curated else json.loads(market_tools.market_packet_json())
-    # The assigned schedule can be a legacy proposal or an evening hold. It is authoritative at recheck.
-    fresh_market.pop("sessionPolicy", None)
+    fresh_market = market_tools.market_packet_json()
     agent = Agent(
         id=asset.recheck_agent_id,
         name=f"{code} Strategy Activation Recheck",
@@ -382,7 +361,7 @@ def run_activation_recheck(
             "Chart reading instructions and exact values are keyed by the attached image IDs: "
             f"{json.dumps(chart_context, ensure_ascii=False)}. "
             "Fresh market evidence: "
-            + dumps(fresh_market)
+            + fresh_market
             + f" Fresh assigned option evidence: {dumps(market_packet['selectedOptionEvidence'])}"
             + f" Assigned expiry overview: {dumps(market_packet['assignedOptionOverview'])}"
         ),
@@ -437,82 +416,13 @@ def run_activation_recheck(
     )
 
 
-def session_instructions(trigger: str, reference: datetime) -> str:
-    expiry = session_expiry(reference)
-    remaining = max(0, (expiry - reference).total_seconds() / 60)
-    focus = {
-        "asia_session": "Asia review: primarily evaluate strategies suited to today's expiry.",
-        "london_session": "London review: primarily evaluate strategies suited to the remaining hours today.",
-        "pre_expiry": "Pre-expiry review: only consider strategies that can work in the short remaining window. "
-        "Processing and recheck reduce it; do not move to tomorrow's contract if today's is unsuitable.",
-        "new_york_session": "Evening review: focus on the upcoming expiry; "
-        "a trade may cross midnight for up to eleven hours.",
-    }.get(trigger, "Focus on strategies suited to the upcoming expiry within seven hours.")
-    return (
-        f"{focus} Upcoming expiry is {expiry.isoformat()} with {remaining:.1f} minutes remaining at the snapshot. "
-        f"Maximum hold is {maximum_hold_hours(trigger)} hours from planned entry, "
-        "shortened by the saved expiry buffer. "
-        "Use the validated schedule duration. Option prices are assessed during activation recheck. "
-        "No suitable trade means no trade. "
-        "Earlier strategy reports are dated evidence; their old expiry and holding choices are not current choices."
-    )
-
-
 def calculator() -> CalculatorTools:
     return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide", "exponentiate", "square_root"])
-
-
-def evidence_interpretation_instructions(*, include_options: bool = True) -> list[str]:
-    """Keep live option valuation instructions exclusive to the assigned recheck."""
-    instructions = [
-        "Distinguish option premium quoted in USD per BTC/ETH from USD cost per contract or normalized strategy unit. "
-        "Use supplied contract multipliers and label the unit; copy preview cost fields without rescaling them. "
-        "A premium of 689 USD per BTC with a 0.001 BTC multiplier costs 0.689 USD per contract, before fees.",
-        "Expiry payoff and breakevens apply at contract expiry, not at an earlier planned exit. For an early exit, "
-        "assess remaining time value, IV, Greeks and executable exit prices. Local Greek scenarios are approximate "
-        "changes in value, not guaranteed P&L or early-exit breakevens.",
-        "Recent realized volatility above or below IV is evidence, not proof of a profitable options trade. "
-        "Identify their different measurement horizons and explain why movement might persist or fade over the "
-        "chosen hold. Include premium, decay and costs when assessing the thesis.",
-        "Call a condition a mandatory gate only when the saved strategy or backend explicitly enforces it. "
-        "Volatility-scaled moves, strike-distance comparisons and advisory liquidity are analytical considerations; "
-        "do not present them as new execution rules.",
-        "When discussing catalysts, say the supplied news report identifies no scheduled catalyst during the hold "
-        "if that is what the evidence supports. Do not claim a complete event calendar or treat absent coverage as "
-        "proof that no event can occur. In rechecks, earlier news remains dated evidence, not a fresh news search.",
-    ]
-    if include_options:
-        return instructions
-    return [
-        "Call a condition a mandatory gate only when the saved strategy or backend explicitly enforces it. "
-        "Select using spot evidence and news. Activation recheck evaluates live option pricing and liquidity.",
-        instructions[-1],
-    ]
-
-
-def curated_instructions(instructions: list[str]) -> list[str]:
-    result = []
-    for instruction in instructions:
-        if instruction.startswith("Call show_available_strategy"):
-            result.append(
-                "Choose from the starting catalogue's strategyRef values, descriptions and rules. "
-                "Preserve legs, strikes, sizing, stops, targets and order types."
-            )
-        elif instruction.startswith("Inspect every attached chart"):
-            result.append(
-                "Inspect the 1-minute, 15-minute and daily price charts with numerical volume, realized volatility, "
-                "EMA, ATR, VWAP, CVD and liquidity. Absent catalyst coverage does not prove no event can occur."
-            )
-        else:
-            result.append(instruction)
-    return result
 
 
 def _chart_artifacts(
     market_packet: dict[str, Any],
     base: str = "BTC",
-    *,
-    price_only: bool = False,
 ) -> list[ChartArtifact]:
     charts: list[ChartArtifact] = []
 
@@ -539,8 +449,6 @@ def _chart_artifacts(
             f"{spot} {label} price",
             f"{spot} {label} candlestick chart from Binance Spot",
         )
-    if price_only:
-        return charts
     fifteen_minute = (market_packet.get("timeframes") or {}).get("15 minute") or {}
     candles = fifteen_minute.get("candles") or []
     add(
