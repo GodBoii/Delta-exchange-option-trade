@@ -71,6 +71,12 @@ def test_parent_lookup_uses_the_exact_parent_and_does_not_truncate(monkeypatch, 
 
 @pytest.mark.parametrize("previous", [None, {"runId": PARENT, "finalResponse": "Earlier complete assessment"}])
 def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, previous):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 13, 23, 59, 58, tzinfo=UTC)
+
+    monkeypatch.setattr(team, "datetime", FrozenDatetime)
     captured = {}
     monkeypatch.setattr(team, "read_parent_run_context", lambda *_, **__: previous)
     monkeypatch.setattr(
@@ -125,6 +131,7 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
     assert captured["model"].reasoning_effort == "max"
     assert "max_tokens" not in captured["model"].get_request_params()
     assert "max_completion_tokens" not in captured["model"].get_request_params()
+    assert captured["additional_context"].startswith("Run started at: 2026-10-13T23:59:58+00:00 (UTC).")
     assert "Current verified news" in captured["additional_context"]
     assert "Wait for confirmation" in captured["additional_context"]
     assert "Main chart instructions" in captured["additional_context"]
