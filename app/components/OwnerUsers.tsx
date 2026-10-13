@@ -480,6 +480,8 @@ function UserDetail({ userId, onNotice, onAutomationSaved, refreshToken }: {
         <TradeTable
           state={trades.state}
           showDeleted
+          monitorBase={`${reportBase}/trades`}
+          accountName={displayName(profile)}
           onInspect={setInspecting}
           onRetry={() => void trades.reload()}
           onLoadMore={() => void trades.loadMore()}
