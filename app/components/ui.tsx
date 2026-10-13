@@ -695,7 +695,7 @@ export function RowMenu({ label, items, trigger: customTrigger }: {
               key={item.id}
               className={item.tone === "danger" ? "danger" : undefined}
               disabled={item.disabled}
-              onClick={() => { close(false); item.onSelect(); }}
+              onClick={() => { close(); item.onSelect(); }}
             >
               {item.icon && <span className="row-menu-icon" aria-hidden="true">{item.icon}</span>}
               <span className="row-menu-text">
