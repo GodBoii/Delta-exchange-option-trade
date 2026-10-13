@@ -41,7 +41,12 @@ ORDER_FIELDS = {
     "state": "state",
     "created_at": "createdAt",
 }
-RISK_STATE_FIELDS = ("mode", "exposureStatus", "closureReason", "reconciledAt", "exclusiveFillAccounting")
+RISK_STATE_FIELDS = (
+    "mode", "exposureStatus", "closureReason", "reconciledAt", "exclusiveFillAccounting",
+    "status", "message", "riskBasis", "stopPercent", "takeProfitPercent", "entryValue",
+    "currentValue", "currentValueLabel", "stopValue", "targetValue", "profit", "returnPercent",
+    "pricedAt", "exitReason", "exitRequested", "exitVerifiedAt", "exitFailedAt",
+)
 POLICY_FIELDS = (
     "allocationMode",
     "capitalAmount",
