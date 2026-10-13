@@ -52,7 +52,7 @@ def _text(draw, xy, text: str, size: int = 18, color: str = TEXT, anchor: str = 
 
 
 class _Chart:
-    """Full-width plot with a compact legend; detailed context travels as text."""
+    """Full-width plot with a small legend; detailed context travels as text."""
 
     def __init__(self, title: str, as_of_ms: int | None, context: dict[str, Any] | None = None):
         self.image = Image.new("RGB", (WIDTH, HEIGHT), BACKGROUND)
