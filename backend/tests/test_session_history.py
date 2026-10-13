@@ -66,11 +66,11 @@ def test_agent_context_removes_classification_without_mutating_source():
         },
         "sessionHistory": {"available": False},
     }
-    compact = market_summary(packet)
-    assert "marketStructure" not in compact["computedAnalysis"]
-    assert compact["computedAnalysis"]["emaIndicators"]["ema20"] == 10
-    assert compact["computedAnalysis"]["sidewaysProbability"] == 89.7
-    assert compact["sessionHistory"] == {"available": False}
+    market_evidence = market_summary(packet)
+    assert "marketStructure" not in market_evidence["computedAnalysis"]
+    assert market_evidence["computedAnalysis"]["emaIndicators"]["ema20"] == 10
+    assert market_evidence["computedAnalysis"]["sidewaysProbability"] == 89.7
+    assert market_evidence["sessionHistory"] == {"available": False}
     assert packet["analysis"]["marketStructure"]["state"] == "ranging"
 
 
