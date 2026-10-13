@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -33,6 +34,12 @@ COMPLETE_REPORT = (
 
 
 def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 13, 23, 59, 58, tzinfo=UTC)
+
+    monkeypatch.setattr("news_agent.pipeline.datetime", FrozenDatetime)
     analyst = FakeAgent(
         [
             RunOutput(
@@ -53,6 +60,7 @@ def test_pipeline_lets_agent_research_and_returns_trace(monkeypatch) -> None:
     assert analyst.calls[0]["session_id"] == "btc-thread"
     assert analyst.calls[0]["user_id"] == "alice"
     assert "search the web yourself" in analyst.calls[0]["prompt"]
+    assert analyst.calls[0]["prompt"].startswith("Run started at: 2026-10-13T23:59:58+00:00 (UTC).")
 
 
 @pytest.mark.parametrize("content", ["", "The operation was aborted"])
