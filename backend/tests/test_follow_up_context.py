@@ -139,14 +139,13 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
     assert captured["model"].reasoning_effort == "max"
     assert "max_tokens" not in captured["model"].get_request_params()
     assert "max_completion_tokens" not in captured["model"].get_request_params()
-    assert captured["additional_context"].startswith("Run started at: 2026-10-13T23:59:58+00:00 (UTC).")
-    schedule_text = captured["additional_context"].split("Next three permanent agent runs: ", 1)[1]
-    permanent_runs, _ = json.JSONDecoder().raw_decode(schedule_text)
-    assert len(permanent_runs) == 3
-    assert permanent_runs[0]["trigger"] == "asia_session"
-    assert permanent_runs[0]["scheduledForIst"] == "2026-10-14T05:30:00+05:30"
-    assert all(datetime.fromisoformat(row["scheduledForUtc"].replace("Z", "+00:00")) >
-               FrozenDatetime.now(UTC) for row in permanent_runs)
+    assert captured["additional_context"].startswith("Run started at: 2026-10-14 05:29:58 IST.")
+    schedule_text = captured["additional_context"].split("## Next three permanent agent runs\n\n", 1)[1]
+    schedule_text = schedule_text.split("\n\n", 1)[0]
+    assert schedule_text.count("- trigger:") == 3
+    assert "- trigger: asia_session\n  - scheduledForIst: 2026-10-14 05:30:00 IST" in schedule_text
+    assert "scheduledForUtc" not in schedule_text
+    assert "## Chart reading instructions by image ID" in captured["additional_context"]
     assert all("calculate_exit_time" not in text for text in captured["instructions"])
     assert "Current verified news" in captured["additional_context"]
     assert "Wait for confirmation" in captured["additional_context"]
