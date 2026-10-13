@@ -581,7 +581,7 @@ leg role, such as short_call or protective_put
 
 BTC and ETH use the tool-based workflow below. Rich market evidence is collected before
 the run and returned through the asset market tool. Input and recheck details are documented
-in [Market evidence and agent tools](28-compact-agent-inputs.md).
+in [Market evidence and agent tools](28-agent-inputs.md).
 
 The AI receives analysis data and saved strategies. It does not receive authority to edit risk parameters or lots.
 
@@ -618,7 +618,7 @@ Slippage handling, order recovery, actual margin checks, fill reconciliation, an
 
 ### Read-only market tools
 
-`get_btc_market_packet` returns compact data rather than raw candle arrays:
+`get_btc_market_packet` returns numerical summaries rather than raw candle arrays:
 
 ```text
 last price, 24-hour change, high, low, bid, ask, and volume
@@ -663,14 +663,14 @@ BTC per observed ten-minute bucket. Buckets crossing a requested interval bounda
 coverage stays explicit, and empty averages/totals are null. The current live score remains separate.
 History is a description of recorded conditions, not a calibrated probability of a future outcome.
 
-The compact agent packet removes the categorical EMA state and strength fields, including the old
+The market tool response removes the categorical EMA state and strength fields, including the old
 `ranging` fallback, while retaining EMA20 and EMA50. Public chart/API fields remain compatible. Main and
 activation-recheck runs receive the summaries, and existing decision snapshots persist the same context.
 History failure is reported in the packet without breaking the existing market tools or order execution.
 
 ### Chart storage
 
-Agent PNGs use a 1600 x 900 full-width plot with labeled axes and a compact boxed legend in the upper-right margin. There is no side panel or prose footer. Both main runs and activation rechecks use the same candlestick renderer. Images identify Binance Spot BTCUSDT, price/volume units, and UTC capture time.
+Agent PNGs use a 1600 x 900 full-width plot with labeled axes and a small boxed legend in the upper-right margin. There is no side panel or prose footer. Both main runs and activation rechecks use the same candlestick renderer. Images identify Binance Spot BTCUSDT, price/volume units, and UTC capture time.
 
 Detailed values, source timestamps, formulas, and reading instructions are sent as text keyed by image ID and persisted under `market_json.chartContext`. Main agents and activation rechecks receive this alongside the images, generated from the same snapshot. The items below describe the combined image and text context, not a statistics panel within the PNG.
 
