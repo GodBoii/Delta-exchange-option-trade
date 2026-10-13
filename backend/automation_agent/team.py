@@ -61,6 +61,7 @@ def run_automation_team(
     signals_to_inspect: list[str] | None = None,
     asset: AssetProfile = PROFILES["BTC"],
 ) -> AutomationTeamResult:
+    run_started_at = datetime.now(UTC)
     code, pair, spot = asset.code, asset.delta_index, asset.spot_symbol
     previous_run = read_parent_run_context(settings, user_id=user_id, agent_run_id=agent_run_id)
     if previous_run:
@@ -265,6 +266,9 @@ def run_automation_team(
                 "invalidation conditions."
             ),
             additional_context=(
+                f"Run started at: {run_started_at.isoformat()} (UTC). "
+                "Assess news publication and event age against this time. Weight freshness, verification and "
+                "continuing relevance; older news may still matter. Unknown dates stay unknown. "
                 f"Current news evidence: {news_result.markdown}. "
                 f"Current trigger: {trigger}. Trigger reason: {trigger_reason or 'scheduled market analysis'}. "
                 f"Signals requested by the prior run: {json.dumps(signals_to_inspect or [], ensure_ascii=False)}. "
