@@ -1,16 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, AlertTriangle, RefreshCw } from "@/app/components/icons";
+import { Activity, AlertTriangle, Eye, Info, RefreshCw } from "@/app/components/icons";
+import TradeMonitor from "@/app/components/TradeMonitor";
 import { useCurrency } from "@/app/components/currency";
 import { requestJson } from "@/lib/api";
 import { EM_DASH, errorMessage, formatDateTime, relativeTime, toNumber } from "@/lib/format";
 import {
-  RANGE_OPTIONS, STATE_LABELS, STATE_TONES, exclusionText, verifyReportAsset, verifyReportStrategy, winRateText, type ReportAsset
+  RANGE_OPTIONS, STATE_LABELS, STATE_TONES, exclusionText, runStub, verifyReportAsset, verifyReportStrategy, winRateText, type ReportAsset
 } from "@/lib/reporting";
 import type { AccountingState, PnlSummary, ReportRange, TradeItem, TradePage } from "@/lib/app-types";
 import {
-  EmptyState, IconSwap, InlineMessage, Segmented, Select, StatusChip, TableSkeleton
+  EmptyState, IconSwap, InlineMessage, RowMenu, Segmented, Select, StatusChip, TableSkeleton
 } from "@/app/components/ui";
 
 export type StateFilter = AccountingState | "all";
@@ -173,15 +174,19 @@ export function useTradePages(path: string | null, asset: ReportAsset = "all", s
 }
 
 /** Software trades with their accounting state. Deleted runs are marked when `showDeleted` is set. */
-export function TradeTable({ state, onInspect, onRetry, onLoadMore, showDeleted = false, emptyText }: {
+export function TradeTable({ state, onInspect, onRetry, onLoadMore, showDeleted = false, emptyText, monitorBase, accountName }: {
   state: ListState;
   onInspect: (trade: TradeItem) => void;
   onRetry: () => void;
   onLoadMore: () => void;
   showDeleted?: boolean;
   emptyText: string;
+  /** Explicit owner scope; personal reports keep their own endpoint. */
+  monitorBase?: string;
+  accountName?: string;
 }) {
   const { currencyCode, formatMoneyNumber } = useCurrency();
+  const [viewing, setViewing] = useState<TradeItem | null>(null);
   if (state.kind === "loading") return <TableSkeleton label="software trades" rows={5} />;
   if (state.kind === "error") {
     return (
@@ -209,6 +214,7 @@ export function TradeTable({ state, onInspect, onRetry, onLoadMore, showDeleted 
               <th scope="col">Realized P&L ({currencyCode})</th>
               <th scope="col">Fees ({currencyCode})</th>
               <th scope="col">Budget at entry ({currencyCode})</th>
+              <th scope="col"><span className="visually-hidden">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -251,6 +257,12 @@ export function TradeTable({ state, onInspect, onRetry, onLoadMore, showDeleted 
                   <td data-label="Budget at entry">
                     {trade.capitalBudget ? formatMoneyNumber(trade.capitalBudget) : EM_DASH}
                   </td>
+                  <td className="row-action" data-label="Trade actions">
+                    <RowMenu label={`Actions for ${trade.name}`} items={[
+                      { id: "details", label: "Details", hint: "Timing, criteria, fills and accounting", icon: <Info />, onSelect: () => onInspect(trade) },
+                      { id: "view", label: "View", hint: trade.deletedByUserAt ? "Final archived status and activity" : "Current status, prices and execution activity", icon: <Eye />, onSelect: () => setViewing(trade) }
+                    ]} />
+                  </td>
                 </tr>
               );
             })}
@@ -268,6 +280,9 @@ export function TradeTable({ state, onInspect, onRetry, onLoadMore, showDeleted 
           </button>
         </div>
       )}
+      {viewing && <TradeMonitor key={viewing.runId} run={runStub(viewing)} accountName={accountName}
+        endpoint={`${monitorBase ?? "/api/strategies"}/${encodeURIComponent(viewing.runId)}/monitor`}
+        onClose={() => setViewing(null)} onDetails={() => { setViewing(null); onInspect(viewing); }} />}
     </>
   );
 }
