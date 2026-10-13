@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from agno.tools import Toolkit
@@ -27,27 +24,21 @@ class MarketIntelligenceTools(Toolkit):
         self,
         *,
         binance_url: str | None = None,
-        delta_url: str | None = None,
         session_trigger: str | None = None,
         asset: AssetProfile | None = None,
-        curated: bool = False,
         assigned_expiries: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         self.asset = asset or PROFILES["BTC"]
-        self.curated = curated
         self.assigned_expiries = assigned_expiries or []
         self.session_trigger = session_trigger
         self.binance_url = (binance_url or self.asset.market_base_url).rstrip("/")
-        self.delta_url = (delta_url or os.getenv("DELTA_PUBLIC_BASE_URL") or "https://api.india.delta.exchange").rstrip(
-            "/"
-        )
         self._packet_cache: dict[str, Any] | None = None
         # The tool keeps the asset in its name so each agent reads only its own market.
         tool = self.get_eth_market_packet if self.asset.code == "ETH" else self.get_btc_market_packet
         super().__init__(
             name="market_intelligence_tools",
-            tools=[] if curated else [tool],
+            tools=[tool],
             instructions=(
                 f"Use Binance Spot data for {self.asset.code} direction, volume, volatility, and order-flow analysis."
             ),
@@ -57,14 +48,14 @@ class MarketIntelligenceTools(Toolkit):
 
     def market_packet_json(self) -> str:
         packet = self._packet_cache or self.collect_market_packet()
-        return json.dumps(compact_btc_market_packet(packet, self.asset.code), ensure_ascii=False, default=str)
+        return json.dumps(market_summary(packet, self.asset.code), ensure_ascii=False, default=str)
 
     def get_btc_market_packet(self) -> str:
-        """Return compact BTC Spot trend, flow, volatility, order-book, and timeframe summaries."""
+        """Return BTC Spot trend, flow, volatility, order-book, and timeframe summaries."""
         return self.market_packet_json()
 
     def get_eth_market_packet(self) -> str:
-        """Return compact ETH Spot trend, flow, volatility, order-book, and timeframe summaries."""
+        """Return ETH Spot trend, flow, volatility, order-book, and timeframe summaries."""
         return self.market_packet_json()
 
     def collect_market_packet(self) -> dict[str, Any]:
@@ -153,67 +144,28 @@ class MarketIntelligenceTools(Toolkit):
                 for label, payload in loaded.items()
             },
         }
-        if self.curated:
-            with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
-                response = client.get(f"{route}/agent-summary", params={"expiryDates": self.assigned_expiries})
-                response.raise_for_status()
-                summary = response.json()
-            if summary.get("asset") != self.asset.code or summary.get("schemaVersion") != 1:
-                raise ValueError("Invalid curated market summary")
-            packet["enrichment"] = summary
+        with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
+            response = client.get(f"{route}/agent-summary", params={"expiryDates": self.assigned_expiries})
+            response.raise_for_status()
+            summary = response.json()
+        if (
+            not isinstance(summary, dict) or summary.get("asset") != self.asset.code
+            or summary.get("schemaVersion") != 1
+        ):
+            raise ValueError("Invalid asset market summary")
+        packet["enrichment"] = summary
         self._packet_cache = packet
         return packet
 
     def collect_delta_option_context(self) -> dict[str, Any]:
-        if self.curated:
-            with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
-                response = client.get(f"{self.binance_url}/api/market/{self.asset.market_route}/option-catalogue")
-                response.raise_for_status()
-                context = response.json()
-            if context.get("underlying") != self.asset.code or not isinstance(context.get("options"), list):
-                raise ValueError("Invalid asset option catalogue")
-            return context
-        with httpx.Client(timeout=httpx.Timeout(20, connect=5)) as client:
-            response = client.get(
-                f"{self.delta_url}/v2/tickers",
-                params={
-                    "contract_types": "call_options,put_options",
-                    "underlying_asset_symbols": self.asset.code,
-                    "page_size": 100,
-                },
-                headers={"Accept": "application/json", "User-Agent": "trade-cognition-automation/1.0"},
-            )
+        with httpx.Client(timeout=httpx.Timeout(5, connect=2)) as client:
+            response = client.get(f"{self.binance_url}/api/market/{self.asset.market_route}/option-catalogue")
             response.raise_for_status()
-            payload = response.json()
-            rows = payload.get("result") if isinstance(payload, dict) else None
-            options = [compact_option(row) for row in rows or [] if isinstance(row, dict)]
-            representatives: dict[str, str] = {}
-            for option in options:
-                symbol = str(option.get("symbol") or "")
-                code = _expiry_code(symbol)
-                if code:
-                    representatives.setdefault(code, symbol)
-            settlements: dict[str, str] = {}
-            for code, symbol in representatives.items():
-                try:
-                    product_response = client.get(f"{self.delta_url}/v2/products/{quote(symbol, safe='')}")
-                    product_response.raise_for_status()
-                    product = product_response.json().get("result") or {}
-                    settlement = product.get("settlement_time")
-                except (httpx.HTTPError, ValueError, AttributeError):
-                    settlement = None
-                # A symbol date is not proof of the exchange's actual settlement timestamp.
-                settlements[code] = str(settlement or "")
-            for option in options:
-                code = _expiry_code(str(option.get("symbol") or ""))
-                option["expiry"] = settlements.get(code or "") or option.get("expiry")
-        options.sort(key=lambda item: (str(item.get("expiry")), _number(item.get("strike"))))
-        context = {
-            "source": "Delta Exchange",
-            "underlying": self.asset.code,
-            "count": len(options),
-            "options": options,
-        }
+            context = response.json()
+        if not isinstance(context, dict) or context.get("underlying") != self.asset.code or not isinstance(
+            context.get("options"), list
+        ):
+            raise ValueError("Invalid asset option catalogue")
         return context
 
 
@@ -241,8 +193,8 @@ def summarize_candles(candles: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def compact_btc_market_packet(packet: dict[str, Any], base: str = "BTC") -> dict[str, Any]:
-    """Compact any asset's packet; quantity keys carry the base asset, e.g. bidDepthTop20Eth."""
+def market_summary(packet: dict[str, Any], base: str = "BTC") -> dict[str, Any]:
+    """Market tool evidence without raw candles, trades, books or option chains."""
     unit = base.capitalize()
     analysis = dict(packet.get("analysis") or {})
     # Keep numerical evidence; the EMA fallback label is not an independent signal.
@@ -250,6 +202,9 @@ def compact_btc_market_packet(packet: dict[str, Any], base: str = "BTC") -> dict
     if structure:
         analysis["emaIndicators"] = _pick(structure, "ema20", "ema50")
     ticker = packet.get("ticker") or {}
+    enrichment = packet.get("enrichment") or {}
+    price, vwap = ticker.get("lastPrice"), analysis.get("vwap")
+    analysis["vwapDistancePercent"] = (price / vwap - 1) * 100 if price and vwap else None
     order_book = packet.get("orderBook") or {}
     bids = order_book.get("bids") or []
     asks = order_book.get("asks") or []
@@ -267,7 +222,20 @@ def compact_btc_market_packet(packet: dict[str, Any], base: str = "BTC") -> dict
         for trade in trades
         if isinstance(trade, dict) and trade.get("side") == "sell"
     )
+    trade_times = [trade["time"] for trade in trades
+                   if isinstance(trade, dict) and isinstance(trade.get("time"), (int, float))]
     return {
+        "asset": base,
+        "units": {
+            "spot": "USDT", "volumeAndOi": "base asset unless explicitly contracts/quote",
+            "rvWindow": "120 one-minute returns", "sidewaysWindow": "60 minute closes; score, not forecast",
+            "cvdWindowSeconds": (analysis.get("cvd") or {}).get("windowSeconds", 900),
+            "funding": "percent per stated venue interval",
+        },
+        "historicalBaselines": enrichment.get("baselines", {}),
+        "liquidity": enrichment.get("liquidity", {}),
+        "previousLiquidityBucket": enrichment.get("previousLiquidityBucket", {}),
+        "futures": enrichment.get("futures", {}),
         "capturedAt": packet.get("capturedAt"),
         "source": packet.get("source"),
         "symbol": packet.get("symbol"),
@@ -296,35 +264,12 @@ def compact_btc_market_packet(packet: dict[str, Any], base: str = "BTC") -> dict
         },
         "recentTradeFlow": {
             "sampleSize": len(trades),
+            "start": min(trade_times) if trade_times else None,
+            "end": max(trade_times) if trade_times else None,
             "buyQuoteVolume": buy_volume,
             "sellQuoteVolume": sell_volume,
             "netBuyQuoteVolume": buy_volume - sell_volume,
         },
-    }
-
-
-def compact_option(row: dict[str, Any]) -> dict[str, Any]:
-    quotes = row.get("quotes") if isinstance(row.get("quotes"), dict) else {}
-    greeks = row.get("greeks") if isinstance(row.get("greeks"), dict) else {}
-    return {
-        "symbol": row.get("symbol"),
-        "type": row.get("contract_type"),
-        "expiry": row.get("settlement_time") or row.get("expiry_date"),
-        "strike": row.get("strike_price"),
-        "spot": row.get("spot_price"),
-        "mark": row.get("mark_price"),
-        "bestBid": quotes.get("best_bid"),
-        "bestAsk": quotes.get("best_ask"),
-        "bidSize": quotes.get("bid_size"),
-        "askSize": quotes.get("ask_size"),
-        "impliedVolatility": row.get("mark_vol") or row.get("iv"),
-        "openInterest": row.get("oi"),
-        "volume": row.get("volume"),
-        "delta": greeks.get("delta"),
-        "gamma": greeks.get("gamma"),
-        "theta": greeks.get("theta"),
-        "vega": greeks.get("vega"),
-        "contractValue": row.get("contract_value"),
     }
 
 
@@ -337,8 +282,3 @@ def _number(value: Any) -> float:
 
 def _pick(source: dict[str, Any], *keys: str) -> dict[str, Any]:
     return {key: source.get(key) for key in keys if source.get(key) not in (None, "")}
-
-
-def _expiry_code(symbol: str) -> str | None:
-    match = re.search(r"-(\d{6})$", symbol)
-    return match.group(1) if match else None
