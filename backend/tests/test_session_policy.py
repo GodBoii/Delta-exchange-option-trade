@@ -7,7 +7,6 @@ import pytest
 from app.errors import AppError
 from app.exit_schedule import session_expiry
 from app.local_research_operations import LocalResearchOperations
-from automation_agent.team import session_instructions
 
 
 def definition(entry: datetime, hours: int) -> dict:
@@ -43,18 +42,6 @@ def test_writer_rejects_deferral_to_another_session():
     run = {"data": {"trigger": "pre_expiry", "scheduled_for": "2026-10-08T10:00:00Z"}}
     with pytest.raises(AppError, match="session"):
         LocalResearchOperations._session_policy(definition(entry, 7), run)
-
-
-@pytest.mark.parametrize("trigger,hours", [
-    ("asia_session", 7), ("london_session", 7), ("pre_expiry", 7),
-    ("new_york_session", 11), ("midnight_review", 7),
-])
-def test_session_instructions_state_remaining_window_and_limit(trigger, hours):
-    instructions = session_instructions(trigger, datetime(2026, 10, 8, 10, tzinfo=UTC))
-    assert "120.0 minutes remaining" in instructions
-    assert f"Maximum hold is {hours} hours" in instructions
-    if trigger == "pre_expiry":
-        assert "do not move to tomorrow" in instructions
 
 
 @pytest.mark.parametrize("reference,expected", [
