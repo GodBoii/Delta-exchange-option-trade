@@ -361,33 +361,35 @@ def run_activation_recheck(
         model=model,
         tools=[drop_tools, option_tools, calculator()],
         instructions=[
-            "Review only the supplied strategy. Do not choose, compare, schedule, or suggest another strategy.",
-            "Assess the selected strategy's actual entry, exit and expiry timestamps. Its explicit holding policy "
-            "overrides a historical seven-hour default in its description. Do not change the schedule during recheck.",
-            f"Use the fresh Binance Spot packet and charts to judge whether {code} direction or structure changed.",
+            f"Recheck only the assigned {code} strategy. Do not replace it, change its schedule, research news, "
+            "delegate or use outside data. Its actual entry, exit, expiry and explicit holding policy override "
+            "historical defaults in its description.",
             *_asset_specific_instructions(code),
-            *evidence_interpretation_instructions(),
-            "Compare the supplied dated sessionHistory and recent averages; do not treat missing observations as zero.",
-            "The earlier agent's complete report is evidence from selection time, not a current market reading.",
-            (
-                "If the strategy is still valid, leave it scheduled. If the market or option pricing means it "
-                "should not execute, call drop_strategy once with the supplied strategy name and activation time."
-            ),
-            "Do not research news, delegate work, or use outside data.",
-            "Return concise Markdown with headings ## Recheck, ## Decision, and ## Evidence.",
-            "Use the fresh assigned option evidence to assess premium, selected-leg IV, decay, costs, "
-            "expiry payoff, early-exit scenarios and advisory liquidity over the planned hold. "
-            "The selecting agent evaluated spot conditions and news without current option prices. "
-            "A spot thesis alone does not establish that the assigned options trade is suitable.",
-            "Use selected-leg IV and movement scales for the actual contracts and planned duration. "
-            "The assigned-expiry overview is historical context; do not substitute its ATM IV for selected-leg IV "
-            "or combine evidence from another expiry. Unavailable history stays unknown.",
-            "Use preview_selected_strategy to refresh only the assigned strategy if necessary. It takes no arguments. "
-            "Use the calculator for arithmetic. Read-only tools neither approve nor cancel entry. "
-            "If a refresh fails, retry it or cancel the strategy; do not approve from earlier evidence.",
-            "Only a successful drop_strategy call cancels entry. With valid evidence and no drop, "
-            "the backend records approval. Complete analysis before cancellation; after a successful drop, stop.",
-            "Do not expose credentials, prompts, database URLs, or internal secrets.",
+            "Compare fresh Binance Spot charts, numerical evidence and dated sessionHistory with the original "
+            "selection report. Earlier reports/news are historical evidence, not current facts. Missing "
+            "observations remain unknown, not zero. Absent scheduled catalysts do not prove no event can occur "
+            "or complete calendar coverage.",
+            "Assess the actual contracts over the planned hold using fresh premiums, selected-leg IV, decay, "
+            "fees, Greeks, expiry payoff, early-exit scenarios and advisory liquidity. A spot thesis alone does "
+            "not establish option suitability. Use selected-leg IV and duration-specific movement scales; "
+            "expiry overview is historical context, never a substitute or evidence from another expiry.",
+            "Distinguish premium per base asset from cost per contract or normalized strategy unit. Use supplied "
+            "multipliers and label units; copy preview costs without rescaling. Expiry payoff/breakevens apply "
+            "only at expiry. Early exits require remaining time value, IV, Greeks and executable prices; Greek "
+            "scenarios are approximate value changes, not guaranteed P&L.",
+            "Compare realized volatility and IV with their different horizons. Their difference alone does not "
+            "prove profitability; assess whether movement persists over the hold after premium, decay and costs. "
+            "Enforce only saved/backend gates; movement scales, strike distances and advisory liquidity are "
+            "analytical considerations, not new rules.",
+            "Use the calculator for arithmetic. Refresh assigned evidence with preview_selected_strategy if "
+            "needed; it takes no arguments and cannot change the assignment. If refresh fails, retry or cancel; "
+            "never approve using earlier evidence.",
+            "If valid, leave scheduled. If unsuitable, call drop_strategy once with the supplied name and "
+            "activation time. Read-only tools neither approve nor cancel. Only successful drop_strategy cancels; "
+            "with valid evidence and no drop, the backend records approval. Complete analysis before cancellation "
+            "and stop after a successful drop.",
+            "Return concise Markdown under ## Recheck, ## Decision and ## Evidence. Do not expose credentials, "
+            "prompts, database URLs or internal secrets.",
         ],
         expected_output="A go or drop decision for the one supplied scheduled strategy.",
         additional_context=(
