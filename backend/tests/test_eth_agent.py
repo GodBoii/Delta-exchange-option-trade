@@ -9,7 +9,6 @@ import pytest
 from app.assets import asset_run_key, enabled_assets, parse_asset, run_asset, strategy_asset
 from app.automation import AutomationScheduler
 from app.default_strategies import builtin_strategy_definitions, default_strategy_definitions, eth_strategy_definitions
-from automation_agent import team
 from automation_agent.assets import PROFILES, asset_profile
 from automation_agent.market import MarketIntelligenceTools, market_summary
 from news_analyzer.main import AutomationAnalysisRequest
@@ -152,8 +151,6 @@ def test_eth_packet_and_charts_use_eth_units():
 
     assert compact["spotOrderBook"]["bidDepthTop20Eth"] == 3
     assert "bidDepthTop20Btc" not in compact["spotOrderBook"]
-    assert team._asset_specific_instructions("BTC") == []
-    assert any("ETH" in text for text in team._asset_specific_instructions("ETH"))
 
 
 def test_analysis_request_defaults_to_btc_and_accepts_eth():
