@@ -9,16 +9,8 @@ from app.automation_schedule import IST
 
 
 def dumps(value: Any) -> str:
-    def display(item):
-        if isinstance(item, float):
-            return float(f"{item:.8g}")
-        if isinstance(item, dict):
-            return {key: display(value) for key, value in item.items()}
-        if isinstance(item, list):
-            return [display(value) for value in item]
-        return item
-
-    return json.dumps(display(value), separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str)
+    # Provider-side presentation rounds evidence; machine consumers retain full precision.
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str)
 
 
 def assigned_option_overview(packet: dict, expiry_dates: list[str]) -> list[dict]:
