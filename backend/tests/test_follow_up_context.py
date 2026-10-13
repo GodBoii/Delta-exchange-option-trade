@@ -69,8 +69,9 @@ def test_parent_lookup_uses_the_exact_parent_and_does_not_truncate(monkeypatch, 
         assert result["finalResponse"] == parent["report_markdown"]
 
 
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
 @pytest.mark.parametrize("previous", [None, {"runId": PARENT, "finalResponse": "Earlier complete assessment"}])
-def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, previous):
+def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, previous, asset):
     class FrozenDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -127,7 +128,10 @@ def test_main_team_receives_parent_report_and_fresh_market_context(monkeypatch, 
         trigger="agent_follow_up",
         trigger_reason="Wait for confirmation",
         signals_to_inspect=["breakout"],
+        asset=team.PROFILES[asset],
     )
+    assert captured["instructions"][0].startswith(f"Assess {asset}USD direction")
+    assert captured["name"] == f"{asset} Strategy Automation Team"
     assert captured["model"].reasoning_effort == "max"
     assert "max_tokens" not in captured["model"].get_request_params()
     assert "max_completion_tokens" not in captured["model"].get_request_params()
