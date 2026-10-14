@@ -22,7 +22,7 @@ from app.errors import MARKET_AUTH_ERROR_CODE, MARKET_AUTH_ERROR_MESSAGE
 from app.shared_analysis import SHARED_USER_ID
 from automation_agent.assets import asset_profile
 from automation_agent.team import run_activation_recheck, run_automation_team
-from automation_agent.tools import confirm_activation_recheck, read_automation_state
+from automation_agent.tools import read_automation_state
 from news_agent.config import RECHECK_TIMEOUT_SECONDS, NewsAgentSettings
 from news_agent.database import create_session_db, verify_session_db
 from news_agent.failures import NewsResearchError
@@ -165,17 +165,16 @@ def _run_automation_analysis(body: AutomationAnalysisRequest, trace_id: str) -> 
                 recheck_context=body.accountContext,
                 asset=asset_profile(body.asset),
             )
-            if any(call.get("name") == "drop_strategy" for call in result.tool_calls):
-                recorded = read_automation_state(settings, user_id=body.userId, agent_run_id=body.agentRunId)
-                if not recorded or recorded.get("outcome") != "strategy_dropped":
-                    raise RuntimeError("Activation recheck attempted a drop but cancellation was not recorded")
-            else:
-                confirm_activation_recheck(
-                    settings,
-                    user_id=body.userId,
-                    agent_run_id=body.agentRunId,
-                    proposal_id=str(body.accountContext["proposalId"]),
-                )
+            decisions = {
+                "approve_strategy": "strategy_reconfirmed",
+                "drop_strategy": "strategy_dropped",
+            }
+            attempted_outcomes = {
+                decisions[call["name"]] for call in result.tool_calls if call.get("name") in decisions
+            }
+            recorded = read_automation_state(settings, user_id=body.userId, agent_run_id=body.agentRunId)
+            if not recorded or recorded.get("outcome") not in attempted_outcomes:
+                raise RuntimeError("Activation recheck did not confirm an approve or drop decision")
         else:
             result = run_automation_team(
                 settings=settings,
