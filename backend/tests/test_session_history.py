@@ -58,6 +58,31 @@ def test_missing_samples_and_partial_sessions_are_explicit():
     assert result["sessions"][-1]["observedTradedVolumeBtc"] is None
 
 
+@pytest.mark.parametrize("base", ["BTC", "ETH"])
+@pytest.mark.parametrize("day", ["2026-03-08", "2026-03-29", "2026-10-14", "2026-11-01"])
+@pytest.mark.parametrize("active", [
+    "asia_session", "london_session", "pre_expiry", "new_york_session", "midnight_review",
+])
+def test_all_run_types_stop_at_previous_active_session(base, day, active):
+    midnight = datetime.fromisoformat(day).replace(tzinfo=UTC)
+    opening = next(
+        b.scheduled_for for b in fixed_runs_between(midnight, midnight + timedelta(days=1)) if b.trigger == active
+    )
+    previous = [b for b in fixed_runs_between(opening - timedelta(days=2), opening) if b.trigger == active][-2]
+    for now in (opening, opening + timedelta(minutes=25)):
+        for trigger in (None, "manual", "follow_up", "activation_recheck", "outdated_session", "new_york_session"):
+            result = session_history(payload(now), now, trigger, base=base)
+            sessions = result["sessions"]
+            assert sessions[-1]["session"] == active
+            assert datetime.fromisoformat(sessions[-1]["start"]) == previous.scheduled_for
+            assert datetime.fromisoformat(sessions[0]["end"]) == now
+            assert len(sessions) == (5 if now == opening else 6)
+            assert sessions[0]["partial"] is (now != opening)
+            assert result["recent"]["last1Hour"][f"observedTradedVolume{base.capitalize()}"] is not None
+            assert result["recent"]["last2Hour"]["averageSidewaysScorePercent"] == 80
+            assert "previous opening of the same session" in result["method"]
+
+
 def test_agent_context_removes_classification_without_mutating_source():
     packet = {
         "analysis": {
