@@ -126,11 +126,14 @@ def run_case(
                 return deepcopy(state)
             # No client exists behind this fake. Every mutation stays in this process.
             record["simulatedActions"].append({"name": path, "arguments": args})
-            outcome = (
-                "strategy_selected"
-                if path in {"sharedAnalysis:publish", "runtimeAutomation:schedule"}
-                else ("wait_and_run_again" if "schedule" in path.lower() else "strategy_dropped")
-            )
+            if path == "runtimeAutomation:recheck":
+                outcome = "strategy_dropped" if args["drop"] else "strategy_reconfirmed"
+            else:
+                outcome = (
+                    "strategy_selected"
+                    if path in {"sharedAnalysis:publish", "runtimeAutomation:schedule"}
+                    else ("wait_and_run_again" if "schedule" in path.lower() else "strategy_dropped")
+                )
             state["run"]["outcome"] = outcome
             return {"status": "committed", "outcome": outcome, "success": True}
 
