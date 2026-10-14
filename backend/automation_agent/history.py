@@ -15,9 +15,9 @@ def session_history(
     unit = base.capitalize()
     now = now.astimezone(UTC)
     boundaries = fixed_runs_between(now - timedelta(days=3), now)
-    matching = [b for b in boundaries if b.trigger == (trigger or boundaries[-1].trigger)]
-    if len(matching) < 2:
-        matching = [b for b in boundaries if b.trigger == boundaries[-1].trigger]
+    # The active fixed session defines the window, even for delayed, manual or recheck runs.
+    trigger = boundaries[-1].trigger
+    matching = [b for b in boundaries if b.trigger == trigger]
     start = matching[-2].scheduled_for
     periods = [b for b in boundaries if b.scheduled_for >= start]
     rows = payload.get("observations") or []
@@ -53,6 +53,7 @@ def session_history(
         ),
         "samplingMinutes": 10,
         "method": (
+            "Sessions cover the active fixed session back through the previous opening of the same session. "
             "Session intervals run from one fixed review opening to the next, including weekends. "
             "Sideways is the mean of sampled 60-minute scores on a 0-100 scale, not a calibrated forecast. "
             "Volatility is the mean of sampled 120-return annualized realized volatility percentages. "
