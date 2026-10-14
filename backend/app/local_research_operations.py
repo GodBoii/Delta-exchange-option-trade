@@ -428,14 +428,17 @@ class LocalResearchOperations:
             shared = user_id == "global"
             valid = proposal["status"] == "scheduled" and (shared or (strategy and strategy["status"] == "scheduled"))
             name = proposed.get("name") if shared else (strategy["data"].get("name") if strategy else "")
-            if args["drop"] and (
-                not valid
+            if (
+                not isinstance(args.get("drop"), bool)
+                or not valid
                 or str(name).lower() != str(args.get("name") or "").strip().lower()
                 or instant(proposed["activation_time"]) != instant(args.get("activation"))
                 or not str(args.get("reason") or "").strip()
             ):
-                raise AppError(409, "Drop does not match assigned strategy", "recheck_drop_mismatch")
-            outcome = "strategy_dropped" if args["drop"] or not valid else "strategy_reconfirmed"
+                action = "Drop" if args.get("drop") is True else "Approval"
+                code = "recheck_drop_mismatch" if args.get("drop") is True else "recheck_approval_mismatch"
+                raise AppError(409, f"{action} does not match assigned strategy", code)
+            outcome = "strategy_dropped" if args["drop"] else "strategy_reconfirmed"
             if args["drop"]:
                 message = f"Dropped by activation recheck: {args['reason']}"
                 if strategy:
