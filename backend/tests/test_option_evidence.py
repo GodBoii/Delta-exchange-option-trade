@@ -125,18 +125,19 @@ def test_verified_greek_scaling_and_limit_price_fill():
 
 
 def test_native_calculator_can_be_followed_by_cancellation():
-    from automation_agent.tools import DropStrategyTools
+    from automation_agent.tools import ActivationRecheckTools
 
     toolkit = calculator()
     assert set(toolkit.functions) == {"add", "subtract", "multiply", "divide", "exponentiate", "square_root"}
     assert json.loads(toolkit.multiply(2, 3))["result"] == 6
-    assert "drop_strategy" in DropStrategyTools.__dict__
+    assert "approve_strategy" in ActivationRecheckTools.__dict__
+    assert "drop_strategy" in ActivationRecheckTools.__dict__
 
 
 def test_calculation_then_drop_uses_only_the_assigned_proposal(monkeypatch):
     from uuid import uuid4
 
-    from automation_agent.tools import DropStrategyTools
+    from automation_agent.tools import ActivationRecheckTools
 
     calls = []
 
@@ -147,7 +148,10 @@ def test_calculation_then_drop_uses_only_the_assigned_proposal(monkeypatch):
 
     monkeypatch.setattr("automation_agent.tools.runtime_data", lambda _: Data())
     proposal = str(uuid4())
-    drop = DropStrategyTools(SimpleNamespace(), user_id="global", agent_run_id=str(uuid4()), proposal_id=proposal)
+    drop = ActivationRecheckTools(
+        SimpleNamespace(), user_id="global", agent_run_id=str(uuid4()), proposal_id=proposal,
+        evidence_is_valid=lambda: False,
+    )
     assert json.loads(calculator().subtract(12, 10))["result"] == 2
     result = json.loads(drop.drop_strategy("Assigned strategy", datetime.now(UTC).isoformat(), "Thesis invalidated"))
     assert result["success"] is True
@@ -199,6 +203,7 @@ def test_dry_run_constructs_inputs_without_provider_or_actions(monkeypatch):
         assert ("show_available_strategy" in result["registeredTools"]) is not recheck
         assert ("multiply" in result["registeredTools"]) is recheck
         assert ("drop_strategy" in result["registeredTools"]) is recheck
+        assert ("approve_strategy" in result["registeredTools"]) is recheck
 
 
 @pytest.mark.asyncio
