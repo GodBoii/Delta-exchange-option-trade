@@ -15,6 +15,13 @@ Units, timestamps, observation coverage and missing values remain available. Raw
 trades, books and complete option chains stay in private snapshots rather than model text.
 Option overview data is not included in the main market tool result.
 
+Session history includes the last one and two hours plus every fixed-session interval
+back through the previous opening of the currently active session. During Asia, for
+example, it includes the current partial Asia session, intervening sessions and the
+previous Asia session. Manual, follow-up, delayed and activation recheck runs use that
+same active-session boundary. Sideways values are averages of sampled 60-minute scores,
+not calibrated probabilities. Missing history remains unavailable, with coverage shown.
+
 Main runs receive 1-minute, 15-minute and daily price charts. Volume, realized
 volatility and order-book evidence arrive in the market tool result. Captions retain axes, legends, reading notes and
 chart-specific values. The starting context includes the current news report, UTC
@@ -34,11 +41,14 @@ restricted to the assigned expiries. It evaluates actual premiums, selected-leg 
 fees, Greeks, depth, expiry payoff and local early-exit estimates. Overview ATM IV
 never substitutes for selected-leg IV.
 
-Recheck tools are `preview_selected_strategy`, `drop_strategy` and the calculator.
+Recheck tools are `preview_selected_strategy`, `approve_strategy`, `drop_strategy` and the calculator.
 The preview takes no arguments and refreshes only the assigned contracts. Initial
 quote failure prevents model invocation; failed refresh invalidates evidence until
-recovery. Read-only tools do not cancel entry. Only a successful drop cancels it;
-valid evidence with no drop allows backend approval. Recheck cannot replace the
+recovery. Approval requires currently valid option evidence. Both decision tools take
+the assigned strategy name, activation time and a brief reason. The writer validates
+the assignment and preserves the first committed decision on retries. Only a successful
+approval permits entry; a successful drop cancels it. Reports and read-only tools cannot
+approve. A run with no committed decision fails without approving entry. Recheck cannot replace the
 strategy or change its schedule. The backend schedules it seven minutes before entry
 and rejects entries that leave insufficient time.
 
