@@ -95,7 +95,7 @@ def test_provider_formats_read_only_evidence_without_mutating_records(model_type
 
 
 @pytest.mark.parametrize("tool_name", [
-    "select_strategy_and_time", "scheduled_next_agent_run", "drop_strategy", "multiply",
+    "select_strategy_and_time", "scheduled_next_agent_run", "approve_strategy", "drop_strategy", "multiply",
 ])
 def test_actions_and_calculators_keep_machine_results(tool_name):
     raw = json.dumps({"success": True, "value": 25.76391795730431})
