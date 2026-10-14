@@ -29,7 +29,7 @@ from .market import MarketIntelligenceTools
 from .recheck import RecheckOptionTools
 from .report_data import save_news_evidence
 from .storage import ChartArtifact, ChartStorage
-from .tools import AutomationStrategyTools, DropStrategyTools, read_parent_run_context, save_market_snapshot
+from .tools import ActivationRecheckTools, AutomationStrategyTools, read_parent_run_context, save_market_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -295,11 +295,12 @@ def run_activation_recheck(
         account_context=recheck_context,
     )
     strategy = recheck_context["selectedStrategy"]
-    drop_tools = DropStrategyTools(
+    decision_tools = ActivationRecheckTools(
         settings,
         user_id=user_id,
         agent_run_id=agent_run_id,
         proposal_id=str(recheck_context["proposalId"]),
+        evidence_is_valid=lambda: option_tools.evidence_valid,
     )
     model = EvidenceOpenRouter(
         id=settings.automation_model_id,
@@ -317,7 +318,7 @@ def run_activation_recheck(
         name=f"{code} Strategy Activation Recheck",
         role=f"Recheck one already-selected {code} options strategy immediately before its scheduled activation.",
         model=model,
-        tools=[drop_tools, option_tools, calculator()],
+        tools=[decision_tools, option_tools, calculator()],
         instructions=[
             f"Recheck only the assigned {code} strategy. Do not replace it, change its schedule, research news, "
             "delegate or use outside data. Its actual entry, exit, expiry and explicit holding policy override "
@@ -341,14 +342,13 @@ def run_activation_recheck(
             "Use the calculator for arithmetic. Refresh assigned evidence with preview_selected_strategy if "
             "needed; it takes no arguments and cannot change the assignment. If refresh fails, retry or cancel; "
             "never approve using earlier evidence.",
-            "If valid, leave scheduled. If unsuitable, call drop_strategy once with the supplied name and "
-            "activation time. Read-only tools neither approve nor cancel. Only successful drop_strategy cancels; "
-            "with valid evidence and no drop, the backend records approval. Complete analysis before cancellation "
-            "and stop after a successful drop.",
+            "If the assigned strategy is eligible to run, call approve_strategy; if it is too risky or ineligible, "
+            "call drop_strategy. Use its supplied name and activation time, give a brief reason, and stop after "
+            "confirmation. Read-only tools and reports do not approve or cancel.",
             "Return concise Markdown under ## Recheck, ## Decision and ## Evidence. Do not expose credentials, "
             "prompts, database URLs or internal secrets.",
         ],
-        expected_output="A go or drop decision for the one supplied scheduled strategy.",
+        expected_output="A tool-confirmed approve or drop decision for the one supplied scheduled strategy.",
         additional_context="\n\n".join([
             f"The {asset.delta_index} trader selected this strategy earlier. Recheck whether it remains valid now.",
             "Evidence uses IST, UTC+05:30. Analytical numbers are rounded for display; saved rules remain exact. "
@@ -381,7 +381,7 @@ def run_activation_recheck(
     response = agent.run(
         (
             f"Recheck {strategy['name']} scheduled for {strategy['activationTime']}. "
-            "Leave it scheduled if the setup remains valid. Use drop_strategy if it no longer does."
+            "Use approve_strategy if eligible to run, or drop_strategy if too risky or ineligible."
         ),
         session_id=stored_session_id,
         user_id=user_id,
