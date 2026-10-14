@@ -29,13 +29,17 @@ def recheck_request():
 
 
 @pytest.mark.parametrize("read_tools", [[], [{"name": "multiply"}], [{"name": "preview_selected_strategy"}]])
-@pytest.mark.parametrize("drop_attempt,committed", [(False, False), (True, True), (True, False)])
-def test_recheck_never_reconfirms_a_failed_drop(monkeypatch, drop_attempt, committed, read_tools):
-    state = {"outcome": "strategy_dropped" if committed else None}
+@pytest.mark.parametrize("action,committed", [
+    (None, False), ("approve_strategy", True), ("approve_strategy", False),
+    ("drop_strategy", True), ("drop_strategy", False),
+])
+def test_recheck_requires_a_committed_explicit_decision(monkeypatch, action, committed, read_tools):
+    expected = "strategy_reconfirmed" if action == "approve_strategy" else "strategy_dropped"
+    state = {"outcome": expected if committed else None}
     result = SimpleNamespace(
         run_id="run", session_id="session", model_id="model", report="Decision",
         market_snapshot_id="snapshot", member_responses=[],
-        tool_calls=read_tools + ([{"name": "drop_strategy"}] if drop_attempt else []),
+        tool_calls=read_tools + ([{"name": action}] if action else []),
     )
     monkeypatch.setattr(main, "run_activation_recheck", lambda **_: result)
     monkeypatch.setattr(main, "read_automation_state", lambda *_, **__: state)
@@ -43,18 +47,22 @@ def test_recheck_never_reconfirms_a_failed_drop(monkeypatch, drop_attempt, commi
         main, "run_automation_team", lambda **_: pytest.fail("Rechecks must not run the main team")
     )
 
-    def confirm(*_, **__):
-        assert not drop_attempt
-        state["outcome"] = "strategy_reconfirmed"
-
-    monkeypatch.setattr(main, "confirm_activation_recheck", confirm)
-    if drop_attempt and not committed:
+    if not committed:
         with pytest.raises(main.ServiceError):
             main._run_automation_analysis(recheck_request(), "test")
         assert state["outcome"] is None
     else:
         response = main._run_automation_analysis(recheck_request(), "test")
-        assert response["outcome"] == ("strategy_dropped" if committed else "strategy_reconfirmed")
+        assert response["outcome"] == expected
+
+
+@pytest.mark.parametrize("report", ["Go", "Inconclusive", '{"decision":"approve","unfinished'])
+def test_plain_reports_cannot_approve_without_a_tool(monkeypatch, report):
+    result = SimpleNamespace(report=report, tool_calls=[])
+    monkeypatch.setattr(main, "run_activation_recheck", lambda **_: result)
+    monkeypatch.setattr(main, "read_automation_state", lambda *_, **__: {"outcome": None})
+    with pytest.raises(main.ServiceError):
+        main._run_automation_analysis(recheck_request(), "test")
 
 
 @pytest.mark.parametrize("missing_report", [False, True])
@@ -88,26 +96,58 @@ async def test_recheck_context_reads_only_its_strategy_and_original_run(missing_
         assert "upcomingAgentRuns" not in context
 
 
-def test_drop_sends_the_bound_proposal_to_the_writer(monkeypatch):
+@pytest.mark.parametrize("action,drop,outcome", [
+    ("approve_strategy", False, "strategy_reconfirmed"), ("drop_strategy", True, "strategy_dropped"),
+])
+def test_decision_sends_the_bound_proposal_to_the_writer(monkeypatch, action, drop, outcome):
     sent = {}
 
     def request(path, args, *, mutation=False):
         sent.update(path=path, args=args, mutation=mutation)
-        return {"outcome": "strategy_dropped", "strategy": "Short strangle"}
+        return {"outcome": outcome, "strategy": "Short strangle"}
 
     monkeypatch.setattr(tools, "runtime_data", lambda _: SimpleNamespace(request_sync=request))
-    toolkit = tools.DropStrategyTools(SimpleNamespace(), user_id=USER_ID, agent_run_id=RUN_ID, proposal_id=PROPOSAL_ID)
-    assert set(toolkit.functions) == {"drop_strategy"}
+    toolkit = tools.ActivationRecheckTools(
+        SimpleNamespace(), user_id=USER_ID, agent_run_id=RUN_ID, proposal_id=PROPOSAL_ID,
+        evidence_is_valid=lambda: True,
+    )
+    assert set(toolkit.functions) == {"approve_strategy", "drop_strategy"}
+    decision = getattr(toolkit, action)
+    toolkit.functions[action].process_entrypoint()
+    assert set(toolkit.functions[action].parameters["properties"]) == {"strategy_name", "activation_time", "reason"}
     with pytest.raises(ValueError, match="reason"):
-        toolkit.drop_strategy("Short strangle", ACTIVATION.isoformat(), " ")
+        decision("Short strangle", ACTIVATION.isoformat(), " ")
     with pytest.raises(ValueError, match="activation_time"):
-        toolkit.drop_strategy("Short strangle", "2026-09-03T07:02:00", "Range broke")
-    result = json.loads(toolkit.drop_strategy("Short strangle", ACTIVATION.isoformat(), "Range broke"))
-    assert result["outcome"] == "strategy_dropped"
+        decision("Short strangle", "2026-09-03T07:02:00", "Range broke")
+    result = json.loads(decision("Short strangle", ACTIVATION.isoformat(), "Reviewed setup"))
+    assert result["outcome"] == outcome
     assert sent == {"path": "runtimeAutomation:recheck", "mutation": True, "args": {
-        "userId": USER_ID, "runId": RUN_ID, "proposalId": PROPOSAL_ID, "drop": True,
-        "name": "Short strangle", "activation": ACTIVATION.isoformat(), "reason": "Range broke",
+        "userId": USER_ID, "runId": RUN_ID, "proposalId": PROPOSAL_ID, "drop": drop,
+        "name": "Short strangle", "activation": ACTIVATION.isoformat(), "reason": "Reviewed setup",
     }}
+
+
+def test_failed_evidence_refresh_blocks_approval_but_allows_drop(monkeypatch):
+    mutations = []
+    evidence = SimpleNamespace(valid=True)
+
+    def request(path, args, *, mutation=False):
+        mutations.append(args)
+        return {"outcome": "strategy_dropped" if args["drop"] else "strategy_reconfirmed"}
+
+    monkeypatch.setattr(tools, "runtime_data", lambda _: SimpleNamespace(request_sync=request))
+    toolkit = tools.ActivationRecheckTools(
+        SimpleNamespace(), user_id=USER_ID, agent_run_id=RUN_ID, proposal_id=PROPOSAL_ID,
+        evidence_is_valid=lambda: evidence.valid,
+    )
+    evidence.valid = False
+    with pytest.raises(ValueError, match="Cannot approve"):
+        toolkit.approve_strategy("Short strangle", ACTIVATION.isoformat(), "Earlier quotes were valid")
+    assert mutations == []
+    assert json.loads(toolkit.drop_strategy(
+        "Short strangle", ACTIVATION.isoformat(), "Refresh failed",
+    ))["outcome"] == "strategy_dropped"
+    assert mutations[0]["drop"] is True
 
 
 def test_market_tool_and_charts_exclude_delta():
@@ -123,7 +163,7 @@ def test_market_tool_and_charts_exclude_delta():
 ])
 @pytest.mark.parametrize("evidence_valid", [True, False])
 @pytest.mark.parametrize("asset", ["BTC", "ETH"])
-def test_recheck_without_drop_uses_plain_report(monkeypatch, report, evidence_valid, asset):
+def test_recheck_preserves_report_and_exposes_both_decision_tools(monkeypatch, report, evidence_valid, asset):
     captured = {}
     packet = {"source": "Binance Spot", "timeframes": {}}
     monkeypatch.setattr(team, "MarketIntelligenceTools", lambda **_: SimpleNamespace(
@@ -179,7 +219,10 @@ def test_recheck_without_drop_uses_plain_report(monkeypatch, report, evidence_va
     assert "Exact original report" in captured["additional_context"]
     assert "Recheck chart instructions" in captured["additional_context"]
     assert len(captured["tools"]) == 3
-    assert set(captured["tools"][0].functions) == {"drop_strategy"}
+    assert set(captured["tools"][0].functions) == {"approve_strategy", "drop_strategy"}
+    assert "call approve_strategy" in " ".join(captured["instructions"])
+    assert "too risky or ineligible" in " ".join(captured["instructions"])
+    assert "with valid evidence and no drop" not in " ".join(captured["instructions"])
     assert set(captured["tools"][1].functions) == {"preview_selected_strategy"}
     assert captured["tool_call_limit"] == 16
     assert "netCreditUsd" in captured["additional_context"]
