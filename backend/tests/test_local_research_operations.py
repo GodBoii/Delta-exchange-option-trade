@@ -89,10 +89,106 @@ async def test_shared_decision_publish_and_recheck_commit_once():
                 "runId": recheck_id,
                 "proposalId": published["proposalId"],
                 "drop": False,
+                "name": "Research spread",
+                "activation": activation,
+                "reason": "Fresh evidence confirms eligibility",
             },
             mutation=True,
         )
         assert rechecked["outcome"] == "strategy_reconfirmed"
+
+
+@pytest.mark.parametrize("shared", [True, False])
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+@pytest.mark.parametrize("drop", [True, False])
+async def test_explicit_recheck_decision_is_assigned_and_commits_once(shared, asset, drop):
+    async with AsyncConnectionPool(os.environ["TEST_LOCAL_DATABASE_URL"], open=False) as pool:
+        await pool.open()
+        runtime = LocalRuntimeStore(pool)
+        user_id = "global" if shared else str(uuid4())
+        run_id, proposal_id, strategy_id = (str(uuid4()) for _ in range(3))
+        activation = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        if not shared:
+            async with pool.connection() as connection:
+                await connection.execute(
+                    "insert into trade.users (user_id,automation,capital,record) values (%s,%s,%s,%s)",
+                    (user_id, Jsonb({"enabled": True}), Jsonb({}), Jsonb({})),
+                )
+            await runtime.write("strategies", {
+                "id": strategy_id, "user_id": user_id, "status": "scheduled", "asset": asset,
+                "name": "Assigned strategy", "entry_at": activation,
+                "definition_json": {"instrument": {"underlying": asset}},
+            })
+        await runtime.write("strategy_proposals", {
+            "id": proposal_id, "user_id": user_id, "status": "scheduled", "asset": asset,
+            "name": "Assigned strategy", "activation_time": activation,
+            **({"strategy_id": strategy_id} if not shared else {}),
+        })
+        await runtime.write("automation_agent_runs", {
+            "id": run_id, "user_id": user_id, "status": "running", "asset": asset,
+            "trigger": "activation_recheck", "strategy_proposal_id": proposal_id,
+        })
+        args = {
+            "userId": user_id, "runId": run_id, "proposalId": proposal_id, "drop": drop,
+            "name": "Assigned strategy", "activation": activation, "reason": "Reviewed eligibility",
+        }
+        mismatches = (
+            {"userId": str(uuid4())}, {"name": "Another strategy"},
+            {"activation": (datetime.now(UTC) + timedelta(hours=2)).isoformat()},
+            {"reason": " "}, {"drop": "false"},
+        )
+        for mismatch in mismatches:
+            with pytest.raises(AppError):
+                await runtime.data.request("runtimeAutomation:recheck", {**args, **mismatch}, mutation=True)
+            run = (await runtime.select("automation_agent_runs", {"id": f"eq.{run_id}"}))[0]
+            assert not run.get("outcome")
+
+        # A different proposal cannot be substituted even for the same account and asset.
+        other_proposal = str(uuid4())
+        await runtime.write("strategy_proposals", {
+            "id": other_proposal, "user_id": user_id, "status": "scheduled", "asset": asset,
+            "name": "Assigned strategy", "activation_time": activation,
+        })
+        with pytest.raises(AppError, match="assignment mismatch"):
+            await runtime.data.request(
+                "runtimeAutomation:recheck", {**args, "proposalId": other_proposal}, mutation=True,
+            )
+
+        result = await runtime.data.request("runtimeAutomation:recheck", args, mutation=True)
+        expected = "strategy_dropped" if drop else "strategy_reconfirmed"
+        assert result["outcome"] == expected
+        for retry in (args, {**args, "drop": not drop}):
+            repeated = await runtime.data.request("runtimeAutomation:recheck", retry, mutation=True)
+            assert repeated["outcome"] == expected
+        proposal = (await runtime.select("strategy_proposals", {"id": f"eq.{proposal_id}"}))[0]
+        assert proposal["status"] == ("cancelled" if drop else "scheduled")
+        other = (await runtime.select("strategy_proposals", {"id": f"eq.{other_proposal}"}))[0]
+        assert other["status"] == "scheduled"
+        if not shared:
+            strategy = (await runtime.select("strategies", {"id": f"eq.{strategy_id}"}))[0]
+            assert strategy["status"] == ("cancelled" if drop else "scheduled")
+
+
+async def test_approval_cannot_reconfirm_a_cancelled_assignment():
+    async with AsyncConnectionPool(os.environ["TEST_LOCAL_DATABASE_URL"], open=False) as pool:
+        await pool.open()
+        runtime = LocalRuntimeStore(pool)
+        run_id, proposal_id = str(uuid4()), str(uuid4())
+        activation = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        await runtime.write("strategy_proposals", {
+            "id": proposal_id, "user_id": "global", "status": "cancelled", "name": "Assigned strategy",
+            "activation_time": activation,
+        })
+        await runtime.write("automation_agent_runs", {
+            "id": run_id, "user_id": "global", "status": "running", "trigger": "activation_recheck",
+            "strategy_proposal_id": proposal_id,
+        })
+        with pytest.raises(AppError, match="Approval does not match"):
+            await runtime.data.request("runtimeAutomation:recheck", {
+                "userId": "global", "runId": run_id, "proposalId": proposal_id, "drop": False,
+                "name": "Assigned strategy", "activation": activation, "reason": "Setup holds",
+            }, mutation=True)
+        assert not (await runtime.select("automation_agent_runs", {"id": f"eq.{run_id}"}))[0].get("outcome")
 
 
 @pytest.mark.asyncio
