@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -450,8 +451,8 @@ class AutomationStrategyTools(Toolkit):
         )
 
 
-class DropStrategyTools(Toolkit):
-    """Allow a recheck agent to cancel only the proposal assigned to its run."""
+class ActivationRecheckTools(Toolkit):
+    """Approve or cancel only the proposal assigned to this recheck."""
 
     def __init__(
         self,
@@ -460,22 +461,33 @@ class DropStrategyTools(Toolkit):
         user_id: str,
         agent_run_id: str,
         proposal_id: str,
+        evidence_is_valid: Callable[[], bool],
         **kwargs: Any,
     ) -> None:
         self.user_id = user_id if user_id == SHARED_USER_ID else str(UUID(user_id))
         self.agent_run_id = str(UUID(agent_run_id))
         self.proposal_id = str(UUID(proposal_id))
         self.runtime_data = runtime_data(settings)
+        self.evidence_is_valid = evidence_is_valid
         super().__init__(
             name="activation_recheck_tools",
-            tools=[self.drop_strategy],
-            instructions="drop_strategy can cancel only the scheduled strategy bound to this activation recheck.",
+            tools=[self.approve_strategy, self.drop_strategy],
+            instructions="approve_strategy and drop_strategy apply only to the strategy assigned to this recheck.",
             add_instructions=True,
             **kwargs,
         )
 
+    def approve_strategy(self, strategy_name: str, activation_time: str, reason: str) -> str:
+        """Approve the assigned strategy for scheduled entry when fresh evidence confirms it is eligible."""
+        if not self.evidence_is_valid():
+            raise ValueError("Cannot approve without valid fresh assigned option evidence")
+        return self._decide(strategy_name, activation_time, reason, drop=False)
+
     def drop_strategy(self, strategy_name: str, activation_time: str, reason: str) -> str:
-        """Cancel the supplied scheduled strategy because its original market setup is no longer valid."""
+        """Cancel the assigned strategy when it is too risky or ineligible for scheduled entry."""
+        return self._decide(strategy_name, activation_time, reason, drop=True)
+
+    def _decide(self, strategy_name: str, activation_time: str, reason: str, *, drop: bool) -> str:
         reason = reason.strip()
         if not reason:
             raise ValueError("reason is required")
@@ -487,7 +499,7 @@ class DropStrategyTools(Toolkit):
                     "userId": self.user_id,
                     "runId": self.agent_run_id,
                     "proposalId": self.proposal_id,
-                    "drop": True,
+                    "drop": drop,
                     "name": strategy_name,
                     "activation": requested_activation.isoformat(),
                     "reason": reason,
@@ -554,27 +566,6 @@ def read_automation_state(settings: NewsAgentSettings, *, user_id: str, agent_ru
     data = LocalResearchClient(settings.trade_backend_internal_url, settings.analysis_service_secret)
     row = data.request_sync("runtimeAutomation:context", {"userId": user_id, "runId": agent_run_id})["run"]
     return {"outcome": row.get("outcome"), "market_snapshot_id": row.get("market_snapshot_id")}
-
-
-def confirm_activation_recheck(
-    settings: NewsAgentSettings,
-    *,
-    user_id: str,
-    agent_run_id: str,
-    proposal_id: str,
-) -> str:
-    """Record the no-tool recheck outcome without reopening or changing the strategy."""
-    data = runtime_data(settings)
-    return data.request_sync(
-        "runtimeAutomation:recheck",
-        {
-            "userId": user_id,
-            "runId": agent_run_id,
-            "proposalId": proposal_id,
-            "drop": False,
-        },
-        mutation=True,
-    )["outcome"]
 
 
 def runtime_data(settings: NewsAgentSettings) -> ResearchData:
