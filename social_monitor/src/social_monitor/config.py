@@ -33,6 +33,7 @@ class Config:
     max_pages: int = 4
     reconcile_seconds: float = 900
     request_spacing_seconds: float = 2
+    crypto_only: bool = False
 
     def interval(self, target: Target) -> float:
         return target.poll_seconds if target.poll_seconds is not None else self.poll_seconds
@@ -99,4 +100,6 @@ def load_config(path: Path) -> Config:
             raise ValueError(f"{key} must be an integer between {minimum} and {maximum}")
     if not isinstance(config.alert_on_first_poll, bool):
         raise ValueError("alert_on_first_poll must be true or false")
+    if not isinstance(config.crypto_only, bool):
+        raise ValueError("crypto_only must be true or false")
     return config
