@@ -7,6 +7,7 @@ from .collector import Collector
 from .config import Config, Target
 from .diagnostics import ACCESS_ERRORS
 from .domain import make_alert
+from .relevance import classify
 from .store import Store
 
 
@@ -55,16 +56,29 @@ class Runner:
             return False
         completed = self.clock()
         alerts = {}
+        assessments = {}
         should_alert = self.config.alert_on_first_poll or self.store.has_baseline(target.key)
-        if should_alert:
-            for post in result.posts:
-                if alert := make_alert(post, completed, self.config.alert_max_age_seconds):
-                    alerts[post.id] = {**alert, "target": target.name, "collector_version": 2}
+        for post in result.posts:
+            assessment = classify(post)
+            alert = make_alert(post, completed, self.config.alert_max_age_seconds)
+            assessment["study_eligible"] = should_alert and alert is not None
+            assessment["target"] = target.name
+            assessments[post.id] = assessment
+            if (
+                should_alert
+                and alert is not None
+                and (not self.config.crypto_only or assessment["relevance"] == "crypto")
+            ):
+                alerts[post.id] = {**alert, "target": target.name, "collector_version": 3, "crypto": assessment}
         details = {
             **result.details,
             "duration_seconds": round(self.monotonic() - tick, 4),
             "interval_seconds": self.config.interval(target),
             "retry_after_seconds": result.retry_after_seconds,
+            "relevance_counts": {
+                label: sum(item["relevance"] == label for item in assessments.values())
+                for label in ("crypto", "uncertain", "unrelated")
+            },
         }
         inserted = self.store.complete_poll(
             target.key,
@@ -76,6 +90,7 @@ class Runner:
             result.error_code,
             details=details,
             reconciled=reconcile,
+            assessments=assessments,
         )
         self.diagnostic(
             {
