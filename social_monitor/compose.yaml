@@ -19,7 +19,34 @@ services:
       start_period: 45s
       retries: 3
     volumes:
-      - ./config.example.toml:/monitor/config.toml:ro
+      - ./config.crypto.toml:/monitor/config.toml:ro
+      - monitor-state:/monitor/state
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  research:
+    build: .
+    command: ["research"]
+    init: true
+    restart: "no"
+    read_only: true
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-m", "social_monitor", "--config", "/monitor/config.toml", "research-status", "--check"]
+      interval: 60s
+      timeout: 5s
+      start_period: 180s
+      retries: 3
+    volumes:
+      - ./config.crypto.toml:/monitor/config.toml:ro
       - monitor-state:/monitor/state
     logging:
       driver: json-file
