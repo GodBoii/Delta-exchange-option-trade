@@ -25,7 +25,7 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRou
         supports_native_structured_outputs=False,
         reasoning_effort="max",
         timeout=90,
-        max_retries=0,
+        max_retries=3,
         max_tokens=None,
         max_completion_tokens=None,
     )
