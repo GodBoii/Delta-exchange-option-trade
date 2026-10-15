@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS reconciliations (
 CREATE INDEX IF NOT EXISTS polls_completed_at ON polls(completed_at);
 CREATE INDEX IF NOT EXISTS alerts_pending ON alerts(id) WHERE delivered_at IS NULL;
 CREATE INDEX IF NOT EXISTS posts_first_seen ON posts(first_seen_at);
+CREATE TABLE IF NOT EXISTS assessments (
+    post_id TEXT PRIMARY KEY REFERENCES posts(id),
+    payload TEXT NOT NULL
+);
 """
 
 
@@ -102,6 +106,7 @@ class Store:
         *,
         details: dict | None = None,
         reconciled: bool = False,
+        assessments: dict[str, dict] | None = None,
     ) -> int:
         inserted = 0
         with self.connection:
@@ -112,6 +117,11 @@ class Store:
                 )
                 if cursor.rowcount:
                     inserted += 1
+                    if assessments and post.id in assessments:
+                        self.connection.execute(
+                            "INSERT INTO assessments(post_id, payload) VALUES (?, ?)",
+                            (post.id, json.dumps(assessments[post.id])),
+                        )
                     if post.id in alerts:
                         self.connection.execute(
                             "INSERT INTO alerts(post_id, payload) VALUES (?, ?)",
