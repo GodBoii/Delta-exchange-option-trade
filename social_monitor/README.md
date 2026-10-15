@@ -1,5 +1,10 @@
 # Independent X monitor
 
+Version 0.3 adds the twelve-account crypto roster, crypto relevance screening and
+a separate price-response worker. See [crypto monitoring](CRYPTO_MONITORING.md)
+for configuration, measurement methods, commands and limitations. Legacy local
+configurations retain their existing alert behavior.
+
 This is a separate read-only process for watching X accounts, lists and Latest searches without X developer API keys. It uses Twscrape 0.20.1 with a session you authorize locally. It never imports the trading backend, reads its environment files, connects to its databases, or submits orders. The root Compose configuration is unchanged.
 
 ## What works
@@ -7,14 +12,14 @@ This is a separate read-only process for watching X accounts, lists and Latest s
 - Configurable account, reply, list and search collection.
 - SQLite evidence storage with publication time, batch receipt time, author IDs, post links, reply/quote/repost IDs, quoted/reposted text and media URLs.
 - Candidate cashtag, EVM address and 32-byte Solana address extraction. Addresses are candidates, not verified token contracts.
-- JSON alerts on stdout, diagnostics on stderr. Posts without token mentions also produce alerts so new memes are retained.
+- JSON alerts on stdout, diagnostics on stderr. Legacy configurations alert for every fresh post; crypto-only mode screens alerts while retaining every post.
 - Persistent deduplication across targets and restarts, a durable alert outbox and one writer per state directory.
 - First-poll baselines, stale-post filtering, independent target schedules and bounded retries.
 - Incremental first-page checks using persisted post IDs, with bounded deeper reconciliation every 15 minutes.
 - Quota reset protection, safe warning categories and automatic stop on blocked or invalid authentication.
 - Local status, JSONL export and a replay command that needs no account or network.
 
-This version collects evidence. It does not yet perform semantic meme interpretation, token verification, price tracking, Reddit collection or trading. Those can consume the evidence later without changing the collector or the existing trading system.
+The collector retains evidence. The optional research worker measures candle price responses. Semantic meme interpretation, token verification, Reddit collection and trading remain outside this system.
 
 ## Windows setup
 
@@ -87,7 +92,7 @@ docker compose -f compose.yaml exec monitor python -m social_monitor --config /m
 docker compose -f compose.yaml down
 ```
 
-`down` preserves the evidence volume. The container uses the example configuration; edit that file locally or change its bind mount to your local configuration before starting.
+`down` preserves the evidence volume. Both containers use `config.crypto.toml`; edit that file locally or change their bind mounts before starting. To run only collection, use `docker compose -f compose.yaml up -d monitor`.
 
 ## Health and coverage limits
 
