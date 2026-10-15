@@ -1,0 +1,79 @@
+# Research roster reviewed 2026-10-15. Following on X does not configure collection.
+state_dir = "state"
+crypto_only = true
+# Twelve targets share one session. Start conservatively after prior rate limits.
+poll_seconds = 180
+timeout_seconds = 20
+batch_size = 80
+page_size = 20
+max_pages = 4
+reconcile_seconds = 1800
+request_spacing_seconds = 3
+alert_max_age_seconds = 900
+alert_on_first_poll = false
+
+# Original announcements and protocol developments.
+[[targets]]
+name = "cz"
+kind = "user"
+value = "cz_binance"
+
+[[targets]]
+name = "vitalik"
+kind = "user"
+value = "VitalikButerin"
+
+[[targets]]
+name = "saylor"
+kind = "user"
+value = "saylor"
+
+[[targets]]
+name = "armstrong"
+kind = "user"
+value = "brian_armstrong"
+
+# ETF reporting. A filing or opinion is not an approval.
+[[targets]]
+name = "balchunas"
+kind = "user"
+value = "EricBalchunas"
+
+[[targets]]
+name = "seyffart"
+kind = "user"
+value = "JSeyff"
+
+# Investigations and reporting. Wallet transfers are not necessarily trades.
+[[targets]]
+name = "zachxbt"
+kind = "user"
+value = "zachxbt"
+
+[[targets]]
+name = "lookonchain"
+kind = "user"
+value = "lookonchain"
+
+[[targets]]
+name = "wu"
+kind = "user"
+value = "WuBlockchain"
+
+# Commentary and meme attention. No predictive track record assumed.
+[[targets]]
+name = "hayes"
+kind = "user"
+value = "CryptoHayes"
+
+[[targets]]
+name = "ansem"
+kind = "user"
+value = "blknoiz06"
+poll_seconds = 300
+
+[[targets]]
+name = "markus"
+kind = "user"
+value = "BillyM2k"
+poll_seconds = 300
