@@ -15,6 +15,9 @@ from .collector import Collection, XCollector, add_session
 from .config import Target, load_config
 from .domain import Post, parse_time
 from .locking import writer_lock
+from .research import Research
+from .research import run as run_research
+from .research import status as research_status
 from .runner import Runner
 from .store import Store
 
@@ -68,6 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     auth.add_argument("--name", default="monitor")
     run = commands.add_parser("run", help="poll configured targets and print JSON alerts")
     run.add_argument("--once", action="store_true")
+    research_command = commands.add_parser("research", help="measure price responses in an independent worker")
+    research_command.add_argument("--once", action="store_true")
+    research_check = commands.add_parser("research-status", help="show market worker health and job counts")
+    research_check.add_argument("--check", action="store_true")
+    commands.add_parser("research-export", help="export stored candle studies, including failed measurements")
     replay = commands.add_parser("replay", help="test the complete local pipeline without accessing X")
     replay.add_argument("path", type=Path)
     replay.add_argument("--at", required=True, help="receipt time used for fixture alerts, ISO with timezone")
@@ -80,6 +88,22 @@ def main(argv: list[str] | None = None) -> int:
             output({"valid": True, "targets": len(config.targets), "state_dir": str(config.state_dir)})
             return 0
         database = config.state_dir / "monitor.sqlite"
+        research_dir = config.state_dir / "research"
+        research_db = research_dir / "market.sqlite"
+        if args.command == "research-status":
+            result = research_status(research_db)
+            output(result)
+            return 2 if args.check and not result["healthy"] else 0
+        if args.command == "research-export":
+            if not research_db.exists():
+                return 0
+            with closing(sqlite3.connect(research_db.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
+                for row in connection.execute("SELECT result FROM jobs WHERE result != '{}' ORDER BY post_id,horizon"):
+                    output(json.loads(row[0]))
+            return 0
+        if args.command == "research":
+            with writer_lock(research_dir), closing(Research(research_db)) as research:
+                return 0 if run_research(database, research, output, diagnostic, once=args.once) else 2
         if args.command in {"status", "export", "stats"} and not database.exists():
             output({"event": "not_started", "targets": [], "posts": 0, "pending_alerts": 0})
             return 2 if args.command == "status" and args.check else 0
