@@ -5,9 +5,26 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+import httpx
 from agno.exceptions import ModelProviderError
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from .model import EvidenceOpenRouter
+
+
+async def _normalize_embedded_error(response: httpx.Response) -> None:
+    """Let the SDK apply one retry budget to HTTP and buffered OpenRouter errors."""
+    if response.status_code != 200 or "application/json" not in response.headers.get("content-type", ""):
+        return
+    await response.aread()
+    try:
+        body = response.json()
+    except ValueError:
+        return
+    error = body.get("error") if isinstance(body, dict) else None
+    status = error.get("code") if isinstance(error, dict) else None
+    if type(status) is int and 400 <= status <= 599:
+        response.status_code = status
 
 
 def provider_failure(error: Exception, api_key: str | None = None) -> dict:
@@ -29,6 +46,15 @@ def provider_failure(error: Exception, api_key: str | None = None) -> dict:
 @dataclass
 class ResearchOpenRouter(EvidenceOpenRouter):
     last_failure: dict | None = field(default=None, init=False, repr=False)
+
+    def get_async_client(self) -> AsyncOpenAI:
+        if self.http_client is None:
+            self.http_client = DefaultAsyncHttpxClient()
+        if isinstance(self.http_client, httpx.AsyncClient):
+            hooks = self.http_client.event_hooks["response"]
+            if _normalize_embedded_error not in hooks:
+                hooks.append(_normalize_embedded_error)
+        return super().get_async_client()
 
     async def ainvoke(self, *args, **kwargs):
         try:
