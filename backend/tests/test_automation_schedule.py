@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,9 +17,46 @@ from app.automation_schedule import (
     previous_fixed_run,
     utc_text,
 )
+from app.local_runtime import LocalRuntimeStore
 
 # Per-account analysis; the shared-analysis path has its own tests.
 PRIVATE_ANALYSIS = SimpleNamespace(shared_analysis_enabled=False)
+
+
+@pytest.mark.parametrize("status", ["scheduled", "running", "completed", "failed"])
+@pytest.mark.asyncio
+async def test_fixed_schedule_change_moves_only_pending_reviews(status: str) -> None:
+    old_time = datetime.now(UTC) + timedelta(days=1)
+    new_time = old_time - timedelta(minutes=30)
+    current = {
+        "id": "review-1", "user_id": "global", "asset": "BTC",
+        "run_key": "pre_expiry:tomorrow", "trigger": "pre_expiry", "status": status,
+        "scheduled_for": old_time.isoformat(), "created_at": "2026-01-01T00:00:00Z",
+    }
+    cursor = AsyncMock()
+    cursor.fetchone.return_value = {"data": current}
+    connection = MagicMock()
+    connection.cursor.return_value.__aenter__ = AsyncMock(return_value=cursor)
+    pool = MagicMock()
+    pool.connection.return_value.__aenter__ = AsyncMock(return_value=connection)
+    runtime = LocalRuntimeStore(pool)
+    runtime.data.control.research = SimpleNamespace(
+        lock_asset_settings=AsyncMock(), require_asset_enabled=AsyncMock(),
+    )
+    runtime._save = AsyncMock()
+    changed = await runtime._ensure_fixed_runs({"p_runs": [{
+        **current, "status": "scheduled", "scheduled_for": new_time.isoformat(), "reason": "15:00 IST review",
+    }]})
+
+    assert changed == (1 if status == "scheduled" else 0)
+    if status == "scheduled":
+        saved = runtime._save.call_args.args[2]
+        assert saved["scheduled_for"] == new_time.isoformat()
+        assert saved["id"] == current["id"]
+        assert saved["created_at"] == current["created_at"]
+        assert saved["reason"] == "15:00 IST review"
+    else:
+        runtime._save.assert_not_called()
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +105,7 @@ def test_fixed_sessions_follow_summer_timezones() -> None:
     assert [(run.trigger, run.scheduled_for) for run in runs] == [
         ("asia_session", datetime(2026, 8, 29, 0, 0, tzinfo=UTC)),
         ("london_session", datetime(2026, 8, 29, 7, 0, tzinfo=UTC)),
-        ("pre_expiry", datetime(2026, 8, 29, 10, 0, tzinfo=UTC)),
+        ("pre_expiry", datetime(2026, 8, 29, 9, 30, tzinfo=UTC)),
         ("new_york_session", datetime(2026, 8, 29, 13, 30, tzinfo=UTC)),
         ("midnight_review", datetime(2026, 8, 29, 19, 0, tzinfo=UTC)),
         ("asia_session", datetime(2026, 8, 30, 0, 0, tzinfo=UTC)),
@@ -82,7 +119,7 @@ def test_fixed_sessions_follow_winter_timezones() -> None:
     assert [(run.trigger, run.scheduled_for.hour, run.scheduled_for.minute) for run in runs] == [
         ("asia_session", 0, 0),
         ("london_session", 8, 0),
-        ("pre_expiry", 10, 0),
+        ("pre_expiry", 9, 30),
         ("new_york_session", 14, 30),
         ("midnight_review", 19, 0),
     ]
@@ -112,9 +149,9 @@ def test_midnight_review_runs_at_half_past_midnight_ist() -> None:
 
 
 @pytest.mark.parametrize("day", ["2026-03-08", "2026-03-29", "2026-09-12", "2026-11-01"])
-def test_pre_expiry_review_is_two_hours_before_daily_expiry(day: str) -> None:
+def test_pre_expiry_review_is_two_and_a_half_hours_before_daily_expiry(day: str) -> None:
     expiry = datetime.fromisoformat(f"{day}T17:30:00+05:30")
-    scheduled = expiry - timedelta(hours=2)
+    scheduled = expiry - timedelta(hours=2, minutes=30)
     fixed = next_fixed_run(scheduled - timedelta(microseconds=1))
 
     assert fixed.trigger == "pre_expiry"
@@ -123,6 +160,7 @@ def test_pre_expiry_review_is_two_hours_before_daily_expiry(day: str) -> None:
     assert previous_fixed_run(scheduled + timedelta(microseconds=1)) == fixed
     assert fixed_session_during_minute(scheduled + timedelta(seconds=59)) == fixed
     assert fixed_session_during_minute(scheduled + timedelta(minutes=1)) is None
+    assert fixed_session_during_minute(scheduled + timedelta(minutes=30)) is None
     assert next_fixed_run(scheduled).trigger == "new_york_session"
 
 
