@@ -743,6 +743,22 @@ class LocalRuntimeStore:
                     (item["user_id"], item["run_key"]),
                 )
                 current = await cursor.fetchone()
+                if (
+                    current
+                    and current["data"]["status"] == "scheduled"
+                    and _timestamp(current["data"]["scheduled_for"]) > datetime.now(UTC)
+                    and _timestamp(item["scheduled_for"]) > datetime.now(UTC)
+                    and _timestamp(current["data"]["scheduled_for"]) != _timestamp(item["scheduled_for"])
+                ):
+                    row = {
+                        **current["data"],
+                        "scheduled_for": item["scheduled_for"],
+                        "reason": item.get("reason", current["data"].get("reason")),
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                    await self._save(connection, "automation_agent_runs", row, existing=True)
+                    count += 1
+                    continue
                 if current and (
                     current["data"]["status"] != "cancelled" or _timestamp(item["scheduled_for"]) <= datetime.now(UTC)
                 ):
