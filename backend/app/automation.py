@@ -989,7 +989,7 @@ class AutomationScheduler:
                 "scheduled_for": utc_text(run.scheduled_for),
                 "model_id": MODEL_ID,
                 "reason": (
-                    f"Daily {asset} options review two hours before 17:30 IST expiry"
+                    f"Daily {asset} options review at 15:00 IST before 17:30 IST expiry"
                     if run.trigger == "pre_expiry"
                     else f"Fixed {run.trigger.replace('_', ' ')} {asset} review"
                 ),
