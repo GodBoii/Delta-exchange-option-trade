@@ -15,8 +15,8 @@ its candidate or record no trade.
 | Midnight, manual and follow-up | 7 hours | Upcoming expiry and the remaining permitted window |
 
 Seven and eleven hours are maxima from planned activation, not guarantees of a
-full holding window. Presets shorten to the saved expiry buffer. A 15:30 IST
-review starts two hours before expiry; processing, activation lead time, recheck
+full holding window. Presets shorten to the saved expiry buffer. A 15:00 IST
+review starts two and a half hours before expiry; processing, activation lead time, recheck
 and the safety buffer reduce the actual hold. Explicit custom exit timestamps
 must fit both the duration limit and the current session. No overnight,
 positional, first-expiry or second-expiry holding choice remains. Review times
