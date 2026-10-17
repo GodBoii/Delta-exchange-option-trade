@@ -163,6 +163,8 @@ def run_detail_payload(
         "entryOutcome": row.get("entry_outcome"),
         "definition": row.get("definition_json") or {},
         "savedStrategyId": row.get("saved_strategy_id"),
+        "exchangeAccountId": row.get("exchange_account_id"),
+        "exchangeAccountName": row.get("exchange_account_name"),
         "capitalSlot": row.get("capital_slot"),
         "capitalBudget": str(row.get("capital_budget")) if row.get("capital_budget") is not None else None,
         "capitalPolicy": policy if include_raw else {key: policy[key] for key in POLICY_FIELDS if key in policy},
