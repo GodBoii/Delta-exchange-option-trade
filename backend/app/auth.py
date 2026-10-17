@@ -103,6 +103,7 @@ async def create_connection(
     existing = await store.data.request("accounts:overview", {"userId": user_id})
     connection = existing["connection"]
     if connection and connection["delta_user_id"] != str(profile["id"]):
+        await guard_subaccount_connections(db, user_id)
         active = await db.select(
             "strategies",
             {
@@ -137,4 +138,19 @@ async def create_connection(
 
 
 async def remove_connection(db: Database, user_id: str) -> None:
+    await guard_subaccount_connections(db, user_id)
     await account_store(db).data.request("accounts:revoke", {"userId": user_id}, mutation=True)
+
+
+async def guard_subaccount_connections(db: Database, user_id: str) -> None:
+    if not isinstance(db, Database):
+        return
+    async with db.pool.connection() as connection:
+        result = await connection.execute(
+            """select 1 from trade.account_assignments where owner_id=%s and state<>'released'
+               union all select 1 from trade.account_transfers where owner_id=%s
+               and state in ('prepared','submitting','unknown') limit 1""", (user_id, user_id),
+        )
+        if await result.fetchone():
+            raise AppError(409, "Finish subaccount runs and resolve transfers before disconnecting or switching",
+                           "subaccount_busy")
