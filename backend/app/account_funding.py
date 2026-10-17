@@ -89,7 +89,7 @@ class AccountFunding:
             response = await client.request(
                 "GET",
                 "/v2/wallets/sub_accounts_transfer_history",
-                body={"page_size": 100, **({"after": after} if after else {})},
+                query={"page_size": 100, **({"after": after} if after else {})},
                 authenticated=True,
             )
             if not isinstance(response.get("result"), list):
@@ -152,9 +152,15 @@ class AccountFunding:
                 # Serialize against active assignments before any money leaves a subaccount.
                 if source != parent:
                     busy = await connection.execute(
-                        "select 1 from trade.account_assignments where account_id=%s and state<>'released'", (source,)
+                        """select strategy_id,state from trade.account_assignments
+                           where account_id=%s and state<>'released'""",
+                        (source,),
                     )
-                    if await busy.fetchone():
+                    assigned = await busy.fetchone()
+                    trimming_reserved = (
+                        assigned and assigned[0] == strategy and assigned[1] == "reserved" and target == parent
+                    )
+                    if assigned and not trimming_reserved:
                         raise AppError(409, "Release the assigned run before moving funds out", "subaccount_busy")
                 await connection.execute(
                     """insert into trade.account_transfers
@@ -229,7 +235,7 @@ class AccountFunding:
                     and row.get("asset_symbol") == "USD"
                     and money(row.get("amount")) == intent["amount"]
                     and when is not None
-                    and intent["created_at"] <= when <= intent["updated_at"]
+                    and intent["created_at"] <= when <= datetime.now(UTC)
                 ):
                     matches.append(row)
             after = page["meta"].get("after")
