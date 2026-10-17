@@ -11,7 +11,9 @@ def monitor_snapshot(
 ) -> dict[str, Any]:
     # The caller has already authorized and loaded this specific user's run.
     # Never create an exchange session or reconcile orders as a side effect of viewing.
-    session = getattr(engine, "sessions", {}).get(user_id) if source == "live" else None
+    account = detail.get("exchangeAccountId")
+    session_key = f"{user_id}:{account}" if account else user_id
+    session = getattr(engine, "sessions", {}).get(session_key) if source == "live" else None
     events = session.events if session is not None else None
     symbols = sorted({str(order["productSymbol"]) for order in detail["orders"] if order.get("productSymbol")})
     quotes = [
