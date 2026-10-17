@@ -127,17 +127,56 @@ class AccountManager:
     async def fund(self, owner: str, assigned: dict[str, Any], budget: Decimal, total: Decimal) -> None:
         await self.registry.set_budget(owner, assigned["strategy_id"], budget, total)
         available, _ = await self.funding.flat(owner, assigned["account_id"])
+        settings = await self.registry.settings(owner)
+        parent = str((await self.registry.main(owner))["delta_user_id"])
+        if available > budget and settings["auto_fund"]:
+            identity = uuid5(NAMESPACE_URL, f"delta-surplus:{owner}:{assigned['strategy_id']}")
+            result = await self.funding.transfer(
+                owner, identity, assigned["account_id"], parent, available - budget, strategy=assigned["strategy_id"]
+            )
+            if result["state"] != "confirmed":
+                raise AppError(409, "Reconcile the surplus transfer before entry", "transfer_unknown")
+            available, _ = await self.funding.flat(owner, assigned["account_id"])
         if available >= budget:
             return
-        settings = await self.registry.settings(owner)
         if not settings["auto_fund"]:
             raise AppError(
                 409, "Fund this subaccount or enable automatic funding in Profile", "subaccount_funding_required"
             )
-        parent = str((await self.registry.main(owner))["delta_user_id"])
+        required = budget - available
+        main_available, _ = await self.funding.flat(owner, None)
+        if main_available < required:
+            # Reuse idle capital only. An assigned account's remaining margin is never a funding source.
+            for account in await self.registry.accounts(owner):
+                if (
+                    account["account_id"] == assigned["account_id"]
+                    or account["busy"]
+                    or not account["present"]
+                    or not account["connected"]
+                    or account["parent_id"] != parent
+                    or account["participation"] == "disabled"
+                ):
+                    continue
+                try:
+                    idle_available, _ = await self.funding.flat(owner, account["account_id"])
+                except AppError as error:
+                    logger.info("Idle funding source unavailable account=%s code=%s", account["account_id"], error.code)
+                    continue
+                amount = min(idle_available, required - main_available)
+                if amount <= 0:
+                    continue
+                reclaim_id = uuid5(
+                    NAMESPACE_URL, f"delta-reclaim:{owner}:{assigned['strategy_id']}:{account['account_id']}"
+                )
+                await self.funding.transfer(
+                    owner, reclaim_id, account["account_id"], parent, amount, strategy=assigned["strategy_id"]
+                )
+                main_available, _ = await self.funding.flat(owner, None)
+                if main_available >= required:
+                    break
         identity = uuid5(NAMESPACE_URL, f"delta-funding:{owner}:{assigned['strategy_id']}")
         result = await self.funding.transfer(
-            owner, identity, parent, assigned["account_id"], budget - available, strategy=assigned["strategy_id"]
+            owner, identity, parent, assigned["account_id"], required, strategy=assigned["strategy_id"]
         )
         if result["state"] != "confirmed":
             raise AppError(409, "The funding transfer must be reconciled before entry", "transfer_unknown")
