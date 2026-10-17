@@ -553,6 +553,12 @@ class LocalRuntimeStore:
             if args.get("p_policy") is not None:
                 maximum = policy.concurrency_limit(balance)
             await cursor.execute("select pg_advisory_xact_lock(hashtextextended(%s, 41))", (account_id,))
+            await cursor.execute(
+                """select 1 from trade.account_transfers where parent_id=%s
+                   and state in ('prepared','submitting','unknown') limit 1""", (account_id,),
+            )
+            if await cursor.fetchone():
+                raise AppError(409, "Resolve the pending account transfer before entering", "transfer_pending")
             await cursor.execute("select user_id from trade.users where connection->>'delta_user_id'=%s", (account_id,))
             aliases = [row["user_id"] for row in await cursor.fetchall()]
             await cursor.execute(
