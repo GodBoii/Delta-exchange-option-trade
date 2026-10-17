@@ -11,6 +11,7 @@ import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
 import { NotificationSettings } from "@/app/components/NotificationSettings";
 import { ProfileAvatar } from "@/app/components/ProfileAvatar";
+import { ProfileExchangeAccounts } from "@/app/components/ProfileExchangeAccounts";
 import {
   Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
@@ -479,6 +480,8 @@ function AccountPanel({ account, connection, pages, current, onClose, onNavigate
           {connection.label}
         </span>
       </div>
+
+      <ProfileExchangeAccounts connected={Boolean(onDisconnect)} />
 
       <div className="account-window-grid">
         {pages.length > 0 && (
