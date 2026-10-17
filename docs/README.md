@@ -28,6 +28,7 @@ Verified: **2026-08-08**. Exchange capabilities, product listings, limits, and d
 20. [ETH ATM and OTM research method](35-eth-otm-research.md)
 21. [ETH strategy catalog and targeted rollout](36-eth-strategy-catalog.md)
 22. [BTC, ETH and overall capital allocation](37-asset-capital-allocation.md)
+23. [Profile, subaccounts and server whitelist IP](41-profile-subaccounts.md)
 
 ## Source hierarchy
 
