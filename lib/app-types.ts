@@ -40,6 +40,8 @@ export type StrategyRun = {
   lastError?: string | null;
   exposureStatus?: "open" | "flat" | "unknown" | null;
   createdAt: string;
+  exchangeAccountId?: string | null;
+  exchangeAccountName?: string | null;
 };
 
 /** One order Delta accepted for a run, entry or exit, with its audit trail. */
