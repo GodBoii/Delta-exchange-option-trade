@@ -37,6 +37,14 @@ def test_archive_and_missing_or_closed_streams_do_not_read_live_prices():
         assert snapshot["quotes"] == [{"symbol": "C-BTC-1", "markPrice": None}]
 
 
+def test_child_monitor_never_reads_the_main_accounts_stream():
+    from types import SimpleNamespace
+
+    engine = SimpleNamespace(sessions={"owner": SimpleNamespace(events=object())})
+    result = monitor_snapshot(engine, "owner", {"orders": [], "exchangeAccountId": "child"})
+    assert result["privateStream"] == "unavailable"
+
+
 def test_owner_risk_values_are_allowlisted_without_internal_account_or_raw_payloads():
     detail = run_detail_payload(
         {"id": "run", "risk_state": {"profit": "2.5", "returnPercent": "5", "pricedAt": "now",
