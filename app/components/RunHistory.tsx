@@ -15,7 +15,7 @@ import {
 import type { RunDetail, RunOrder, StrategyRun } from "@/lib/app-types";
 import {
   AnimatedNumber, ConfirmModal, DetailList, DetailSection, Dialog, EmptyState, IconSwap,
-  InlineMessage, Panel, RowMenu, SectionHeading, StatusChip, StatusDot, TableSkeleton,
+  InlineMessage, Panel, RowMenu, SectionHeading, Select, StatusChip, StatusDot, TableSkeleton,
   useSlidingPill, type DetailItem, type NoticeHandler, type RowMenuItem, type StatusTone
 } from "@/app/components/ui";
 
@@ -96,6 +96,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   const [runs, setRuns] = useState<StrategyRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterId>("all");
+  const [accountFilter, setAccountFilter] = useState("all");
   const [detail, setDetail] = useState<StrategyRun | null>(null);
   const [viewing, setViewing] = useState<StrategyRun | null>(null);
   const [detailToken, setDetailToken] = useState(0);
@@ -139,8 +140,11 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
 
   const visible = useMemo(() => {
     const active = FILTERS.find(item => item.id === filter) ?? FILTERS[0];
-    return runs.filter(run => active.match(run.status));
-  }, [filter, runs]);
+    return runs.filter(run => active.match(run.status)
+      && (accountFilter === "all" || (run.exchangeAccountId ?? "main") === accountFilter));
+  }, [accountFilter, filter, runs]);
+  const exchangeAccounts = useMemo(() => Array.from(new Map(runs.filter(run => run.exchangeAccountId)
+    .map(run => [run.exchangeAccountId, run.exchangeAccountName ?? run.exchangeAccountId])).entries()), [runs]);
 
   const needsAttention = counts.attention ?? 0;
   const { barRef: filterBar, pill: filterPill } = useSlidingPill(filter, '[aria-pressed="true"]');
@@ -195,6 +199,9 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
       )}
 
       <Panel className="runs-panel">
+        {exchangeAccounts.length > 0 && <Select label="Exchange account" value={accountFilter} onChange={setAccountFilter}
+          options={[{ value: "all", label: "All accounts" }, { value: "main", label: "Main / legacy runs" },
+            ...exchangeAccounts.map(([id, name]) => ({ value: id ?? "", label: name ?? id ?? "Subaccount" }))]} />}
         {/* One highlight travels between the filters, so the control shows which
             way the selection moved rather than only where it ended up. The counts
             re-enter when they change, because a run moving into Attention while
@@ -332,7 +339,7 @@ function RunRow({ run, onInspect, onView, onAction }: {
       <th scope="row">
         <button type="button" className="run-name" onClick={onInspect}>
           <StatusDot tone={statusTone(run.status)} />
-          <span><strong>{run.name}</strong></span>
+          <span><strong>{run.name}</strong>{run.exchangeAccountId && <small>{run.exchangeAccountName ?? run.exchangeAccountId}</small>}</span>
         </button>
       </th>
       <td data-label="Status"><StatusChip tone={statusTone(run.status)}>{titleCase(run.status)}</StatusChip></td>
@@ -519,7 +526,7 @@ export function RunDetailDialog({ run, refreshToken, onClose, onAction, load, no
   return (
     <Dialog
       title={record?.name ?? run.name}
-      subtitle={<>{orders.length} recorded {orders.length === 1 ? "order" : "orders"}</>}
+      subtitle={<>{orders.length} recorded {orders.length === 1 ? "order" : "orders"}{record?.exchangeAccountId && ` · ${record.exchangeAccountName ?? record.exchangeAccountId}`}</>}
       aside={<StatusChip tone={statusTone(status)}>{titleCase(status)}</StatusChip>}
       onClose={onClose}
       footer={
