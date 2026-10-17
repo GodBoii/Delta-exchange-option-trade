@@ -180,6 +180,12 @@ class AccountRegistry:
             if await cursor.fetchone():
                 raise AppError(409, "Release the subaccount's run before removing its key", "subaccount_busy")
             await cursor.execute(
+                """select 1 from trade.account_transfers where (source_id=%s or target_id=%s)
+                   and state in ('prepared','submitting','unknown') limit 1""", (account, account),
+            )
+            if await cursor.fetchone():
+                raise AppError(409, "Resolve pending transfers before removing the key", "transfer_pending")
+            await cursor.execute(
                 """update trade.exchange_accounts set credential=null,participation='disabled',checked_at=null
                    where owner_id=%s and account_id=%s""",
                 (owner, account),
