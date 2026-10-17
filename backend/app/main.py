@@ -2,7 +2,7 @@ import asyncio
 import hmac
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from decimal import Decimal
 from ipaddress import ip_address
@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from scripts.database_roles import ensure_roles
 from scripts.init_local_db import apply_migrations
 
+from .account_api import router as account_router
 from .auth import (
     create_connection,
     current_account,
@@ -52,6 +53,7 @@ from .push_api import router as push_router
 from .reporting_api import WalletProbe
 from .reporting_api import router as reporting_router
 from .retained_logs import configure_retained_logs
+from .server_ip import ServerIp
 from .strategy import delta_expiry
 
 settings = get_settings()
@@ -103,6 +105,8 @@ async def lifespan(app: FastAPI):
     app.state.push = push
     app.state.scheduler = scheduler
     app.state.automation_scheduler = automation_scheduler
+    app.state.server_ip = ServerIp(db)
+    ip_task = asyncio.create_task(app.state.server_ip.run()) if settings.trading_writer_enabled else None
     if settings.trading_writer_enabled:
         try:
             response = await db.client.get("https://api.ipify.org", timeout=5)
@@ -127,6 +131,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if ip_task is not None:
+            ip_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await ip_task
         await automation_scheduler.stop()
         await scheduler.stop()
         await change_feed.stop()
@@ -173,6 +181,7 @@ app.add_middleware(
 app.include_router(automation_router)
 app.include_router(reporting_router)
 app.include_router(push_router)
+app.include_router(account_router)
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 OptionalUser = Annotated[dict[str, Any] | None, Depends(optional_user)]
@@ -455,7 +464,7 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
     policy = await engine.capital_policy(user_id)
     client = await engine.client_for_user(user_id)
     try:
-        available, total_balance = await engine.usd_capital(client)
+        available, total_balance = await engine.managed_wallet(user_id) or await engine.usd_capital(client)
     finally:
         await client.close()
     if settings.trading_writer_enabled:
@@ -559,8 +568,12 @@ async def market_products(
 
 
 @app.delete("/api/orders/{order_id}")
-async def cancel_order(request: Request, order_id: int, body: CancelOrderRequest, user: RequiredUser) -> dict[str, Any]:
-    client = await delta_client_for_user(request.app.state.db, settings, str(user["id"]))
+async def cancel_order(
+    request: Request, order_id: int, body: CancelOrderRequest, user: RequiredUser,
+    accountId: str | None = Query(default=None, pattern=r"^\d{1,30}$"),
+) -> dict[str, Any]:
+    client = (await request.app.state.engine.client_for_user(str(user["id"]), exchange_account_id=accountId)
+              if accountId else await delta_client_for_user(request.app.state.db, settings, str(user["id"])))
     try:
         return await client.cancel_order(order_id, body.productId)
     finally:
@@ -569,9 +582,12 @@ async def cancel_order(request: Request, order_id: int, body: CancelOrderRequest
 
 @app.post("/api/positions/{product_id}/close")
 async def close_position(
-    request: Request, product_id: int, body: ClosePositionRequest, user: RequiredUser
+    request: Request, product_id: int, body: ClosePositionRequest, user: RequiredUser,
+    accountId: str | None = Query(default=None, pattern=r"^\d{1,30}$"),
 ) -> dict[str, Any]:
-    result = await request.app.state.engine.close_account_position(str(user["id"]), product_id)
+    result = (await request.app.state.engine.close_account_position(
+        str(user["id"]), product_id, exchange_account_id=accountId
+    ) if accountId else await request.app.state.engine.close_account_position(str(user["id"]), product_id))
     return {"success": True, "result": result}
 
 
@@ -583,7 +599,7 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
         {
             "select": (
                 "id,name,status,entry_at,exit_at,entry_execution_at,exit_execution_at,last_error,risk_state,created_at,"
-                "entry_outcome"
+                "entry_outcome,exchange_account_id,exchange_account_name"
             ),
             "user_id": f"eq.{account['id']}",
             "order": "created_at.desc",
@@ -603,6 +619,8 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "exitExecutedAt": row["exit_execution_at"],
                 "lastError": row["last_error"],
                 "entryOutcome": row.get("entry_outcome"),
+                "exchangeAccountId": row.get("exchange_account_id"),
+                "exchangeAccountName": row.get("exchange_account_name"),
                 "exposureStatus": (row.get("risk_state") or {}).get("exposureStatus"),
                 "createdAt": row["created_at"],
             }
