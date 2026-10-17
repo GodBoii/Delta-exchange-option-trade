@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from .account_manager import AccountManager
 from .analysis_admission import Admission, evaluate
 from .assets import automation_asset_enabled, strategy_asset
 from .auth import credentials_for_user
@@ -171,14 +172,47 @@ class TradingEngine:
         self.last_public_mark_prune = 0.0
         self.risk_errors: dict[str, str] = {}
         self.application_data = getattr(db, "local_data", None)
+        self.subaccounts = AccountManager(self) if isinstance(db, Database) else None
+        self.subaccount_cleanup_task: asyncio.Task[None] | None = None
 
-    async def client_for_user(self, user_id: str) -> DeltaClient:
+    async def client_for_run(self, row: dict[str, Any]) -> DeltaClient:
+        owner = str(row["user_id"])
+        if self.subaccounts is None:
+            return await self.client_for_user(owner)
+        account = row.get("exchange_account_id")
+        recorded = (row.get("risk_state") or {}).get("exchangeAccount")
+        if recorded:
+            recorded_id = str(recorded).removeprefix("india:")
+            if account and account != recorded_id:
+                raise AppError(409, "Run identity disagrees with its order journal", "account_identity_mismatch")
+            account = recorded_id
+        if self.subaccounts is not None:
+            assigned = await self.subaccounts.registry.assignment(owner, str(row["id"]))
+            if assigned:
+                if account and account != assigned["account_id"]:
+                    raise AppError(409, "Run identity disagrees with its assignment", "account_identity_mismatch")
+                account = assigned["account_id"]
+        if account:
+            return await self.client_for_user(owner, exchange_account_id=str(account))
+        return await self.client_for_user(owner)
+
+    async def client_for_user(self, user_id: str, *, exchange_account_id: str | None = None) -> DeltaClient:
+        session_key = user_id
+        if exchange_account_id is not None:
+            if self.subaccounts is None:
+                raise AppError(503, "Subaccount storage is unavailable", "subaccount_storage_unavailable")
+            overview = await self.application_data.request("accounts:overview", {"userId": user_id})
+            parent = str((overview.get("connection") or {}).get("delta_user_id") or "")
+            if exchange_account_id != parent:
+                session_key = f"{user_id}:{exchange_account_id}"
         async with self.session_lock:
-            session = self.sessions.get(user_id)
+            session = self.sessions.get(session_key)
             # Credentials change only through connect/disconnect, which invalidate the cached session.
             credentials = (
                 session.credentials
-                if session is not None and user_id not in self.invalidated_credentials
+                if session is not None and session_key not in self.invalidated_credentials
+                else await self.subaccounts.registry.credentials(user_id, exchange_account_id)
+                if session_key != user_id
                 else await credentials_for_user(self.db, user_id)
             )
             if session is not None and session.credentials != credentials:
@@ -186,7 +220,7 @@ class TradingEngine:
                     raise AppError(
                         409, "Credentials changed during an account operation", "account_credentials_changed"
                     )
-                await self.close_session(user_id)
+                await self.close_session(session_key)
                 session = None
             if session is None:
                 for owner, idle in list(self.sessions.items()):
@@ -210,10 +244,10 @@ class TradingEngine:
                     credentials,
                     events,
                 )
-                self.sessions[user_id] = session
+                self.sessions[session_key] = session
                 if events is not None:
                     events.start(("private",))
-            self.invalidated_credentials.discard(user_id)
+            self.invalidated_credentials.discard(session_key)
             session.leases += 1
             session.last_used = time.monotonic()
 
@@ -265,13 +299,23 @@ class TradingEngine:
             await session.events.close()
 
     async def invalidate_credentials(self, user_id: str) -> None:
-        self.invalidated_credentials.add(user_id)
         async with self.session_lock:
-            session = self.sessions.get(user_id)
-            if session is not None and session.leases == 0:
-                await self.close_session(user_id)
+            for key in {user_id, *(key for key in self.sessions if key.startswith(f"{user_id}:"))}:
+                self.invalidated_credentials.add(key)
+                session = self.sessions.get(key)
+                if session is not None and session.leases == 0:
+                    await self.close_session(key)
+
+    async def managed_wallet(self, user_id: str) -> tuple[Decimal, Decimal] | None:
+        if self.subaccounts is not None and (await self.subaccounts.registry.settings(user_id))["mode"] != "main":
+            return await self.subaccounts.wallet(user_id)
+        return None
 
     async def close(self) -> None:
+        if self.subaccount_cleanup_task is not None:
+            self.subaccount_cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.subaccount_cleanup_task
         for user_id in list(self.sessions):
             await self.close_session(user_id)
         if self.public_marks is not None:
@@ -287,12 +331,14 @@ class TradingEngine:
         if not capacity["connected"]:
             return False
         policy = await self.capital_policy(user_id)
+        if self.subaccounts is not None and not await self.subaccounts.available(user_id):
+            return False
         maximum = policy.concurrency_limit()
         if maximum is not None and len(capacity["occupiedSlots"]) >= maximum:
             return False
         client = await self.client_for_user(user_id)
         try:
-            available, total = await self.usd_capital(client)
+            available, total = await self.managed_wallet(user_id) or await self.usd_capital(client)
             return has_available_capital_slot(
                 available, total, policy, capacity["occupiedSlots"], Decimal(capacity["reservedBudget"]), asset,
                 {key: Decimal(value) for key, value in capacity.get("reservedByAsset", {}).items()},
@@ -308,13 +354,15 @@ class TradingEngine:
         })
         if not snapshot["eligible"]:
             return "full"
+        if self.subaccounts is not None and not await self.subaccounts.available(user_id):
+            return "full"
         policy = policy_from_row(snapshot["capital"])
         maximum = policy.concurrency_limit()
         if maximum is not None and snapshot["occupied"] >= maximum:
             return "full"
         client = await self.client_for_user(user_id)
         try:
-            available, total = await self.usd_capital(client)
+            available, total = await self.managed_wallet(user_id) or await self.usd_capital(client)
             return evaluate(snapshot, available, total)
         finally:
             await client.close()
@@ -841,8 +889,11 @@ class TradingEngine:
         remaining_size = await self.verify_position_reduction(client, product_id, size, initial_size)
         return order, remaining_size
 
-    async def close_account_position(self, user_id: str, product_id: int) -> dict[str, Any]:
-        client = await self.client_for_user(user_id)
+    async def close_account_position(
+        self, user_id: str, product_id: int, *, exchange_account_id: str | None = None
+    ) -> dict[str, Any]:
+        client = (await self.client_for_user(user_id, exchange_account_id=exchange_account_id)
+                  if exchange_account_id else await self.client_for_user(user_id))
         try:
             open_orders = [
                 order
@@ -936,12 +987,20 @@ class TradingEngine:
                     raise AppError(
                         409, "The selected library version changed or was retired", "saved_strategy_version_changed"
                     )
-        client = await self.client_for_user(str(row["user_id"]))
+        assigned = await self.subaccounts.choose(row) if self.subaccounts is not None else None
+        client = (await self.client_for_user(str(row["user_id"]), exchange_account_id=assigned["account_id"])
+                  if assigned else await self.client_for_run(row))
         reservation: dict[str, Any] | None = None
         reservation_should_remain = False
         try:
             policy = await self.capital_policy(str(row["user_id"]))
-            wallet = await self.usd_capital(client)
+            managed_budget = None
+            if assigned:
+                wallet, managed_budget = await self.subaccounts.entry_budget(
+                    str(row["user_id"]), assigned, policy, definition.instrument.underlying
+                )
+            else:
+                wallet = await self.usd_capital(client)
             available, total_balance = wallet
             if available <= 0 or total_balance <= 0:
                 raise AppError(
@@ -961,6 +1020,8 @@ class TradingEngine:
                     str(row["user_id"]), strategy_id, maximum_slots, wallet=wallet, policy=policy,
                     asset=definition.instrument.underlying,
                 )
+            if assigned:
+                await self.subaccounts.fund(str(row["user_id"]), assigned, managed_budget, wallet[1])
             resolved = await self.resolve_strategy(client, definition)
             if definition.expiryPolicy == "auto":
                 settlements = []
@@ -984,9 +1045,16 @@ class TradingEngine:
                         409, "Selected contracts no longer cover the planned exit", "contract_expiry_mismatch"
                     )
             validate_entry_policy(definition, resolved)
-            resolved = await self.apply_automatic_lots(client, definition, resolved, policy, wallet)
+            sizing_policy = (
+                CapitalPolicy(allocation_mode="fixed_amount", capital_amount=managed_budget) if assigned else policy
+            )
+            sizing_wallet = (managed_budget, managed_budget) if assigned else wallet
+            resolved = await self.apply_automatic_lots(client, definition, resolved, sizing_policy, sizing_wallet)
             exclusive = getattr(client, "order_journal", None) is not None
-            allocated_budget = policy_budget(available, total_balance, policy, definition.instrument.underlying)
+            allocated_budget = (
+                managed_budget if assigned
+                else policy_budget(available, total_balance, policy, definition.instrument.underlying)
+            )
             try:
                 await self.claim_strategy(
                     strategy_id,
@@ -1217,6 +1285,8 @@ class TradingEngine:
                 {"strategy_id": f"eq.{strategy_id}", "status": "eq.scheduled"},
             )
             reservation_should_remain = True
+            if assigned:
+                await self.subaccounts.registry.mark(str(row["user_id"]), strategy_id, "active")
             self.notify_strategy(strategy_id, "activated")
             return {
                 "executionId": execution_id,
@@ -1707,7 +1777,7 @@ class TradingEngine:
         if user_id is not None:
             params["user_id"] = f"eq.{user_id}"
         rows = await self.strategy_pages(params)
-        groups: dict[str, list[dict[str, Any]]] = {}
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in rows:
             risk_state = row.get("risk_state") or {}
             if not row.get("entry_execution_at") and not risk_state.get("exclusiveFillAccounting"):
@@ -1721,11 +1791,16 @@ class TradingEngine:
                     reconciled_at = None
                 if reconciled_at and (utc_now() - reconciled_at).total_seconds() < FLAT_REPORT_RECONCILE_SECONDS:
                     continue
-            groups.setdefault(str(row["user_id"]), []).append(row)
-        for owner, owned_rows in groups.items():
+            identity = str(row.get("exchange_account_id") or risk_state.get("exchangeAccount") or "")
+            groups.setdefault((str(row["user_id"]), identity), []).append(row)
+        for (owner, identity), owned_rows in groups.items():
             owned_client: DeltaClient | None = None
             try:
-                owned_client = client if client is not None and owner == user_id else await self.client_for_user(owner)
+                reusable = client is not None and owner == user_id and (
+                    not identity or getattr(getattr(client, "order_journal", None), "account_id", None)
+                    == f"india:{identity.removeprefix('india:')}"
+                )
+                owned_client = client if reusable else await self.client_for_run(owned_rows[0])
                 snapshot = await self.account_exposure(owned_client)
                 for row in owned_rows:
                     try:
@@ -2027,7 +2102,7 @@ class TradingEngine:
             "exclusiveFillAccounting"
         ):
             return False
-        client = await self.client_for_user(str(row["user_id"]))
+        client = await self.client_for_run(row)
         try:
             orders = await self.entry_orders(str(row["id"]))
             if not (row.get("risk_state") or {}).get("exclusiveFillAccounting") or any(
@@ -2262,7 +2337,7 @@ class TradingEngine:
         row = await self.strategy_by_id(strategy_id)
         if row.get("status") == "completed":
             raise AppError(409, "Strategy exit has already run", "already_exited")
-        client = await self.client_for_user(str(row["user_id"]))
+        client = await self.client_for_run(row)
         try:
             await self.recover_order_records(row, client)
             recorded_orders = await self.entry_orders(strategy_id)
@@ -2646,6 +2721,16 @@ class TradingEngine:
         # Keep each wallet serial, with BTC getting first access to scarce capital.
         due_entries.sort(key=lambda row: (strategy_asset(row) != "BTC", row["entry_at"], row["id"]))
         await self._dispatch_accounts(due_entries, enter_one)
+        if (reconcile_attention and self.subaccounts is not None
+                and (self.subaccount_cleanup_task is None or self.subaccount_cleanup_task.done())):
+            self.subaccount_cleanup_task = asyncio.create_task(self.cleanup_subaccounts())
+
+    async def cleanup_subaccounts(self) -> None:
+        try:
+            await self.subaccounts.release_finished()
+        except Exception:
+            # Housekeeping must not interrupt exits or risk monitoring.
+            logger.exception("Subaccount cleanup failed; assigned accounts remain reserved")
 
     async def activation_recheck_states(self, strategy_ids: list[str]) -> dict[str, str]:
         states = dict.fromkeys(strategy_ids, "ready")
