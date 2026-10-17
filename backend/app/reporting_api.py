@@ -82,7 +82,11 @@ class WalletProbe:
             try:
                 client = await engine.client_for_user(user_id)
                 try:
-                    available, total = await asyncio.wait_for(engine.usd_capital(client), WALLET_TIMEOUT_SECONDS)
+                    async def wallet():
+                        managed = await engine.managed_wallet(user_id) if getattr(engine, "subaccounts", None) else None
+                        return managed or await engine.usd_capital(client)
+
+                    available, total = await asyncio.wait_for(wallet(), WALLET_TIMEOUT_SECONDS)
                 finally:
                     await client.close()
             except (AppError, httpx.HTTPError, TimeoutError, KeyError, ValueError) as error:
