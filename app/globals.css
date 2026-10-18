@@ -3876,50 +3876,76 @@ time,
 }
 
 .account-window-settings { display: grid; gap: var(--s-4); }
-.profile-exchange { display: grid; gap: var(--s-5); min-width: 0; }
+.profile-exchange { display: grid; gap: var(--s-6); min-width: 0; }
+.profile-exchange h2 { margin: 0; display: flex; align-items: center; gap: var(--s-2); font-size: var(--t-lg); font-weight: 600; }
 .profile-exchange h3 { margin: 0; font-size: var(--t-lg); }
 .profile-exchange h4 { margin: var(--s-3) 0 0; font-size: var(--t-md); }
 .profile-exchange p { margin: 0; }
 .profile-exchange .muted { color: var(--text-2); font-size: var(--t-sm); line-height: 1.55; }
-.profile-exchange a { text-decoration: underline; text-underline-offset: 3px; }
+.profile-exchange a:not(.button) { text-decoration: underline; text-underline-offset: 3px; }
 .profile-exchange .button { min-height: 44px; white-space: normal; }
+.subaccounts-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: var(--s-10); align-items: start; }
+.subaccounts-main { display: grid; gap: var(--s-4); min-width: 0; }
+.subaccounts-tools { min-width: 0; border-top: 1px solid var(--line); }
+.subaccounts-help { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); }
+.subaccount-count { color: var(--text-2); font-size: var(--t-sm); font-weight: 400; font-variant-numeric: tabular-nums; }
+.subaccount-disclosure { border-bottom: 1px solid var(--line); min-width: 0; }
+.subaccount-disclosure .t-acc-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); width: 100%; min-height: 72px; padding: var(--s-4) 0; background: transparent; border: 0; color: var(--text-1); text-align: left; font: inherit; cursor: pointer; }
+.subaccount-disclosure .t-acc-head > span:first-child { display: grid; gap: var(--s-1); font-size: var(--t-md); font-weight: 500; }
+.subaccount-disclosure .t-acc-head small { color: var(--text-2); font-size: var(--t-xs); font-weight: 400; line-height: var(--lh-body); }
+.subaccount-disclosure .t-acc-head:hover { color: var(--accent); }
+.subaccount-disclosure-content { display: grid; gap: var(--s-3); padding: 0 var(--s-1) var(--s-5); }
+.profile-exchange .t-acc-chevron { width: 16px; height: 16px; flex: none; color: var(--text-2); }
+.profile-exchange .t-acc-chevron svg { width: 100%; height: 100%; }
 .profile-exchange-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
 .profile-exchange-heading > div { display: grid; gap: var(--s-2); min-width: 0; }
 .profile-ip, .profile-subaccounts { display: grid; gap: var(--s-3); min-width: 0; }
-.profile-ip { padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-1); }
+.profile-ip h4 { margin: 0; }
 .profile-ip-value { display: flex; align-items: center; gap: var(--s-3); }
 .profile-ip-value code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--t-lg); user-select: all; }
 .profile-exchange-note { color: var(--text-2); font-size: var(--t-sm); }
 .profile-exchange-note:empty { display: none; }
-.profile-management, .profile-assignment { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); }
-.profile-management > .button, .profile-assignment > .button { justify-self: start; }
+.profile-management { display: grid; gap: var(--s-3); }
+.profile-assignment, .profile-key-form { border-top: 1px solid var(--line); }
+.profile-management > .button, .profile-assignment .button { justify-self: start; }
+.profile-key-form > .button { margin-top: var(--s-4); }
 .profile-exchange label { font-size: var(--t-sm); color: var(--text-2); }
 .profile-exchange select, .profile-exchange input:not([type="checkbox"]) { width: 100%; min-width: 0; min-height: 44px; padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-1); color: var(--text-1); font: inherit; }
 .profile-exchange :is(button, input, select, summary):focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .profile-checkbox { display: flex; align-items: center; gap: var(--s-2); min-height: 44px; }
 .profile-checkbox input { width: 18px; height: 18px; flex-shrink: 0; }
-.profile-capacity-warning { padding: var(--s-3); border-left: 3px solid var(--text-2); font-size: var(--t-sm); background: var(--surface-2); }
-.profile-account-list { display: grid; gap: var(--s-2); }
-.profile-subaccount { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-md); }
-.profile-subaccount-toggle { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); width: 100%; min-height: 70px; padding: var(--s-3); text-align: left; color: var(--text-1); background: var(--surface-1); border: 0; border-radius: inherit; cursor: pointer; }
-.profile-subaccount-toggle:hover { background: var(--surface-2); }
+.profile-capacity-warning { padding: var(--s-3); border-left: 3px solid var(--warn); color: var(--warn-text); font-size: var(--t-sm); background: var(--warn-soft); }
+.profile-account-list { display: grid; border-top: 1px solid var(--line); }
+.profile-subaccount { min-width: 0; border-bottom: 1px solid var(--line); }
+.profile-subaccount-toggle { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, auto) 16px; align-items: center; gap: var(--s-4); width: 100%; min-height: 88px; padding: var(--s-4) var(--s-3); text-align: left; color: var(--text-1); background: transparent; border: 0; border-radius: var(--r-sm); cursor: pointer; transition: background var(--duration-quick) var(--ease-smooth-out); }
+.profile-subaccount-toggle:hover, .profile-subaccount-toggle[aria-expanded="true"] { background: var(--tint-2); }
 .profile-subaccount-toggle > span { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .profile-subaccount-toggle small { color: var(--text-2); font-size: var(--t-sm); }
 .profile-account-status { text-align: right; font-size: var(--t-sm); }
-.profile-subaccount-body { display: grid; gap: var(--s-3); padding: var(--s-4); border-top: 1px solid var(--line); }
+.profile-account-status[data-tone="active"] > span { color: var(--long-text); }
+.profile-account-status[data-tone="warning"] > span { color: var(--warn-text); }
+.profile-subaccount-body { display: grid; gap: var(--s-4); padding: var(--s-5) var(--s-3) var(--s-6); }
 .profile-wallet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
 .profile-wallet > span { display: grid; gap: var(--s-1); color: var(--text-2); font-size: var(--t-sm); min-width: 0; }
-.profile-wallet strong { color: var(--text-1); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.profile-wallet strong { color: var(--text-1); font-size: var(--t-lg); font-weight: 500; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .profile-exposure { display: grid; gap: var(--s-2); }
 .profile-exchange summary { cursor: pointer; padding: var(--s-3) 0; min-height: 44px; }
 .profile-transfer-row { display: flex; justify-content: space-between; align-items: center; gap: var(--s-3); padding: var(--s-3) 0; border-bottom: 1px solid var(--line); }
 .profile-transfer-row > span { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .profile-transfer-row small { color: var(--text-2); }
 .profile-transfer-history { padding: var(--s-2) 0; font-size: var(--t-sm); overflow-wrap: anywhere; }
+@media (max-width: 960px) {
+  .subaccounts-layout { grid-template-columns: minmax(0, 1fr); gap: var(--s-6); }
+}
 @media (max-width: 600px) {
-  .profile-wallet { grid-template-columns: minmax(0, 1fr); }
-  .profile-subaccount-body { padding: var(--s-3); }
+  .profile-wallet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .profile-wallet > span:last-child { grid-column: 1 / -1; }
+  .profile-subaccount-toggle { padding-inline: var(--s-1); gap: var(--s-2); }
+  .profile-subaccount-body { padding-inline: var(--s-1); }
   .profile-exchange-heading { align-items: start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-subaccount-toggle { transition: none; }
 }
 .account-window-settings > .account-section:first-child { padding-top: 0; border-top: 0; }
 
