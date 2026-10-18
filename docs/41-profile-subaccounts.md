@@ -1,19 +1,20 @@
 # Profile subaccounts
 
-Profile now contains the server IP whitelist address and Delta subaccount management.
+Profile has a Sub accounts entry that opens account management and server IP setup
+in the workspace. See [Sub account interface](42-subaccount-interface.md) for the layout.
 Existing users retain main-account trading until they change the management setting.
 
 ## Setup and controls
 
 1. Create subaccounts and their API keys on Delta. The documented public API does not create them.
-2. Open Profile. Discovery uses the connected main key and shows accounts even before child keys are added.
+2. Open Profile, then Sub accounts. Discovery uses the connected main key and shows accounts even before child keys are added.
 3. Connect each child key. The backend verifies its account ID against current parent discovery and probes wallet,
    positions and orders without placing an order. Secrets remain encrypted in PostgreSQL and are never returned.
 4. Choose each child's participation: disabled, manual only, or automatic.
 5. Choose main-account trading, automatic subaccount assignment, or manual assignment for new runs.
 6. Enable automatic funding separately if desired. It is off by default.
 
-Manual assignment selects an unentered run in a child's expanded Profile section. Assignment is permanent.
+Manual assignment selects an unentered run under Assign a run in an expanded account. Assignment is permanent.
 Cancel the run if it needs a different account. An assigned run retains its account when management settings change.
 
 Each expanded account shows wallet balances, recorded software realized P&L, positions and working orders.
@@ -59,7 +60,7 @@ response includes `cross`, which differs from the modes enumerated by the public
 
 ## Server IP
 
-The trading writer refreshes its outbound IP from ipify on startup and every five minutes. Profile shows the
+The trading writer refreshes its outbound IP from ipify on startup and every five minutes. Sub accounts > API setup shows the
 persisted address with Copy, Refresh and the last-check time. It labels data older than ten minutes stale.
 Failed refreshes retain the previous value. Read replicas report the writer's persisted address and reject
 refresh mutations. The browser's IP, Vercel address and incoming proxy headers are not used.
