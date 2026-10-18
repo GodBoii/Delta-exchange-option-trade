@@ -11,18 +11,17 @@ import { useTheme, type ThemeChoice } from "@/app/components/theme";
 import { useCurrency, type DisplayCurrency } from "@/app/components/currency";
 import { NotificationSettings } from "@/app/components/NotificationSettings";
 import { ProfileAvatar } from "@/app/components/ProfileAvatar";
-import { ProfileExchangeAccounts } from "@/app/components/ProfileExchangeAccounts";
 import {
   Badge, Brand, Dialog, StatusDot, SwapText, Tooltip, useSlidingPill
 } from "@/app/components/ui";
 
-export type Tab = "connect" | "builder" | "market" | "automation" | "dashboard" | "runs" | "pnl" | "users";
+export type Tab = "connect" | "builder" | "market" | "automation" | "dashboard" | "runs" | "pnl" | "subaccounts" | "users";
 
 /** `short` is the label under the icon in the phone dock, where ~56px is all a destination gets. */
 type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
 
 /** Pages reachable only from the account window: never in the strip, dock or jump menu. */
-const PROFILE_ONLY: ReadonlySet<Tab> = new Set<Tab>(["users"]);
+const PROFILE_ONLY: ReadonlySet<Tab> = new Set<Tab>(["users", "subaccounts"]);
 type NavFamily = "execute" | "research" | "account";
 
 /**
@@ -47,9 +46,10 @@ const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
   { id: "market", label: "Market", short: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
   { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" },
   /* Account pages open from the profile window. My P&L also sits at the end of
-     the desktop strip; Users is profile-only (see PROFILE_ONLY), and the phone
-     dock leaves both to the profile. */
+     the desktop strip; Sub accounts and Users are profile-only, and the phone
+     dock leaves all account pages to the profile. */
   { id: "pnl", label: "My P&L", short: "P&L", hint: "Your software trade results", icon: <TrendingUp />, family: "account" },
+  { id: "subaccounts", label: "Sub accounts", short: "Accounts", hint: "Accounts, funding and API access", icon: <Layers3 />, family: "account" },
   { id: "users", label: "Users", short: "Users", hint: "Every account, capital and automation", icon: <Users />, family: "account" }
 ];
 
@@ -385,8 +385,8 @@ const CURRENCY_OPTIONS: { value: DisplayCurrency; label: string; symbol: string 
  * Account window.
  *
  * A centred modal window opened from the profile trigger. It holds the
- * account's own pages (My P&L, and Users for the owner, which appears nowhere
- * else), identity, connection, appearance and currency, then the two ways out.
+ * account's own pages (My P&L, Sub accounts, and Users for the owner), identity,
+ * connection, appearance and currency, then the two ways out.
  * The pages open in the workspace; the window only routes to them.
  *
  * The shared `Dialog` owns the portal, scrim, focus trap, scroll lock, Escape
@@ -480,8 +480,6 @@ function AccountPanel({ account, connection, pages, current, onClose, onNavigate
           {connection.label}
         </span>
       </div>
-
-      <ProfileExchangeAccounts connected={Boolean(onDisconnect)} />
 
       <div className="account-window-grid">
         {pages.length > 0 && (
