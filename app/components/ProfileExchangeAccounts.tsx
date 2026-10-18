@@ -7,9 +7,10 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
-import { Copy, RefreshCw } from "@/app/components/icons";
-import { InlineMessage } from "@/app/components/ui";
+import { ChevronDown, Copy, KeyRound, Layers3, RefreshCw } from "@/app/components/icons";
+import { EmptyState, InlineMessage, SectionHeading, TableSkeleton } from "@/app/components/ui";
 import { requestJson, type ApiRequester } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import {
@@ -34,28 +35,54 @@ const json = (method: string, body?: unknown): RequestInit => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 const usd = (value: string) =>
-  `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })} USD`;
+  `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
 
 export function ProfileExchangeAccounts({
   connected,
   request = requestJson,
+  onConnect,
 }: {
   connected: boolean;
   request?: ApiRequester;
+  onConnect?: () => void;
 }) {
   return (
     <section
       className="profile-exchange"
-      aria-label="Delta API and subaccounts"
+      aria-label="Sub accounts"
     >
-      <WhitelistIp request={request} />
+      <SectionHeading title="Sub accounts" />
       {connected ? (
         <Subaccounts request={request} />
       ) : (
-        <p className="muted">
-          Connect your main Delta account to discover and manage subaccounts.
-        </p>
+        <>
+          <EmptyState icon={<Layers3 />} title="Connect your main account first"
+            description="Your main Delta connection is needed to discover sub accounts and manage their funds."
+            action={onConnect && <button type="button" className="button primary" onClick={onConnect}><KeyRound aria-hidden="true" />Connect Delta</button>} />
+          <Disclosure title="API setup" hint="Server IP for your Delta whitelist"><WhitelistIp request={request} /></Disclosure>
+        </>
       )}
+    </section>
+  );
+}
+
+/** Uses the installed accordion recipe. Closed controls leave the tab order. */
+function Disclosure({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <section className="subaccount-disclosure t-acc" data-open={open}>
+      <h3>
+        <button type="button" className="t-acc-head" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+          <span>{title}{hint && <small>{hint}</small>}</span>
+          <span className="t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
+        </button>
+      </h3>
+      <div className="t-acc-panel" id={id} aria-hidden={!open}>
+        <div className="t-acc-panel-inner" inert={!open}>
+          <div className="subaccount-disclosure-content">{children}</div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -110,7 +137,7 @@ function WhitelistIp({ request }: { request: ApiRequester }) {
   return (
     <div className="profile-ip">
       <div className="profile-exchange-heading">
-        <h3>Server IP for Delta API whitelist</h3>
+        <h4>Server IP</h4>
         <button
           type="button"
           className="button ghost"
@@ -120,7 +147,7 @@ function WhitelistIp({ request }: { request: ApiRequester }) {
           }}
           aria-label="Refresh server IP"
         >
-          <RefreshCw aria-hidden="true" />
+          <RefreshCw className={busy ? "spin" : undefined} aria-hidden="true" />
         </button>
       </div>
       <div className="profile-ip-value">
@@ -164,6 +191,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
   const [pending, setPending] = useState<{ id: string; name: string }[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
+  const operation = useRef(false);
   const alive = useRef(true);
   const reload = useCallback(async () => {
     const next = parseOverview(await request(BASE));
@@ -171,6 +199,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
   }, [request]);
   useEffect(() => {
     alive.current = true;
+    setBusy(true);
     void reload()
       .then(async () => {
         const next = parseOverview(await request(`${BASE}/sync`, json("POST")));
@@ -178,13 +207,17 @@ function Subaccounts({ request }: { request: ApiRequester }) {
       })
       .catch((error) => {
         if (alive.current) setError(errorMessage(error));
+      })
+      .finally(() => {
+        if (alive.current) setBusy(false);
       });
     return () => {
       alive.current = false;
     };
   }, [reload, request]);
   async function action(work: () => Promise<unknown>, message: string) {
-    if (busy) return;
+    if (busy || operation.current) return;
+    operation.current = true;
     setBusy(true);
     setError("");
     setNote("");
@@ -195,6 +228,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
     } catch (error) {
       setError(errorMessage(error));
     } finally {
+      operation.current = false;
       setBusy(false);
     }
   }
@@ -221,13 +255,18 @@ function Subaccounts({ request }: { request: ApiRequester }) {
       setCursor(typeof after === "string" ? after : null);
     }, "Exchange transfer history refreshed.");
   }
+  const unresolved = data?.transfers.filter(transfer => ["unknown", "submitting", "prepared"].includes(transfer.state)).length ?? 0;
+  function accountLabel(id: string) {
+    if (data?.mainAccount.id === id) return data.mainAccount.name;
+    return data?.accounts.find(account => account.id === id)?.name ?? id;
+  }
   return (
     <div className="profile-subaccounts">
       <div className="profile-exchange-heading">
         <div>
-          <h3>Subaccounts</h3>
+          <h2>Accounts{data && <span className="subaccount-count">{data.accounts.length}</span>}</h2>
           <p className="muted">
-            Separate balances and positions for each strategy.
+            {data ? `${data.capacity.available} available for automatic assignment${data.capacity.target !== null ? ` · Target ${data.capacity.target}` : ""}` : "Separate balances and positions for each strategy"}
           </p>
         </div>
         <button
@@ -241,8 +280,8 @@ function Subaccounts({ request }: { request: ApiRequester }) {
             );
           }}
         >
-          <RefreshCw aria-hidden="true" />
-          Discover
+          <RefreshCw className={busy ? "spin" : undefined} aria-hidden="true" />
+          {busy ? "Refreshing" : "Discover"}
         </button>
       </div>
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
@@ -250,36 +289,11 @@ function Subaccounts({ request }: { request: ApiRequester }) {
         {note}
       </span>
       {!data ? (
-        <p className="muted">
-          {error ? "Subaccounts could not be loaded." : "Loading subaccounts…"}
-        </p>
+        error ? <p className="muted">Accounts could not be loaded. Select Discover to retry.</p> : <TableSkeleton label="sub accounts" rows={3} />
       ) : (
-        <>
-          <ManagementForm
-            data={data}
-            busy={busy}
-            save={(nextMode, autoFund) =>
-              action(
-                () =>
-                  request(
-                    `${BASE}/settings`,
-                    json("PUT", {
-                      mode: nextMode,
-                      autoFund,
-                      expectedRevision: data.settings.revision,
-                    }),
-                  ),
-                "Account management saved.",
-              )
-            }
-          />
-          <p className="muted">
-            {data.capacity.available} available automatic accounts
-            {data.capacity.target !== null
-              ? ` · Target ${data.capacity.target} slots from your capital settings`
-              : ""}
-            . Availability is verified again before entry.
-          </p>
+        <div className="subaccounts-layout">
+          <div className="subaccounts-main">
+          {unresolved > 0 && <InlineMessage tone="warning">{unresolved} {unresolved === 1 ? "transfer needs" : "transfers need"} confirmation. Review Transfer activity before moving more funds.</InlineMessage>}
           {data.capacity.target !== null &&
             data.settings.mode === "automatic" &&
             data.capacity.available < data.capacity.target && (
@@ -289,21 +303,20 @@ function Subaccounts({ request }: { request: ApiRequester }) {
               </p>
             )}
           {data.accounts.length === 0 && (
-            <p>
-              No subaccounts found. Create one on Delta, then select Discover.
-            </p>
+            <EmptyState compact icon={<Layers3 />} title="No sub accounts yet"
+              description="Create a sub account on Delta, then select Discover to connect its API key."
+              action={<a className="button secondary" href="https://www.delta.exchange/support/solutions?articleId=80001177857" target="_blank" rel="noreferrer">Create on Delta</a>} />
           )}
-          <p className="muted">
+          {data.accounts.length > 0 && <p className="muted subaccounts-help">
             <a
               href="https://www.delta.exchange/support/solutions?articleId=80001177857"
               target="_blank"
               rel="noreferrer"
             >
-              Create subaccounts on Delta
+              Create on Delta
             </a>
-            . Create each account&apos;s API key on Delta once, then connect it
-            below.
-          </p>
+            <span>Each account needs its own API key.</span>
+          </p>}
           <div className="profile-account-list">
             {data.accounts.map((account) => (
               <SubaccountCard
@@ -317,6 +330,14 @@ function Subaccounts({ request }: { request: ApiRequester }) {
               />
             ))}
           </div>
+          </div>
+          <aside className="subaccounts-tools" aria-label="Account settings and funding">
+          <Disclosure title="Account management" hint={data.settings.mode === "main" ? "New entries use the main account" : data.settings.mode === "automatic" ? "Automatic sub account assignment" : "Manual run assignment"}>
+            <ManagementForm data={data} busy={busy}
+              save={(nextMode, autoFund) => action(() => request(`${BASE}/settings`, json("PUT", {
+                mode: nextMode, autoFund, expectedRevision: data.settings.revision,
+              })), "Account management saved.")} />
+          </Disclosure>
           {data.accounts.length > 0 && (
             <TransferForm
               data={data}
@@ -329,8 +350,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
               }
             />
           )}
-          <details className="profile-transfer-log">
-            <summary>Transfer activity</summary>
+          <Disclosure title="Transfer activity" hint={unresolved > 0 ? `${unresolved} awaiting confirmation` : `${data.transfers.length} application ${data.transfers.length === 1 ? "transfer" : "transfers"}`}>
             {data.transfers.length === 0 && (
               <p className="muted">
                 No transfers requested through this application.
@@ -339,7 +359,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
             {data.transfers.map((transfer) => (
               <div key={transfer.id} className="profile-transfer-row">
                 <span>
-                  {transfer.source_id} → {transfer.target_id}
+                  {accountLabel(transfer.source_id)} → {accountLabel(transfer.target_id)}
                   <br />
                   <small>
                     {usd(transfer.amount)} · {transfer.state}
@@ -396,8 +416,12 @@ function Subaccounts({ request }: { request: ApiRequester }) {
                 Load more
               </button>
             )}
-          </details>
-        </>
+          </Disclosure>
+          <Disclosure title="API setup" hint="Server IP and key permissions">
+            <WhitelistIp request={request} />
+          </Disclosure>
+          </aside>
+        </div>
       )}
     </div>
   );
@@ -488,15 +512,22 @@ function SubaccountCard({
   const [key, setKey] = useState("");
   const [secret, setSecret] = useState("");
   const [strategy, setStrategy] = useState("");
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const snapshotGeneration = useRef(0);
+  const invalidateSnapshot = useCallback(() => { snapshotGeneration.current++; }, []);
   const id = useId();
   const refresh = useCallback(async () => {
+    const generation = ++snapshotGeneration.current;
+    setSnapshotBusy(true);
     try {
-      setSnapshot(
-        parseSnapshot(await request(`${BASE}/${account.id}/snapshot`)),
-      );
+      const next = parseSnapshot(await request(`${BASE}/${account.id}/snapshot`));
+      if (generation !== snapshotGeneration.current) return;
+      setSnapshot(next);
       setSnapshotError("");
     } catch (error) {
-      setSnapshotError(errorMessage(error));
+      if (generation === snapshotGeneration.current) setSnapshotError(errorMessage(error));
+    } finally {
+      if (generation === snapshotGeneration.current) setSnapshotBusy(false);
     }
   }, [account.id, request]);
   useEffect(() => {
@@ -505,8 +536,11 @@ function SubaccountCard({
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, 15_000);
-    return () => window.clearInterval(timer);
-  }, [open, account.connected, refresh]);
+    return () => {
+      window.clearInterval(timer);
+      invalidateSnapshot();
+    };
+  }, [open, account.connected, refresh, invalidateSnapshot]);
   const mutation = (
     url: string,
     method: string,
@@ -525,13 +559,17 @@ function SubaccountCard({
     }, "Subaccount API access verified.");
   }
   return (
-    <article className="profile-subaccount">
+    <article className="profile-subaccount t-acc" data-open={open}>
       <button
         type="button"
         className="profile-subaccount-toggle"
         aria-expanded={open}
         aria-controls={`${id}-body`}
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          setOpen(!open);
+          setKey("");
+          setSecret("");
+        }}
       >
         <span>
           <strong>{account.name}</strong>
@@ -539,19 +577,28 @@ function SubaccountCard({
             ID {account.id} · {account.marginMode ?? "Margin unknown"}
           </small>
         </span>
-        <span className="profile-account-status">
+        <span className="profile-account-status" data-tone={!account.present || !account.connected ? "warning" : account.busy ? "neutral" : "active"}>
+          <span>
           {!account.present
             ? "Unavailable on Delta"
             : !account.connected
-              ? "API key needed"
+              ? "Connect API key"
               : account.busy
                 ? "Reserved"
                 : "Connected"}
-          <small>{open ? "Hide details" : "Manage"}</small>
+          </span>
+          <small>{account.busy ? account.strategyName ?? "Run assigned" : account.participation === "automatic" ? "Automatic" : account.participation === "manual" ? "Manual" : "New entries disabled"}</small>
         </span>
+        <span className="t-acc-chevron" aria-hidden="true"><ChevronDown /></span>
       </button>
-      {open && (
-        <div className="profile-subaccount-body" id={`${id}-body`}>
+      <div className="t-acc-panel" id={`${id}-body`} aria-hidden={!open}>
+        <div className="t-acc-panel-inner" inert={!open}>
+        <div className="profile-subaccount-body">
+          {account.connected && <div className="profile-wallet" aria-busy={snapshotBusy}>
+            <span>Balance<strong>{snapshot ? usd(snapshot.balance) : "—"}</strong></span>
+            <span>Available<strong>{snapshot ? usd(snapshot.available) : "—"}</strong></span>
+            <span>Recorded realized P&L<strong>{snapshot && snapshot.realizedPnl !== null ? usd(snapshot.realizedPnl) : "—"}</strong></span>
+          </div>}
           <label htmlFor={`${id}-participation`}>Participation</label>
           <select
             id={`${id}-participation`}
@@ -598,31 +645,16 @@ function SubaccountCard({
           )}
           {account.connected && (
             <>
-              <div className="profile-wallet">
-                <span>
-                  Balance
-                  <strong>{snapshot ? usd(snapshot.balance) : "—"}</strong>
-                </span>
-                <span>
-                  Available
-                  <strong>{snapshot ? usd(snapshot.available) : "—"}</strong>
-                </span>
-                <span>
-                  Recorded realized P&L
-                  <strong>
-                    {snapshot?.realizedPnl ? usd(snapshot.realizedPnl) : "—"}
-                  </strong>
-                </span>
-              </div>
               <button
                 type="button"
                 className="button ghost"
-                disabled={busy}
+                disabled={busy || snapshotBusy}
                 onClick={() => {
                   void refresh();
                 }}
               >
-                Refresh balances and positions
+                <RefreshCw className={snapshotBusy ? "spin" : undefined} aria-hidden="true" />
+                {snapshotBusy ? "Refreshing account" : "Refresh account"}
               </button>
               {snapshotError && (
                 <InlineMessage tone="error">{snapshotError}</InlineMessage>
@@ -713,7 +745,9 @@ function SubaccountCard({
                 </div>
               )}
               {!account.busy && (
-                <div className="profile-assignment">
+                <details className="profile-assignment">
+                  <summary>Assign a run</summary>
+                  <div className="stack">
                   <button
                     type="button"
                     className="button ghost"
@@ -755,11 +789,13 @@ function SubaccountCard({
                   >
                     Assign run
                   </button>
-                </div>
+                  <small className="muted">Assignment is permanent. Cancel the run to choose a different account.</small>
+                  </div>
+                </details>
               )}
             </>
           )}
-          <details className="profile-key-form">
+          <details className="profile-key-form" open={!account.connected ? true : undefined}>
             <summary>
               {account.connected ? "Replace API key" : "Connect API key"}
             </summary>
@@ -772,6 +808,7 @@ function SubaccountCard({
                 minLength={16}
                 maxLength={128}
                 required
+                disabled={busy || !account.present}
                 onChange={(event) => setKey(event.target.value)}
               />
               <label htmlFor={`${id}-secret`}>API secret</label>
@@ -783,6 +820,7 @@ function SubaccountCard({
                 minLength={24}
                 maxLength={256}
                 required
+                disabled={busy || !account.present}
                 onChange={(event) => setSecret(event.target.value)}
               />
               <button
@@ -797,7 +835,6 @@ function SubaccountCard({
                 encrypted and never displayed.
               </small>
             </form>
-          </details>
           {account.connected && (
             <button
               type="button"
@@ -820,8 +857,10 @@ function SubaccountCard({
               Remove API key
             </button>
           )}
+          </details>
         </div>
-      )}
+        </div>
+      </div>
     </article>
   );
 }
@@ -868,8 +907,7 @@ function TransferForm({
     });
   }
   return (
-    <details className="profile-funding">
-      <summary>Transfer funds manually</summary>
+    <Disclosure title="Transfer funds" hint="Move USD between your accounts">
       <form
         className="profile-management"
         onSubmit={(event) => {
@@ -919,6 +957,7 @@ function TransferForm({
           value={amount}
           required
           placeholder="0.00"
+          disabled={busy}
           onChange={(event) => {
             setAmount(event.target.value);
             changed();
@@ -938,6 +977,6 @@ function TransferForm({
           Transfer USD
         </button>
       </form>
-    </details>
+    </Disclosure>
   );
 }
