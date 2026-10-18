@@ -14,14 +14,14 @@ from news_agent.agent import _create_model
 
 def news_model():
     return _create_model(
-        SimpleNamespace(model_id="deepseek/deepseek-v4.1-flash", openrouter_api_key="test-key"), False
+        SimpleNamespace(model_id="deepseek/deepseek-v4.1-flash-1017", openrouter_api_key="test-key"), False
     )
 
 
 def completion(content="Verified news", *, tool_calls=None):
     return httpx.Response(200, json={
         "id": "test-completion", "object": "chat.completion", "created": 1,
-        "model": "deepseek/deepseek-v4.1-flash",
+        "model": "deepseek/deepseek-v4.1-flash-1017",
         "choices": [{"index": 0, "finish_reason": "tool_calls" if tool_calls else "stop",
                      "message": {"role": "assistant", "content": content, "tool_calls": tool_calls}}],
     })
