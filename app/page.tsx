@@ -42,10 +42,15 @@ const OwnerUsers = dynamic(() => import("@/app/components/OwnerUsers"), {
   loading: () => <TableSkeleton label="users" rows={6} />
 });
 
+const ProfileExchangeAccounts = dynamic(
+  () => import("@/app/components/ProfileExchangeAccounts").then(module => module.ProfileExchangeAccounts),
+  { loading: () => <TableSkeleton label="sub accounts" rows={4} /> }
+);
+
 type BackendStatus = "checking" | "online" | "offline";
 
-const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "automation", "pnl"];
-const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "pnl"];
+const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "automation", "pnl", "subaccounts"];
+const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "pnl", "subaccounts"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
 /**
@@ -255,6 +260,7 @@ export default function Home() {
             setNotice({ tone: "ok", text: "Delta Exchange connected securely." });
           }}
           onSignOut={signOut}
+          onConnect={() => setTab("connect")}
         />
       </AppShell>
 
@@ -289,7 +295,7 @@ export default function Home() {
  * arranged rather than swapped at random. `PageEnter` is keyed on the tab, so
  * React remounts the body and the animation restarts on every move.
  */
-function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, onAttention, onConnected, onSignOut }: {
+function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, onAttention, onConnected, onSignOut, onConnect }: {
   tab: Tab;
   connected: boolean;
   backendOnline: boolean;
@@ -299,6 +305,7 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
   onAttention: (count: number) => void;
   onConnected: (account: Account) => void;
   onSignOut: () => void;
+  onConnect: () => void;
 }) {
   const direction = useTravelDirection(tab, TAB_ORDER);
 
@@ -314,6 +321,7 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "market" && <BtcMarketChart />}
       {tab === "automation" && connected && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
       {tab === "pnl" && backendOnline && <PnlView />}
+      {tab === "subaccounts" && backendOnline && <ProfileExchangeAccounts connected={connected} onConnect={onConnect} />}
       {tab === "users" && backendOnline && user.userType === "owner" && <OwnerUsers onNotice={onNotice} />}
     </PageEnter>
   );
