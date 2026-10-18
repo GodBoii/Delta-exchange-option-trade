@@ -77,7 +77,13 @@ supabase/migrations/009_shared_default_strategies.sql
 
 Migration `009` replaces the original per-account built-in strategies with one shared, read-only set. Migration `015` retires Iron condor and Iron butterfly, leaving six active shared strategies while preserving historical runs. New user-created strategies remain private to their account.
 
-Then apply migrations `010` through `018` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, `016` links follow-ups to the run that requested them so they receive its full final response, `017` adds the pre-expiry review, and `018` unifies every agent on one OpenRouter model. Apply later migrations in order; migration `026` moves current and future agent runs to `xiaomi/mimo-v2.6-pro`.
+Then apply migrations `010` through `018` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, `016` links follow-ups to the run that requested them so they receive its full final response, `017` adds the pre-expiry review, and `018` unifies every agent on one OpenRouter model. Apply later migrations in order; migration `026` records the earlier MiMo model rollout.
+
+Current research and automation agents use `deepseek/deepseek-v4.1-flash-1017`.
+The trading writer applies local PostgreSQL migration `backend/db/013_deepseek_flash_1017.sql`
+on startup to align saved settings and scheduled analyses. It preserves automation
+switches and leaves running and historical jobs unchanged. Rebuild and restart both
+`delta-exchange` and `news-analyzer` when deploying this model change.
 
 Shared strategy templates live in `trade.saved_strategies`. From `backend`, `python -m scripts.shared_library seed` lists canonical templates that are missing, `descriptions` lists description drift, and `take-profit` sets a 50% take profit. Each prints the plan; add `--apply` to commit. Updates increment the template version, and `take-profit --apply` refuses while runs are open. See [spread gates and rollout checks](docs/22-defined-risk-credit-spreads.md).
 
