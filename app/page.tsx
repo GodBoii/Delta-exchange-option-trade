@@ -45,7 +45,7 @@ const OwnerUsers = dynamic(() => import("@/app/components/OwnerUsers"), {
 type BackendStatus = "checking" | "online" | "offline";
 
 const CONNECTED_TABS: Tab[] = ["builder", "runs", "dashboard", "market", "automation", "pnl"];
-const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "automation", "pnl"];
+const UNCONNECTED_TABS: Tab[] = ["connect", "builder", "market", "pnl"];
 const OFFLINE_TABS: Tab[] = ["builder", "market"];
 
 /**
@@ -312,7 +312,7 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
       {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
       {tab === "market" && <BtcMarketChart />}
-      {tab === "automation" && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
+      {tab === "automation" && connected && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
       {tab === "pnl" && backendOnline && <PnlView />}
       {tab === "users" && backendOnline && user.userType === "owner" && <OwnerUsers onNotice={onNotice} />}
     </PageEnter>
