@@ -18,7 +18,7 @@ from news_agent.sources import PublicSourceTools
 class FakeAgent:
     def __init__(self, responses: list[RunOutput]) -> None:
         self.responses = responses
-        self.model = SimpleNamespace(id="deepseek/deepseek-v4.1-flash")
+        self.model = SimpleNamespace(id="deepseek/deepseek-v4.1-flash-1017")
         self.calls: list[dict] = []
 
     async def arun(self, prompt: str, **kwargs) -> RunOutput:
