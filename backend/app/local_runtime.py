@@ -354,7 +354,7 @@ class LocalRuntimeStore:
                 "status": "scheduled",
                 "outcome": None,
                 "parent_agent_run_id": None,
-                "model_id": "deepseek/deepseek-v4.1-flash",
+                "model_id": "deepseek/deepseek-v4.1-flash-1017",
                 "signals_to_inspect": [],
                 **row,
             }
