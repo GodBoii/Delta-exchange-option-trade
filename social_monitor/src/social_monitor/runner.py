@@ -7,7 +7,7 @@ from .collector import Collector
 from .config import Config, Target
 from .diagnostics import ACCESS_ERRORS
 from .domain import make_alert
-from .relevance import classify
+from .relevance import VERSION, classify
 from .store import Store
 
 
@@ -29,10 +29,14 @@ class Runner:
         self.monotonic, self.sleep = monotonic, sleep
         self.retry_after = 0.0
         self.stop_reason: str | None = None
+        self.useful_partial = False
+        self.last_error: str | None = None
 
     async def poll(self, target: Target) -> bool:
         started, tick = self.clock(), self.monotonic()
         self.retry_after = 0
+        self.useful_partial = False
+        self.last_error = None
         reconcile = self.store.reconciliation_due(target.key, started, self.config.reconcile_seconds)
         known = self.store.recent_ids(target.key, target.value if target.kind == "user" else None)
         try:
@@ -42,6 +46,7 @@ class Runner:
                 )
         except Exception as error:
             completed, code = self.clock(), type(error).__name__
+            self.last_error = code
             self.store.complete_poll(
                 target.key,
                 started,
@@ -58,7 +63,10 @@ class Runner:
         alerts = {}
         assessments = {}
         should_alert = self.config.alert_on_first_poll or self.store.has_baseline(target.key)
+        existing = self.store.existing_ids([post.id for post in result.posts])
         for post in result.posts:
+            if post.id in existing:
+                continue
             assessment = classify(post)
             alert = make_alert(post, completed, self.config.alert_max_age_seconds)
             assessment["study_eligible"] = should_alert and alert is not None
@@ -69,9 +77,11 @@ class Runner:
                 and alert is not None
                 and (not self.config.crypto_only or assessment["relevance"] == "crypto")
             ):
-                alerts[post.id] = {**alert, "target": target.name, "collector_version": 3, "crypto": assessment}
+                alerts[post.id] = {**alert, "target": target.name, "collector_version": 4, "crypto": assessment}
         details = {
             **result.details,
+            "screening_version": VERSION,
+            "assessment_scope": "new_posts",
             "duration_seconds": round(self.monotonic() - tick, 4),
             "interval_seconds": self.config.interval(target),
             "retry_after_seconds": result.retry_after_seconds,
@@ -106,6 +116,14 @@ class Runner:
         )
         self.store.deliver(self.emit, completed)
         self.retry_after = result.retry_after_seconds
+        self.last_error = result.error_code
+        self.useful_partial = bool(
+            result.posts
+            and result.error_code == "pagination_stalled"
+            and result.details.get("known_overlap")
+            and set(result.details.get("warnings", []))
+            <= {"pagination_stalled", "unsupported_card", "unsupported_media"}
+        )
         if result.error_code in ACCESS_ERRORS:
             self.stop_reason = result.error_code
             self.diagnostic(
@@ -140,6 +158,13 @@ class Runner:
             ok = await self.poll(target)
             if self.stop_reason:
                 return False
-            failures[target.key] = 0 if ok else min(failures[target.key] + 1, 6)
-            delay = max(min(self.config.interval(target) * 2 ** failures[target.key], 3600), self.retry_after)
+            failures[target.key] = 0 if ok or self.useful_partial else min(failures[target.key] + 1, 6)
+            delay = min(self.config.interval(target) * 2 ** failures[target.key], 3600)
+            # Two short, spaced recovery checks before sustained failures back off normally.
+            if (
+                self.last_error in {"empty_unverified", "TimeoutError", "upstream_busy", "transport_error"}
+                and failures[target.key] <= 2
+            ):
+                delay = min(delay, 30 * 2 ** (failures[target.key] - 1))
+            delay = max(delay, self.retry_after)
             due[target.key] = max(last_start + delay, self.monotonic() + self.config.request_spacing_seconds)
