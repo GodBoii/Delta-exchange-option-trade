@@ -227,6 +227,34 @@ class VirtualClock:
 
 
 class SchedulingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_quota_reset_does_not_receive_extra_exponential_backoff(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        clock, calls = VirtualClock(), []
+
+        class Source:
+            async def fetch(self, target, limit, **options):
+                calls.append(clock.seconds)
+                if len(calls) == 1:
+                    return Collection([], "failed", "rate_limited", retry_after_seconds=60)
+                if len(calls) == 3:
+                    return Collection([], "failed", "access_blocked")
+                return Collection([post()])
+
+        with closing(Store(Path(directory) / "monitor.sqlite")) as store:
+            config = Config(Path(directory), (Target("one", "user", "one"),), poll_seconds=180)
+            runner = Runner(
+                config,
+                store,
+                Source(),
+                lambda e: None,
+                lambda e: None,
+                clock.now,
+                monotonic=clock.monotonic,
+                sleep=clock.sleep,
+            )
+            self.assertFalse(await runner.run())
+            self.assertEqual(calls, [0, 60, 240])
+
     async def test_useful_partial_does_not_delay_next_front_page(self):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         clock, calls = VirtualClock(), []
