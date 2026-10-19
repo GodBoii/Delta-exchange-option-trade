@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from test_evidence import NOW, post
 from test_runner import StubCollector
@@ -15,6 +16,33 @@ from social_monitor.store import Store
 
 
 class RelevanceTests(unittest.TestCase):
+    def test_confirmed_crypto_misses_and_unrelated_controls(self):
+        for text in (
+            "Qubic attack drains 1404 wallets; stolen funds frozen at MEXC",
+            "Ledger received hardware wallet tampering reports",
+            "5 wallets opened longs on $AGT on @Aster_DEX",
+            "Perps and tokenized stocks fix this",
+            "Circle's USDC is an e-money token under MiCA",
+            "SOL and BONK trading on Binance",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(classify(post(text=text))["relevance"], "crypto")
+        for text in (
+            "My leather wallet was stolen",
+            "The school network was hacked",
+            "Tokenization of language models",
+            "Optimism about an avalanche of good news",
+            "@coinbase lovely dinner",
+            "bonk the ball",
+            "SOL is a nice name",
+        ):
+            with self.subTest(text=text):
+                self.assertNotEqual(classify(post(text=text))["relevance"], "crypto")
+        assessment = classify(post(text="5 wallets opened longs on $AGT on @Aster_DEX"))
+        self.assertEqual(assessment["unresolved_cashtags"], ["AGT"])
+        self.assertEqual(assessment["assets"], [])
+        self.assertEqual(classify(post(text="SOL and BONK trading on Binance"))["assets"], ["BONK", "SOL"])
+
     def test_relevance_does_not_infer_direction_or_contract_identity(self):
         for text in (
             "Bitcoin ETF approval",
@@ -60,6 +88,32 @@ class RelevanceTests(unittest.TestCase):
 
 
 class RelevancePipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_known_posts_are_not_rescreened_or_rewritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = Config(root, (Target("one", "user", "example"),), alert_on_first_poll=True)
+            store = Store(root / "monitor.sqlite")
+            try:
+                old = {"version": 1, "relevance": "uncertain", "study_eligible": False}
+                item = post(text="Qubic exploit")
+                store.complete_poll(config.targets[0].key, NOW, NOW, [item], {}, "ok", assessments={item.id: old})
+                with patch("social_monitor.runner.classify", side_effect=AssertionError("known post was rescreened")):
+                    self.assertTrue(
+                        await Runner(
+                            config,
+                            store,
+                            StubCollector(Collection([item])),
+                            lambda e: self.fail("duplicate output"),
+                            lambda e: None,
+                            lambda: NOW,
+                        ).run(once=True)
+                    )
+                self.assertEqual(
+                    json.loads(store.connection.execute("SELECT payload FROM assessments").fetchone()[0]), old
+                )
+            finally:
+                store.close()
+
     async def test_filter_preserves_raw_evidence_controls_and_restart_deduplication(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
