@@ -5,6 +5,7 @@ WORKDIR /monitor
 COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir . && useradd --uid 10001 --user-group --create-home monitor \
+    && python -m compileall -q /usr/local/lib/python3.13 /monitor/src \
     && mkdir /monitor/state && chown monitor:monitor /monitor/state
 COPY config.example.toml ./config.toml
 USER monitor
