@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .domain import parse_time
+from .health import research_status
 from .market import MINUTE, SYMBOLS, BinanceCandles, MarketError, baseline_open, measure
+
+# Keep callers of social_monitor.research.status compatible with the lightweight probe.
+status = research_status
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), post_rowid INTEGER NOT NULL);
@@ -155,30 +159,6 @@ class Research:
                 "INSERT INTO heartbeat VALUES (1,?) ON CONFLICT(id) DO UPDATE SET at=excluded.at", (now.timestamp(),)
             )
         return completed
-
-
-def status(path: Path) -> dict:
-    if not path.exists():
-        return {"event": "research_not_started", "healthy": False}
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
-    try:
-        heartbeat = connection.execute("SELECT at FROM heartbeat WHERE id=1").fetchone()
-        counts = dict(connection.execute("SELECT status,count(*) FROM jobs GROUP BY status"))
-        oldest = connection.execute("SELECT min(due) FROM jobs WHERE status='pending'").fetchone()[0]
-        now = time.time()
-        return {
-            "jobs": counts,
-            "last_cycle_at": heartbeat[0] if heartbeat else None,
-            "overdue_seconds": max(0, now - oldest) if oldest else 0,
-            "healthy": bool(
-                heartbeat
-                and now - heartbeat[0] < 300
-                and not counts.get("failed")
-                and (oldest is None or now - oldest < 300)
-            ),
-        }
-    finally:
-        connection.close()
 
 
 def run(source_path: Path, research: Research, emit, diagnostic, *, once: bool = False) -> bool:
