@@ -1,7 +1,9 @@
 # Research roster reviewed 2026-10-15. Following on X does not configure collection.
 state_dir = "state"
 crypto_only = true
-# Twelve targets share one session. Start conservatively after prior rate limits.
+# Four priority sources use 60 seconds; others retain the original research cadence.
+# About 114 timeline page requests per 15 minutes including bounded reconciliation,
+# before retries and lookups. Observed quota was 500; reset headers remain authoritative.
 poll_seconds = 180
 timeout_seconds = 20
 batch_size = 80
@@ -17,11 +19,13 @@ alert_on_first_poll = false
 name = "cz"
 kind = "user"
 value = "cz_binance"
+poll_seconds = 60
 
 [[targets]]
 name = "vitalik"
 kind = "user"
 value = "VitalikButerin"
+poll_seconds = 60
 
 [[targets]]
 name = "saylor"
@@ -54,11 +58,13 @@ value = "zachxbt"
 name = "lookonchain"
 kind = "user"
 value = "lookonchain"
+poll_seconds = 60
 
 [[targets]]
 name = "wu"
 kind = "user"
 value = "WuBlockchain"
+poll_seconds = 60
 
 # Commentary and meme attention. No predictive track record assumed.
 [[targets]]
