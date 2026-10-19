@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS polls (
     error_code TEXT
 );
 CREATE INDEX IF NOT EXISTS polls_target_id ON polls(target, id DESC);
+CREATE INDEX IF NOT EXISTS polls_target_success ON polls(target, id DESC) WHERE status='ok';
 CREATE TABLE IF NOT EXISTS baselines (target TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS poll_details (
     poll_id INTEGER PRIMARY KEY REFERENCES polls(id),
@@ -76,6 +77,14 @@ class Store:
 
     def has_baseline(self, target: str) -> bool:
         return self.connection.execute("SELECT 1 FROM baselines WHERE target = ?", (target,)).fetchone() is not None
+
+    def existing_ids(self, post_ids: list[str]) -> frozenset[str]:
+        if not post_ids:
+            return frozenset()
+        placeholders = ",".join("?" for _ in post_ids)
+        return frozenset(
+            row[0] for row in self.connection.execute(f"SELECT id FROM posts WHERE id IN ({placeholders})", post_ids)
+        )
 
     def recent_ids(self, target: str, author: str | None = None, limit: int = 2000) -> frozenset[str]:
         rows = self.connection.execute(
@@ -161,7 +170,7 @@ class Store:
             count += 1
         return count
 
-    def status(self) -> dict:
+    def status(self, target_keys: list[str] | None = None) -> dict:
         counts = {
             "posts": self.connection.execute("SELECT count(*) FROM posts").fetchone()[0],
             "pending_alerts": self.connection.execute(
@@ -172,10 +181,17 @@ class Store:
             self.connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='poll_details'").fetchone()
             is not None
         )
-        rows = self.connection.execute(
-            "SELECT id, target, started_at, completed_at, status, fetched, inserted, error_code FROM polls "
-            "WHERE id IN (SELECT max(id) FROM polls GROUP BY target) ORDER BY target"
-        ).fetchall()
+        if target_keys is None:
+            target_keys = [row[0] for row in self.connection.execute("SELECT DISTINCT target FROM polls")]
+        rows = []
+        for key in sorted(target_keys):
+            row = self.connection.execute(
+                "SELECT id, target, started_at, completed_at, status, fetched, inserted, error_code FROM polls "
+                "WHERE target=? ORDER BY id DESC LIMIT 1",
+                (key,),
+            ).fetchone()
+            if row is not None:
+                rows.append(row)
         targets = []
         for row in rows:
             item = dict(row)
