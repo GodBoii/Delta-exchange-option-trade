@@ -13,6 +13,8 @@ application, agents and user notifications are outside this change.
    Retry transient empty responses twice at 30 and 60 seconds before exponential
    backoff. Reported quota cooldowns always take priority. Preserve received pages
    when a later page times out. Authentication and access stops remain immediate.
+   Handle Docker SIGTERM through async cleanup so ordinary stops release the
+   upstream endpoint lease instead of leaving a 15-minute lock until expiry.
 3. Stop rescreening known posts and avoid grouping all historical polls for status.
    Add an index for the last successful attempt. Use a small database-only Docker
    probe that does not import the event loop, collector or market client.
@@ -58,6 +60,8 @@ The research probe retains its heartbeat, overdue-work and terminal-failure
 checks. Both probes are read-only and bounded by a short SQLite lock timeout.
 The Docker five-second timeout is unchanged so the implementation must become
 cheaper rather than receive a looser timeout.
+The probe reads only its required TOML fields and avoids importing configuration
+dataclasses, the collector, the event loop and the HTTP client dependency tree.
 
 Both services retain restart policy `no`. This preserves intentional access stops;
 automatic recovery after a host reboot is not part of this research update.
