@@ -1,7 +1,8 @@
 # Independent X monitor
 
-Version 0.3 adds the twelve-account crypto roster, crypto relevance screening and
-a separate price-response worker. See [crypto monitoring](CRYPTO_MONITORING.md)
+Version 0.4 adds broader crypto screening, bounded transient recovery, lightweight
+health probes and local coverage/review tools. See the [implementation sequence](IMPROVEMENTS.md)
+and [crypto monitoring](CRYPTO_MONITORING.md)
 for configuration, measurement methods, commands and limitations. Legacy local
 configurations retain their existing alert behavior.
 
@@ -75,6 +76,20 @@ To inspect reliability and measured publication-to-alert delay for the last day:
 .\.venv\Scripts\python.exe -m social_monitor --config config.local.toml status --check
 ```
 
+For the crypto roster, local research diagnostics and a read-only comparison with
+the current screen are available without contacting X:
+
+```powershell
+.\.venv\Scripts\python.exe -m social_monitor --config config.crypto.toml coverage --hours 24
+.\.venv\Scripts\python.exe -m social_monitor --config config.crypto.toml review --hours 168 --limit 500 --label uncertain
+```
+
+`review` exports both the stored and current assessment without changing historical
+measurements or emitting old alerts. `verify --target hayes` and `verify --target zachxbt`
+contact X's original-post endpoint and compare one page against saved IDs. They do
+not ingest posts. The alternate endpoint shares the same upstream service and does
+not prove full coverage. Do not run repeated verification loops alongside collection.
+
 ## Linux or standalone Docker
 
 For Linux, the same CLI works after `python3 -m venv .venv` and `.venv/bin/python -m pip install -e .`.
@@ -97,11 +112,12 @@ docker compose -f compose.yaml down
 ## Health and coverage limits
 
 - `run --once` returns 0 when all target collections complete, 2 for a failed/partial collection, and 130 on interruption. Missing authorization fails before collection.
-- `status` shows the latest attempt, last success, collection duration, returned page count, quota headers, warning codes, newest returned post age and pending alerts. It reads evidence without accessing X or exposing account data. `status --check` exits 2 when unhealthy and is used by the Docker health check. Recent successful collection does not prove complete coverage or that an author has posted recently.
+- `status` shows the latest attempt, last success, collection duration, returned page count, quota headers, warning codes, newest returned post age and pending alerts. It reads evidence without accessing X or exposing account data. `status --check` exits 2 when unhealthy. Docker uses the smaller `social_monitor.health` module. A recent successful collection can keep operational health passing during one failed latest attempt, with `degraded=true`. Sustained failure and access errors fail the probe. Recent successful collection does not prove complete coverage or that an author has posted recently.
 - Twscrape can end an iterator on both an empty timeline and an upstream failure. This monitor records no-post results as `empty_unverified`, not verified healthy coverage. A genuinely quiet or inaccessible account may therefore remain unhealthy.
 - Routine polls stop after a complete page contains at least three known IDs. A single known pinned post is insufficient. Bursts with no overlap continue until the configured batch or page bound. Every 15 minutes, a deeper read ignores overlap and checks older pages within those same bounds. Its attempt time persists even after a partially useful read, preventing one failing deep page from forcing historical pagination on every fast cycle.
 - `stop_reason` distinguishes overlap, batch limit, page limit and quota reserve. These bounds and reconciliation reduce work but do not prove exhaustive coverage. Nonchronological timelines, outages and late indexing can still cause missed posts. User timelines may contain conversation context by other authors; those posts are filtered.
 - Timeouts and transient failures back off up to one hour. The collector waits for reported quota resets, reserves five remaining requests, and honors `Retry-After` on returned 429 responses. Blocked access and invalid authentication stop the process for review. The Docker restart policy remains `no`.
+- Version 0.4 retries transient empty/timeout results at 30 and 60 seconds before normal backoff. A useful overlapping partial page with only stalled-pagination or cosmetic warnings retains the normal cadence. Partial status and warnings remain recorded. A later-page timeout preserves already received pages.
 - Unsupported card or media types are recorded as cosmetic warnings while usable post text is kept. Parser, pagination and upstream transport failures still mark partial or failed collection. Upstream warning message bodies are never stored or printed.
 - Receipt time is measured at batch completion, not an exact per-post network arrival time. The collector does not promise a trading lead or an exhaustive historical backfill.
 - Outbox delivery is at least once. A crash between stdout flush and acknowledgement can repeat an alert; consumers should deduplicate by `alert_id` within this database or by post ID across databases.
