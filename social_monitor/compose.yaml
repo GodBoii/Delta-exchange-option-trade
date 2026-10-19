@@ -13,7 +13,7 @@ services:
     tmpfs:
       - /tmp:size=32m,mode=1777
     healthcheck:
-      test: ["CMD", "python", "-m", "social_monitor", "--config", "/monitor/config.toml", "status", "--check"]
+      test: ["CMD", "python", "-m", "social_monitor.health", "/monitor/config.toml", "collector"]
       interval: 30s
       timeout: 5s
       start_period: 45s
@@ -40,7 +40,7 @@ services:
     tmpfs:
       - /tmp:size=32m,mode=1777
     healthcheck:
-      test: ["CMD", "python", "-m", "social_monitor", "--config", "/monitor/config.toml", "research-status", "--check"]
+      test: ["CMD", "python", "-m", "social_monitor.health", "/monitor/config.toml", "research"]
       interval: 60s
       timeout: 5s
       start_period: 180s
