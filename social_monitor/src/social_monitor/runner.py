@@ -158,8 +158,11 @@ class Runner:
             ok = await self.poll(target)
             if self.stop_reason:
                 return False
-            failures[target.key] = 0 if ok or self.useful_partial else min(failures[target.key] + 1, 6)
-            delay = min(self.config.interval(target) * 2 ** failures[target.key], 3600)
+            quota_wait = self.last_error == "rate_limited" and self.retry_after > 0
+            failures[target.key] = 0 if ok or self.useful_partial or quota_wait else min(failures[target.key] + 1, 6)
+            delay = (
+                self.retry_after if quota_wait else min(self.config.interval(target) * 2 ** failures[target.key], 3600)
+            )
             # Two short, spaced recovery checks before sustained failures back off normally.
             if (
                 self.last_error in {"empty_unverified", "TimeoutError", "upstream_busy", "transport_error"}
