@@ -10,9 +10,9 @@ The standalone monitor was started on 8 October 2026 using the dedicated X accou
 - Compose project: `delta-social-monitor`
 - Container: `delta-social-monitor-monitor-1`
 - State volume: `delta-social-monitor_monitor-state`
-- Watched profiles: `elonmusk` and `realDonaldTrump`, including replies.
-- Version 0.2 poll interval: 15 seconds per target, scheduled from poll start.
-- Routine reads: stop after a page contains three known post IDs, with deeper bounded checks every 900 seconds.
+- Active roster: the twelve accounts in `config.crypto.toml`, including replies. Musk and Trump remain only in historical evidence.
+- Version 0.4 cadence: 60 seconds for CZ, Vitalik, Lookonchain and Wu Blockchain; 180 seconds for six accounts; 300 seconds for Ansem and Billy Markus.
+- Routine reads stop after a page contains three known post IDs. Deeper bounded checks run every 1800 seconds.
 - Limits: 256 MB memory and 0.5 CPU, unprivileged user, read-only root filesystem, no published ports.
 
 This deployment is independent of the trading checkout, trading database and existing application containers. The source was transferred as an archive of tracked monitor files. Future changes need to be transferred and rebuilt explicitly; pulling the trading checkout does not update this deployment.
