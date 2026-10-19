@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import time
@@ -72,6 +73,25 @@ class IncrementalTests(unittest.IsolatedAsyncioTestCase):
         collector.api = source
         collector.parse_page = lambda body: body["items"]
         return collector
+
+    async def test_late_page_timeout_preserves_received_posts_and_closes_stream(self):
+        source = PageSource([])
+        closed = []
+
+        async def stream(uid, limit, kv):
+            try:
+                yield response([1, 2, 3])
+                await asyncio.sleep(60)
+            finally:
+                closed.append(True)
+
+        source.user_tweets_and_replies_raw = stream
+        collector = self.collector(source)
+        collector.timeout_seconds = 0.02
+        result = await collector.fetch(self.target, 80)
+        self.assertEqual((result.status, result.error_code), ("partial", "TimeoutError"))
+        self.assertEqual(len(result.posts), 3)
+        self.assertEqual(closed, [True])
 
     async def test_fast_poll_stops_after_overlap_and_releases_iterator(self):
         source = PageSource([response([1, 2, 3, 4]), response([5, 6])])
@@ -207,6 +227,66 @@ class VirtualClock:
 
 
 class SchedulingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_useful_partial_does_not_delay_next_front_page(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        clock, calls = VirtualClock(), []
+
+        class Source:
+            async def fetch(self, target, limit, **options):
+                calls.append(clock.seconds)
+                if len(calls) == 3:
+                    return Collection([], "failed", "access_blocked")
+                return Collection(
+                    [post()],
+                    "partial",
+                    "pagination_stalled",
+                    {"known_overlap": True, "warnings": ["pagination_stalled"]},
+                )
+
+        with closing(Store(Path(directory) / "monitor.sqlite")) as store:
+            config = Config(Path(directory), (Target("one", "user", "one"),), poll_seconds=180)
+            runner = Runner(
+                config,
+                store,
+                Source(),
+                lambda e: None,
+                lambda e: None,
+                clock.now,
+                monotonic=clock.monotonic,
+                sleep=clock.sleep,
+            )
+            self.assertFalse(await runner.run())
+            self.assertEqual(calls, [0, 180, 360])
+            self.assertEqual(
+                store.connection.execute("SELECT count(*) FROM polls WHERE status='partial'").fetchone()[0], 2
+            )
+
+    async def test_transient_retries_are_bounded_and_quota_cooldown_wins(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        clock, calls = VirtualClock(), []
+
+        class Source:
+            async def fetch(self, target, limit, **options):
+                calls.append(clock.seconds)
+                if len(calls) == 4:
+                    return Collection([], "failed", "access_blocked")
+                return Collection([], "failed", "empty_unverified", retry_after_seconds=90 if len(calls) == 1 else 0)
+
+        with closing(Store(Path(directory) / "monitor.sqlite")) as store:
+            config = Config(Path(directory), (Target("one", "user", "one"),), poll_seconds=180)
+            runner = Runner(
+                config,
+                store,
+                Source(),
+                lambda e: None,
+                lambda e: None,
+                clock.now,
+                monotonic=clock.monotonic,
+                sleep=clock.sleep,
+            )
+            self.assertFalse(await runner.run())
+            self.assertEqual(calls, [0, 90, 150, 1590])
+
     async def test_independent_intervals_do_not_drift_with_request_duration(self):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         clock = VirtualClock()
