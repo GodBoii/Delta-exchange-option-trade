@@ -13,6 +13,8 @@ application, agents and user notifications are outside this change.
    Retry transient empty responses twice at 30 and 60 seconds before exponential
    backoff. Reported quota cooldowns always take priority. Preserve received pages
    when a later page times out. Authentication and access stops remain immediate.
+   Explicit quota waits do not accumulate failure backoff or extend the reset
+   time. Add one second at the upstream lease boundary before trying again.
    Handle Docker SIGTERM through async cleanup so ordinary stops release the
    upstream endpoint lease instead of leaving a 15-minute lock until expiry.
 3. Stop rescreening known posts and avoid grouping all historical polls for status.
