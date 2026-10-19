@@ -14,10 +14,11 @@ from pathlib import Path
 from .collector import Collection, XCollector, add_session
 from .config import Target, load_config
 from .domain import Post, parse_time
+from .health import collection_status, research_status
 from .locking import writer_lock
+from .reporting import coverage, review
 from .research import Research
 from .research import run as run_research
-from .research import status as research_status
 from .runner import Runner
 from .store import Store
 
@@ -67,6 +68,20 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("export", help="export public evidence as JSONL, never session cookies")
     stats = commands.add_parser("stats", help="collection reliability and measured alert delay")
     stats.add_argument("--hours", type=int, default=24, choices=range(1, 721), metavar="1-720")
+    coverage_command = commands.add_parser(
+        "coverage", help="local request reliability and unverified timeline freshness"
+    )
+    coverage_command.add_argument("--hours", type=int, default=24, choices=range(1, 721), metavar="1-720")
+    review_command = commands.add_parser(
+        "review", help="compare saved posts with current screening without modifying evidence"
+    )
+    review_command.add_argument("--hours", type=int, default=24, choices=range(1, 721), metavar="1-720")
+    review_command.add_argument("--limit", type=int, default=500, choices=range(1, 5001), metavar="1-5000")
+    review_command.add_argument("--label", choices=("crypto", "uncertain", "unrelated"))
+    verify_command = commands.add_parser(
+        "verify", help="compare one original-post page against saved IDs without ingestion"
+    )
+    verify_command.add_argument("--target", required=True, help="configured user target name")
     auth = commands.add_parser("auth", help="save your X session through hidden local prompts")
     auth.add_argument("--name", default="monitor")
     run = commands.add_parser("run", help="poll configured targets and print JSON alerts")
@@ -104,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "research":
             with writer_lock(research_dir), closing(Research(research_db)) as research:
                 return 0 if run_research(database, research, output, diagnostic, once=args.once) else 2
-        if args.command in {"status", "export", "stats"} and not database.exists():
+        if args.command in {"status", "export", "stats", "coverage", "review"} and not database.exists():
             output({"event": "not_started", "targets": [], "posts": 0, "pending_alerts": 0})
             return 2 if args.command == "status" and args.check else 0
         if args.command == "auth":
@@ -125,14 +140,22 @@ def main(argv: list[str] | None = None) -> int:
                 asyncio.run(add_session(config.state_dir / "accounts.sqlite", args.name, auth_token, ct0))
             output({"event": "session_saved", "live_access_verified": False})
             return 0
-        if args.command in {"status", "export", "stats"}:
+        if args.command in {"status", "export", "stats", "coverage", "review"}:
             with closing(Store(database, read_only=True)) as store:
                 if args.command == "export":
                     store.export(output)
                 elif args.command == "stats":
                     output(store.statistics(datetime.now(UTC) - timedelta(hours=args.hours)))
+                elif args.command == "coverage":
+                    now = datetime.now(UTC)
+                    output(coverage(store, config, now - timedelta(hours=args.hours), now))
+                elif args.command == "review":
+                    for item in review(
+                        store, datetime.now(UTC) - timedelta(hours=args.hours), limit=args.limit, label=args.label
+                    ):
+                        output(item)
                 else:
-                    status = store.status()
+                    status = store.status([target.key for target in config.targets])
                     now = datetime.now(UTC)
                     for target in status["targets"]:
                         newest = target.get("details", {}).get("newest_published_at")
@@ -142,10 +165,8 @@ def main(argv: list[str] | None = None) -> int:
                             "details", {}
                         ).get("interval_seconds", config.poll_seconds) * 3
                     seen = {item["target"]: item for item in status["targets"]}
-                    status["healthy"] = bool(config.targets) and all(
-                        target.key in seen and seen[target.key]["status"] == "ok" and not seen[target.key]["stale"]
-                        for target in config.targets
-                    )
+                    health = collection_status(config, now)
+                    status.update({key: health[key] for key in ("healthy", "degraded", "coverage_verified")})
                     status["unpolled_targets"] = [target.name for target in config.targets if target.key not in seen]
                     output(status)
                     if args.check and not status["healthy"]:
@@ -160,13 +181,61 @@ def main(argv: list[str] | None = None) -> int:
                 runner = Runner(config, store, ReplayCollector(posts), output, diagnostic, clock=lambda: at)
                 asyncio.run(runner.run(once=True))
             return 0
+        if args.command == "verify":
+            target = next((target for target in config.targets if target.name == args.target), None)
+            if target is None or target.kind != "user":
+                raise ValueError("verify requires a configured user target name")
+            accounts = config.state_dir / "accounts.sqlite"
+            if not accounts.exists():
+                raise ValueError("no X session configured")
+            with closing(XCollector(accounts, page_size=config.page_size, max_pages=1)) as collector:
+
+                async def fetch_originals():
+                    async with asyncio.timeout(config.timeout_seconds):
+                        return await collector.fetch(replace(target, include_replies=False), config.page_size)
+
+                result = asyncio.run(fetch_originals())
+            if database.exists():
+                with closing(Store(database, read_only=True)) as store:
+                    known = store.existing_ids([post.id for post in result.posts])
+            else:
+                known = frozenset()
+            output(
+                {
+                    "target": target.key,
+                    "endpoint": "original_posts",
+                    "status": result.status,
+                    "error_code": result.error_code,
+                    "details": result.details,
+                    "posts": [
+                        {
+                            "id": post.id,
+                            "url": post.url,
+                            "published_at": post.published_at,
+                            "already_stored": post.id in known,
+                        }
+                        for post in result.posts
+                    ],
+                    "coverage_verified": False,
+                    "evidence_modified": False,
+                    "meaning": "Alternate X endpoint sample, not an independent feed or exhaustive coverage proof",
+                }
+            )
+            return 0 if result.status == "ok" else 2
         accounts = config.state_dir / "accounts.sqlite"
         if not accounts.exists():
             raise ValueError("no X session configured; run the auth command in a local terminal first")
         with (
             writer_lock(config.state_dir),
             closing(Store(database)) as store,
-            closing(XCollector(accounts, page_size=config.page_size, max_pages=config.max_pages)) as collector,
+            closing(
+                XCollector(
+                    accounts,
+                    page_size=config.page_size,
+                    max_pages=config.max_pages,
+                    timeout_seconds=config.timeout_seconds - 0.25,
+                )
+            ) as collector,
         ):
             healthy = asyncio.run(Runner(config, store, collector, output, diagnostic).run(once=args.once))
         return 0 if healthy else 2
