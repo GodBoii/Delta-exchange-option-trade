@@ -210,7 +210,7 @@ class XCollector:
             if any(account.active for account in accounts):
                 locks = [lock.timestamp() for account in accounts if account.active for lock in account.locks.values()]
                 self.not_before = max(
-                    self.not_before, min((lock for lock in locks if lock > time.time()), default=time.time() + 30)
+                    self.not_before, min((lock for lock in locks if lock > time.time()), default=time.time() + 30) + 1
                 )
                 return self._result(posts, details, "rate_limited")
             return self._result(posts, details, "authentication_required")
