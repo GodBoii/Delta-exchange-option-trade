@@ -62,6 +62,9 @@ The Docker five-second timeout is unchanged so the implementation must become
 cheaper rather than receive a looser timeout.
 The probe reads only its required TOML fields and avoids importing configuration
 dataclasses, the collector, the event loop and the HTTP client dependency tree.
+The image precompiles Python bytecode at build time. The slim base had no cached
+bytecode for the probe's JSON, TOML and regular-expression modules; a read-only
+container otherwise recompiles these modules on every probe.
 
 Both services retain restart policy `no`. This preserves intentional access stops;
 automatic recovery after a host reboot is not part of this research update.
