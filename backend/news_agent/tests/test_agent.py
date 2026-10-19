@@ -12,7 +12,7 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
     settings = NewsAgentSettings.load()
     agent = create_news_agent(require_api_key=False, db=db)
 
-    assert agent.model.id == "deepseek/deepseek-v4.1-flash-1017"
+    assert agent.model.id == "xiaomi/mimo-v2.6-pro"
     assert settings.automation_model_id == "deepseek/deepseek-v4.1-flash-1017"
     assert agent.model.reasoning_effort == "max"
     assert agent.model.get_request_params()["reasoning_effort"] == "max"
