@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -114,9 +116,42 @@ class HealthReportingTests(unittest.TestCase):
     def test_probe_imports_no_network_clients_or_event_loop_and_hides_io_paths(self):
         command = (
             "import social_monitor.health,sys;assert 'asyncio' not in sys.modules;"
-            "assert 'urllib.request' not in sys.modules"
+            "assert 'urllib.request' not in sys.modules;assert 'dataclasses' not in sys.modules"
         )
         subprocess.run([sys.executable, "-c", command], check=True, capture_output=True)
         with redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main([str(self.root / "secret-path"), "collector"]), 2)
         self.assertNotIn("secret-path", output.getvalue())
+
+    @unittest.skipUnless(os.name == "posix", "Windows terminate does not deliver POSIX SIGTERM")
+    def test_module_sigterm_unwinds_async_cleanup(self):
+        script = """
+import asyncio,runpy
+from social_monitor import cli
+async def work():
+    try:
+        print("ready",flush=True)
+        await asyncio.sleep(60)
+    finally:
+        print("cleanup",flush=True)
+def main():
+    try:
+        asyncio.run(work())
+    except KeyboardInterrupt:
+        return 130
+cli.main=main
+runpy.run_module("social_monitor",run_name="__main__")
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        try:
+            self.assertEqual(process.stdout.readline().strip(), "ready")
+            process.send_signal(signal.SIGTERM)
+            output, errors = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 130, errors)
+            self.assertIn("cleanup", output)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
