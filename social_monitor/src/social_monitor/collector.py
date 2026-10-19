@@ -65,12 +65,13 @@ def normalize(tweet) -> Post:
 
 
 class XCollector:
-    def __init__(self, accounts_path: Path, *, page_size: int = 20, max_pages: int = 4):
+    def __init__(self, accounts_path: Path, *, page_size: int = 20, max_pages: int = 4, timeout_seconds: float = 14):
         self.api = create_api(accounts_path)
         self.user_ids: dict[str, int] = {}
         self.warning_codes: set[str] = set()
         self.not_before = 0.0
         self.page_size, self.max_pages = page_size, max_pages
+        self.timeout_seconds = timeout_seconds
         from twscrape.logger import logger
         from twscrape.models import parse_tweets
 
@@ -149,11 +150,17 @@ class XCollector:
         if self.not_before > time.time():
             return self._result(posts, details, "rate_limited")
         try:
+            deadline = asyncio.get_running_loop().time() + self.timeout_seconds
             stream = await self._stream(target)
             if stream is None:
                 return self._result(posts, details, "user_lookup_failed")
             async with aclosing(stream):
-                async for response in stream:
+                while True:
+                    try:
+                        async with asyncio.timeout_at(deadline):
+                            response = await anext(stream)
+                    except StopAsyncIteration:
+                        break
                     details["pages"] += 1
                     self._quota(response, details)
                     if response.status_code != 200:
@@ -195,6 +202,9 @@ class XCollector:
                     if self.not_before > time.time():
                         details["stop_reason"] = "quota_reserve"
                         break
+        except TimeoutError:
+            # Keep pages already parsed when a later page stalls. Cancellation still propagates.
+            return self._result(posts, details, "TimeoutError")
         except NoAccountError:
             accounts = await self.api.pool.get_all()
             if any(account.active for account in accounts):
