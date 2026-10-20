@@ -24,6 +24,9 @@ class RelevanceTests(unittest.TestCase):
             "Perps and tokenized stocks fix this",
             "Circle's USDC is an e-money token under MiCA",
             "SOL and BONK trading on Binance",
+            "A flash loan exploit drained liquidity pools",
+            "Revoke suspicious token approvals; a wallet drainer is active",
+            "SPX6900 community and $SPX",
         ):
             with self.subTest(text=text):
                 self.assertEqual(classify(post(text=text))["relevance"], "crypto")
@@ -35,6 +38,8 @@ class RelevanceTests(unittest.TestCase):
             "@coinbase lovely dinner",
             "bonk the ball",
             "SOL is a nice name",
+            "A phishing email stole my school login",
+            "S&P 500 $SPX rallies on earnings",
         ):
             with self.subTest(text=text):
                 self.assertNotEqual(classify(post(text=text))["relevance"], "crypto")
@@ -42,6 +47,9 @@ class RelevanceTests(unittest.TestCase):
         self.assertEqual(assessment["unresolved_cashtags"], ["AGT"])
         self.assertEqual(assessment["assets"], [])
         self.assertEqual(classify(post(text="SOL and BONK trading on Binance"))["assets"], ["BONK", "SOL"])
+        meme = classify(post(text="SPX6900 community and $SPX"))
+        self.assertEqual(meme["unresolved_cashtags"], ["SPX"])
+        self.assertEqual(meme["assets"], [])
 
     def test_relevance_does_not_infer_direction_or_contract_identity(self):
         for text in (
@@ -76,8 +84,19 @@ class RelevanceTests(unittest.TestCase):
     def test_crypto_roster_and_backward_compatible_config(self):
         config = load_config(Path(__file__).resolve().parents[1] / "config.crypto.toml")
         self.assertTrue(config.crypto_only)
-        self.assertEqual(len(config.targets), 12)
+        self.assertEqual(len(config.targets), 24)
         self.assertNotIn("elonmusk", {t.value for t in config.targets})
+        new_targets = [target for target in config.targets if target.expected_author_id]
+        self.assertEqual(len(new_targets), 12)
+        self.assertTrue(all(target.include_replies for target in config.targets))
+        self.assertEqual(len({target.expected_author_id for target in new_targets}), 12)
+        requests_per_window = sum(900 / config.interval(target) for target in config.targets)
+        reconciliation_overhead = len(config.targets) * (config.max_pages - 1) * 900 / config.reconcile_seconds
+        self.assertLessEqual(requests_per_window + reconciliation_overhead, 200)
+        self.assertEqual(
+            {target.name for target in config.targets if config.interval(target) == 60},
+            {"cz", "vitalik", "lookonchain", "wu"},
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
             path.write_text("", encoding="utf-8")
@@ -85,6 +104,13 @@ class RelevanceTests(unittest.TestCase):
             path.write_text('crypto_only = "yes"', encoding="utf-8")
             with self.assertRaises(ValueError):
                 load_config(path)
+            for value in ('"not-numeric"', "123", "true", '""'):
+                path.write_text(
+                    f'[[targets]]\nname="one"\nkind="user"\nvalue="example"\nexpected_author_id={value}\n',
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    load_config(path)
 
 
 class RelevancePipelineTests(unittest.IsolatedAsyncioTestCase):
