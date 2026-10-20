@@ -83,7 +83,8 @@ def test_message_survives_missing_definition():
     assert message.body == "Open the app for details"
 
 
-def test_generated_vapid_key_encrypts_a_real_payload():
+def test_generated_vapid_key_encrypts_a_real_payload(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     output = subprocess.run(
         [sys.executable, "scripts/generate_vapid_keys.py"], cwd=BACKEND, capture_output=True, text=True, check=True
     ).stdout
