@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronDown, Copy, KeyRound, Layers3, RefreshCw } from "@/app/components/icons";
-import { EmptyState, InlineMessage, SectionHeading, TableSkeleton } from "@/app/components/ui";
+import { EmptyState, Field, InlineMessage, SectionHeading, Select, TableSkeleton } from "@/app/components/ui";
 import { requestJson, type ApiRequester } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import {
@@ -67,11 +67,13 @@ export function ProfileExchangeAccounts({
 }
 
 /** Uses the installed accordion recipe. Closed controls leave the tab order. */
-function Disclosure({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+function Disclosure({ title, hint, children, className = "", defaultOpen = false }: {
+  title: string; hint?: string; children: ReactNode; className?: string; defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   return (
-    <section className="subaccount-disclosure t-acc" data-open={open}>
+    <section className={`subaccount-disclosure t-acc ${className}`.trim()} data-open={open}>
       <h3>
         <button type="button" className="t-acc-head" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
           <span>{title}{hint && <small>{hint}</small>}</span>
@@ -438,7 +440,6 @@ function ManagementForm({
 }) {
   const [selected, setSelected] = useState(data.settings.mode);
   const [autoFund, setAutoFund] = useState(data.settings.autoFund);
-  const id = useId();
   useEffect(() => {
     setSelected(data.settings.mode);
     setAutoFund(data.settings.autoFund);
@@ -451,17 +452,17 @@ function ManagementForm({
         void save(selected, autoFund);
       }}
     >
-      <label htmlFor={`${id}-mode`}>New strategy entries</label>
-      <select
-        id={`${id}-mode`}
+      <Select
+        label="New strategy entries"
         value={selected}
         disabled={busy}
-        onChange={(event) => setSelected(mode(event.target.value))}
-      >
-        <option value="main">Use main account</option>
-        <option value="automatic">Assign subaccounts automatically</option>
-        <option value="manual">Assign each run manually</option>
-      </select>
+        onChange={value => setSelected(mode(value))}
+        options={[
+          { value: "main", label: "Use main account" },
+          { value: "automatic", label: "Assign subaccounts automatically" },
+          { value: "manual", label: "Assign each run manually" },
+        ]}
+      />
       <label className="profile-checkbox">
         <input
           type="checkbox"
@@ -599,26 +600,24 @@ function SubaccountCard({
             <span>Available<strong>{snapshot ? usd(snapshot.available) : "—"}</strong></span>
             <span>Recorded realized P&L<strong>{snapshot && snapshot.realizedPnl !== null ? usd(snapshot.realizedPnl) : "—"}</strong></span>
           </div>}
-          <label htmlFor={`${id}-participation`}>Participation</label>
-          <select
-            id={`${id}-participation`}
+          <Select
+            label="Participation"
             value={account.participation}
             disabled={busy || !account.connected || !account.present}
-            onChange={(event) => {
+            onChange={value => {
               void mutation(
                 `${BASE}/${account.id}/participation`,
                 "PUT",
-                { participation: participation(event.target.value) },
+                { participation: participation(value) },
                 "Subaccount participation saved.",
               );
             }}
-          >
-            <option value="disabled">Disabled for new entries</option>
-            <option value="manual">Manual assignment only</option>
-            <option value="automatic">
-              Available for automatic assignment
-            </option>
-          </select>
+            options={[
+              { value: "disabled", label: "Disabled for new entries" },
+              { value: "manual", label: "Manual assignment only" },
+              { value: "automatic", label: "Available for automatic assignment" },
+            ]}
+          />
           {account.busy && (
             <p>
               Assigned to {account.strategyName ?? "an existing run"}
@@ -745,8 +744,7 @@ function SubaccountCard({
                 </div>
               )}
               {!account.busy && (
-                <details className="profile-assignment">
-                  <summary>Assign a run</summary>
+                <Disclosure className="profile-assignment" title="Assign a run">
                   <div className="stack">
                   <button
                     type="button"
@@ -758,20 +756,17 @@ function SubaccountCard({
                   >
                     Load unassigned runs
                   </button>
-                  <label htmlFor={`${id}-run`}>Run to assign</label>
-                  <select
-                    id={`${id}-run`}
+                  <Select
+                    label="Run to assign"
                     value={strategy}
-                    onChange={(event) => setStrategy(event.target.value)}
-                    disabled={busy}
-                  >
-                    <option value="">Select a draft or scheduled run</option>
-                    {pending.map((run) => (
-                      <option value={run.id} key={run.id}>
-                        {run.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setStrategy}
+                    disabled={busy || pending.length === 0}
+                    hint={pending.length === 0 ? "Load unassigned runs to check for available drafts and scheduled runs." : undefined}
+                    options={[
+                      { value: "", label: "Select a draft or scheduled run", disabled: true },
+                      ...pending.map(run => ({ value: run.id, label: run.name })),
+                    ]}
+                  />
                   <button
                     className="button secondary"
                     type="button"
@@ -791,38 +786,37 @@ function SubaccountCard({
                   </button>
                   <small className="muted">Assignment is permanent. Cancel the run to choose a different account.</small>
                   </div>
-                </details>
+                </Disclosure>
               )}
             </>
           )}
-          <details className="profile-key-form" open={!account.connected ? true : undefined}>
-            <summary>
-              {account.connected ? "Replace API key" : "Connect API key"}
-            </summary>
-            <form onSubmit={connect} className="stack">
-              <label htmlFor={`${id}-key`}>API key</label>
-              <input
-                id={`${id}-key`}
-                autoComplete="off"
-                value={key}
-                minLength={16}
-                maxLength={128}
-                required
-                disabled={busy || !account.present}
-                onChange={(event) => setKey(event.target.value)}
-              />
-              <label htmlFor={`${id}-secret`}>API secret</label>
-              <input
-                id={`${id}-secret`}
-                type="password"
-                autoComplete="new-password"
-                value={secret}
-                minLength={24}
-                maxLength={256}
-                required
-                disabled={busy || !account.present}
-                onChange={(event) => setSecret(event.target.value)}
-              />
+          <Disclosure className="profile-key-form" title={account.connected ? "Replace API key" : "Connect API key"} defaultOpen={!account.connected}>
+            <form onSubmit={connect} className="stack profile-credentials">
+              <Field label="API key">
+                <input
+                  id={`${id}-key`}
+                  autoComplete="off"
+                  value={key}
+                  minLength={16}
+                  maxLength={128}
+                  required
+                  disabled={busy || !account.present}
+                  onChange={(event) => setKey(event.target.value)}
+                />
+              </Field>
+              <Field label="API secret">
+                <input
+                  id={`${id}-secret`}
+                  type="password"
+                  autoComplete="new-password"
+                  value={secret}
+                  minLength={24}
+                  maxLength={256}
+                  required
+                  disabled={busy || !account.present}
+                  onChange={(event) => setSecret(event.target.value)}
+                />
+              </Field>
               <button
                 type="submit"
                 className="button secondary"
@@ -857,7 +851,7 @@ function SubaccountCard({
               Remove API key
             </button>
           )}
-          </details>
+          </Disclosure>
         </div>
         </div>
       </div>
@@ -878,7 +872,6 @@ function TransferForm({
   const [target, setTarget] = useState("");
   const [amount, setAmount] = useState("");
   const requestId = useRef<string | null>(null);
-  const id = useId();
   const accounts = [
     data.mainAccount,
     ...data.accounts.filter(
@@ -914,55 +907,44 @@ function TransferForm({
           void submit(event);
         }}
       >
-        <label htmlFor={`${id}-source`}>From</label>
-        <select
-          id={`${id}-source`}
+        <Select
+          label="From"
           value={source}
           disabled={busy}
-          onChange={(event) => {
-            setSource(event.target.value);
+          onChange={value => {
+            setSource(value);
+            if (value === target) setTarget("");
             changed();
           }}
-        >
-          {accounts.map((account) => (
-            <option value={account.id} key={account.id}>
-              {account.name} · {account.id}
-            </option>
-          ))}
-        </select>
-        <label htmlFor={`${id}-target`}>To</label>
-        <select
-          id={`${id}-target`}
-          value={target}
-          required
-          disabled={busy}
-          onChange={(event) => {
-            setTarget(event.target.value);
-            changed();
-          }}
-        >
-          <option value="">Select account</option>
-          {accounts
-            .filter((account) => account.id !== source)
-            .map((account) => (
-              <option value={account.id} key={account.id}>
-                {account.name} · {account.id}
-              </option>
-            ))}
-        </select>
-        <label htmlFor={`${id}-amount`}>Amount in USD</label>
-        <input
-          id={`${id}-amount`}
-          inputMode="decimal"
-          value={amount}
-          required
-          placeholder="0.00"
-          disabled={busy}
-          onChange={(event) => {
-            setAmount(event.target.value);
-            changed();
-          }}
+          options={accounts.map(account => ({ value: account.id, label: account.name, hint: `Account ${account.id}` }))}
         />
+        <Select
+          label="To"
+          value={target}
+          disabled={busy}
+          onChange={value => {
+            setTarget(value);
+            changed();
+          }}
+          options={[
+            { value: "", label: "Select account", disabled: true },
+            ...accounts.filter(account => account.id !== source)
+              .map(account => ({ value: account.id, label: account.name, hint: `Account ${account.id}` })),
+          ]}
+        />
+        <Field label="Amount in USD" className="field-number">
+          <input
+            inputMode="decimal"
+            value={amount}
+            required
+            placeholder="0.00"
+            disabled={busy}
+            onChange={(event) => {
+              setAmount(event.target.value);
+              changed();
+            }}
+          />
+        </Field>
         <small className="muted">
           The source must have no positions, orders or reserved run. Uncertain
           transfers block further funding until reconciled.
