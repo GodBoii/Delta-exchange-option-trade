@@ -1,0 +1,11 @@
+# Live access remains disabled until Reddit approves this exact use and route.
+access = "offline"
+approval_reference = ""
+state_dir = "state/offline"
+subreddits = ["CryptoCurrency", "dogecoin", "solana", "CryptoMoonShots"]
+page_limit = 4
+page_size = 50
+poll_seconds = 120
+request_spacing_seconds = 2
+retention_hours = 48
+user_agent = "windows:reddit-monitor:v0.1 (by /u/REPLACE_WITH_YOUR_USERNAME)"
