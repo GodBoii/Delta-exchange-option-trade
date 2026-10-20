@@ -85,23 +85,11 @@ async def test_symmetric_tokens_fall_back_to_the_user_endpoint():
     assert calls == ["/auth/v1/user"]
 
 
-async def test_profiles_are_cached_and_stale_copies_cover_outages():
-    responses = [httpx.Response(200, json=[{"user_type": "owner"}]), httpx.Response(503)]
-    calls = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.url.params["id"])
-        return responses.pop(0)
+async def test_profiles_use_local_authority_without_remote_ttl():
+    from unittest.mock import AsyncMock
 
     db = Database.__new__(Database)
-    db.settings = SimpleNamespace(supabase_url=URL, auth_profile_cache_seconds=60)
-    db.admin_headers = {}
-    db.profile_cache = __import__("collections").OrderedDict()
-    db.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    db.profiles = SimpleNamespace(ensure=AsyncMock(return_value={"user_type": "owner"}))
     assert await db.profile("user-1") == {"user_type": "owner"}
-    assert await db.profile("user-1") == {"user_type": "owner"}
-    assert calls == ["eq.user-1"]
-    db.settings.auth_profile_cache_seconds = 0
-    assert await db.profile("user-1") == {"user_type": "owner"}
-    assert calls == ["eq.user-1", "eq.user-1"]
-    await db.client.aclose()
+    assert await db.profile("user-1", max_age=10) == {"user_type": "owner"}
+    assert db.profiles.ensure.await_count == 2
