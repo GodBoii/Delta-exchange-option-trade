@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from psycopg_pool import AsyncConnectionPool
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from scripts.database_roles import ensure_roles
 from scripts.init_local_db import apply_migrations
@@ -23,7 +23,6 @@ from .account_api import router as account_router
 from .auth import (
     create_connection,
     current_account,
-    delta_client_for_user,
     optional_user,
     remove_connection,
     require_user,
@@ -55,6 +54,7 @@ from .reporting_api import router as reporting_router
 from .retained_logs import configure_retained_logs
 from .server_ip import ServerIp
 from .strategy import delta_expiry
+from .strategy_cursor import encode_strategy_cursor
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -78,6 +78,7 @@ async def lifespan(app: FastAPI):
     if instance_lock is not None:
         instance_lock.acquire()
     db = Database(settings, pool)
+    db.profiles.start()
     change_feed = ChangeFeed(settings.database_url)
     change_feed.start()
     engine_settings = (
@@ -352,6 +353,9 @@ async def health(request: Request) -> dict[str, Any]:
         "role": "writer" if settings.trading_writer_enabled else "reader",
         "scheduler": scheduler.status(),
         "automationScheduler": request.app.state.automation_scheduler.status(),
+        "recovery": await request.app.state.engine.recovery.status()
+        if request.app.state.engine.recovery is not None else {},
+        "profileSync": await request.app.state.db.profiles.status(),
         "database": {
             "poolSize": stats.get("pool_size", 0),
             "poolAvailable": stats.get("pool_available", 0),
@@ -390,6 +394,19 @@ async def session(request: Request, user: OptionalUser) -> dict[str, Any]:
     }
 
 
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, max_length=100)
+    avatar_url: str | None = Field(default=None, max_length=2048)
+    phone_number: str | None = Field(default=None, max_length=32)
+
+
+@app.put("/api/profile")
+async def update_profile(request: Request, body: ProfileUpdate, user: RequiredUser) -> dict[str, Any]:
+    row = await request.app.state.db.profiles.save(str(user["id"]), body.model_dump(exclude_unset=True))
+    return {"success": True, "result": row}
+
+
 @app.post("/api/session/connect")
 async def connect_delta(request: Request, body: ConnectRequest, user: RequiredUser) -> dict[str, Any]:
     result = await create_connection(request.app.state.db, settings, str(user["id"]), body.apiKey, body.apiSecret)
@@ -405,28 +422,27 @@ async def disconnect_delta(request: Request, user: RequiredUser) -> dict[str, bo
 
 
 @app.get("/api/account/overview")
-async def account_overview(request: Request, user: RequiredUser) -> dict[str, Any]:
+async def account_overview(
+    request: Request, user: RequiredUser, includeExchange: bool = True
+) -> dict[str, Any]:
     db: Database = request.app.state.db
     account = await current_account(db, user, required=True)
-    client = await delta_client_for_user(db, settings, str(user["id"]))
-    try:
-        balances, orders, positions, risk_strategies = await asyncio.gather(
-            client.balances(),
-            client.open_orders(),
-            client.positions(),
-            db.select(
-                "strategies",
-                {
-                    "select": "id,name,status,risk_state,risk_monitor_at,combined_stop_triggered_at",
-                    "user_id": f"eq.{user['id']}",
-                    "status": "in.(active,executing_exit,attention)",
-                    "order": "updated_at.desc",
-                    "limit": "12",
-                },
-            ),
-        )
-    finally:
-        await client.close()
+    risk_query = {
+        "select": "id,name,status,risk_state,risk_monitor_at,combined_stop_triggered_at",
+        "user_id": f"eq.{user['id']}", "status": "in.(active,executing_exit,attention)",
+        "order": "updated_at.desc", "limit": "12",
+    }
+    if includeExchange:
+        client = await request.app.state.engine.client_for_user(str(user["id"]))
+        try:
+            balances, orders, positions, risk_strategies = await asyncio.gather(
+                client.balances(), client.all_open_orders(), client.positions(), db.select("strategies", risk_query)
+            )
+        finally:
+            await client.close()
+    else:
+        risk_strategies = await db.select("strategies", risk_query)
+        balances, orders, positions = {"result": []}, {"result": []}, {"result": []}
     return {
         "success": True,
         "account": {
@@ -434,10 +450,8 @@ async def account_overview(request: Request, user: RequiredUser) -> dict[str, An
             "name": account["account_name"],
             "environment": "production",
         },
-        "balances": balances["result"],
-        "balanceMeta": balances.get("meta", {}),
-        "orders": orders["result"],
-        "positions": positions["result"],
+        **({"balances": balances["result"], "balanceMeta": balances.get("meta", {}),
+            "orders": orders["result"], "positions": positions["result"]} if includeExchange else {}),
         "riskStrategies": [
             {
                 "id": item["id"],
@@ -573,7 +587,7 @@ async def cancel_order(
     accountId: str | None = Query(default=None, pattern=r"^\d{1,30}$"),
 ) -> dict[str, Any]:
     client = (await request.app.state.engine.client_for_user(str(user["id"]), exchange_account_id=accountId)
-              if accountId else await delta_client_for_user(request.app.state.db, settings, str(user["id"])))
+              if accountId else await request.app.state.engine.client_for_user(str(user["id"])))
     try:
         return await client.cancel_order(order_id, body.productId)
     finally:
@@ -592,7 +606,11 @@ async def close_position(
 
 
 @app.get("/api/strategies")
-async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any]:
+async def list_strategies(
+    request: Request, user: RequiredUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    before: Annotated[str | None, Query(max_length=512)] = None,
+) -> dict[str, Any]:
     account = await current_account(request.app.state.db, user, required=True)
     rows = await request.app.state.db.select(
         "strategies",
@@ -602,12 +620,18 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "entry_outcome,exchange_account_id,exchange_account_name"
             ),
             "user_id": f"eq.{account['id']}",
-            "order": "created_at.desc",
-            "limit": "100",
+            "order": "created_at.desc,id.desc",
+            "limit": str(limit + 1),
+            **({"cursor": before} if before else {}),
         },
     )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    recovery_required = await request.app.state.engine.recovery.required_ids([row["id"] for row in rows])
     return {
         "success": True,
+        "nextCursor": encode_strategy_cursor(rows[-1]) if has_more else None,
+        "recoverySupported": True,
         "result": [
             {
                 "id": row["id"],
@@ -621,12 +645,47 @@ async def list_strategies(request: Request, user: RequiredUser) -> dict[str, Any
                 "entryOutcome": row.get("entry_outcome"),
                 "exchangeAccountId": row.get("exchange_account_id"),
                 "exchangeAccountName": row.get("exchange_account_name"),
+                "recoveryRequired": row["id"] in recovery_required,
                 "exposureStatus": (row.get("risk_state") or {}).get("exposureStatus"),
                 "createdAt": row["created_at"],
             }
             for row in rows
         ],
     }
+
+
+@app.get("/api/strategies/counts")
+async def strategy_counts(request: Request, user: RequiredUser) -> dict[str, Any]:
+    async with request.app.state.db.pool.connection() as connection:
+        result = await connection.execute(
+            "select count(*) from trade.strategies where owner_id=%s and status='attention'", (str(user["id"]),)
+        )
+        return {"success": True, "attention": (await result.fetchone())[0]}
+
+
+class ResumeRecovery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: Literal[True]
+
+
+@app.post("/api/strategies/{strategy_id}/recovery")
+async def resume_recovery(
+    request: Request, strategy_id: str, body: ResumeRecovery, user: RequiredUser
+) -> dict[str, Any]:
+    db = request.app.state.db
+    rows = await db.select("strategies", {"id": f"eq.{strategy_id}", "user_id": f"eq.{user['id']}", "limit": "1"})
+    if not rows:
+        raise AppError(404, "Strategy not found", "strategy_not_found")
+    required = await request.app.state.engine.recovery.required_ids([strategy_id])
+    terminal_release = rows[0]["status"] in {"completed", "cancelled", "skipped"} and strategy_id in required
+    if ((rows[0]["status"] not in {"attention", "scheduled"} and not terminal_release)
+            or strategy_id in request.app.state.engine.running_operations):
+        raise AppError(409, "Recovery cannot resume during a running or terminal operation", "recovery_not_resumable")
+    await request.app.state.engine.recovery.clear(strategy_id)
+    state = rows[0].get("risk_state") or {}
+    await db.update("strategies", {"risk_state": {**state, "recoveryStatus": "pending"}}, {"id": f"eq.{strategy_id}"})
+    request.app.state.engine.wake.set()
+    return {"success": True}
 
 
 @app.get("/api/strategies/{strategy_id}")
@@ -671,7 +730,7 @@ async def resolve_saved_schedule(
     if not saved or saved[0]["version"] != body.expectedVersion:
         raise AppError(409, "Saved strategy version changed", "saved_strategy_changed")
     template = saved[0]["definition_json"]
-    client = await delta_client_for_user(request.app.state.db, settings, user_id)
+    client = await request.app.state.engine.client_for_user(user_id)
     try:
         options = await fetch_option_catalog(client, template["instrument"]["underlying"])
     finally:
@@ -714,7 +773,7 @@ async def schedule_with_exit_choice(
 @app.post("/api/strategies/preview")
 async def preview_strategy(request: Request, body: StrategyDefinition, user: RequiredUser) -> dict[str, Any]:
     await current_account(request.app.state.db, user, required=True)
-    client = await delta_client_for_user(request.app.state.db, settings, str(user["id"]))
+    client = await request.app.state.engine.client_for_user(str(user["id"]))
     try:
         result = await request.app.state.engine.preview_strategy(client, body)
     finally:
