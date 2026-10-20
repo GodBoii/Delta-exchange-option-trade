@@ -1,3 +1,4 @@
+import time
 from typing import cast
 
 import pytest
@@ -71,8 +72,9 @@ def test_exposes_synchronized_depth_and_recent_aggressor_trades() -> None:
     market_feed.book_update_id = 44
     market_feed.bids = {64_800.0: 1.5}
     market_feed.asks = {64_801.0: 2.5}
-    market_feed._handle_trade({"t": 7, "p": "64800.5", "q": "0.25", "T": 1_000, "m": False})
-    market_feed._handle_trade({"t": 8, "p": "64800.0", "q": "0.10", "T": 1_001, "m": True})
+    now = int(time.time() * 1000)
+    market_feed._handle_trade({"t": 7, "p": "64800.5", "q": "0.25", "T": now - 1, "m": False})
+    market_feed._handle_trade({"t": 8, "p": "64800.0", "q": "0.10", "T": now, "m": True})
 
     snapshot = market_feed.snapshot()
 
@@ -85,3 +87,30 @@ def test_exposes_synchronized_depth_and_recent_aggressor_trades() -> None:
     assert snapshot["recentTrades"][0]["side"] == "sell"
     assert snapshot["recentTrades"][1]["side"] == "buy"
     assert snapshot["analysis"]["cvd"]["baseVolume"] == pytest.approx(0.15)
+
+
+def test_cvd_expires_against_wall_clock_without_another_trade(monkeypatch) -> None:
+    market_feed = feed()
+    monkeypatch.setattr("app.feed.time.time", lambda: 2000)
+    market_feed._handle_trade({"t": 1, "p": "100", "q": "2.5", "T": 1_099_000, "m": False})
+    assert market_feed.snapshot()["analysis"]["cvd"]["baseVolume"] == 0
+    assert not market_feed.trade_deltas
+
+
+def test_cvd_combines_same_millisecond_and_keeps_incremental_total(monkeypatch) -> None:
+    market_feed = feed()
+    monkeypatch.setattr("app.feed.time.time", lambda: 2000)
+    market_feed._handle_trade({"t": 1, "p": "100", "q": "2", "T": 2_000_000, "m": False})
+    market_feed._handle_trade({"t": 2, "p": "100", "q": "0.5", "T": 2_000_000, "m": True})
+    assert len(market_feed.trade_deltas) == 1
+    assert market_feed.snapshot()["analysis"]["cvd"]["baseVolume"] == pytest.approx(1.5)
+
+
+def test_top_levels_match_full_sort_without_discarding_deeper_levels() -> None:
+    market_feed = feed()
+    market_feed.bids = {float(x): float(x + 1) for x in range(5000)}
+    market_feed.asks = {float(x): float(x + 2) for x in range(5000, 10000)}
+    expected = ([[p, q] for p, q in sorted(market_feed.bids.items(), reverse=True)[:50]],
+                [[p, q] for p, q in sorted(market_feed.asks.items())[:50]])
+    assert market_feed.book_levels(50) == expected
+    assert len(market_feed.bids) == len(market_feed.asks) == 5000
