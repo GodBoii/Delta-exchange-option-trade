@@ -1,4 +1,5 @@
 import asyncio
+import heapq
 import json
 import logging
 import time
@@ -53,12 +54,13 @@ class BinanceSpotFeed:
         self.known_bid_floor: float | None = None
         self.known_ask_ceiling: float | None = None
         self.trade_deltas: deque[tuple[int, float]] = deque()
+        self._cvd_total = 0.0
         self.recent_trades: deque[dict[str, Any]] = deque(maxlen=60)
         self.delta = delta
         self.delta_context: dict[str, Any] = {}
         self.delta_context_error: str | None = None
         self._delta_history_at = 0.0
-        self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self._subscribers: set[asyncio.Queue[str]] = set()
         self._dirty = asyncio.Event()
         self._stopping = asyncio.Event()
         self._runner: asyncio.Task[None] | None = None
@@ -359,7 +361,12 @@ class BinanceSpotFeed:
             stats["trades"] += 1
             stats["lastTradeAt"] = trade_time
             self._flow_trade_id = trade_id
-        self.trade_deltas.append((trade_time, signed_quantity))
+        if self.trade_deltas and self.trade_deltas[-1][0] == trade_time:
+            instant, delta = self.trade_deltas.pop()
+            self.trade_deltas.append((instant, delta + signed_quantity))
+        else:
+            self.trade_deltas.append((trade_time, signed_quantity))
+        self._cvd_total += signed_quantity
         self.recent_trades.appendleft(
             {
                 "id": int(data.get("t") or 0),
@@ -388,26 +395,29 @@ class BinanceSpotFeed:
     def _prune_trades(self, now_ms: int) -> None:
         cutoff = now_ms - self.settings.cvd_window_seconds * 1000
         while self.trade_deltas and self.trade_deltas[0][0] < cutoff:
-            self.trade_deltas.popleft()
+            _, delta = self.trade_deltas.popleft()
+            self._cvd_total -= delta
+        if not self.trade_deltas:
+            self._cvd_total = 0.0
 
     async def _publish_forever(self) -> None:
         while not self._stopping.is_set():
             await self._dirty.wait()
             await asyncio.sleep(self.settings.market_broadcast_seconds)
             self._dirty.clear()
-            payload = self.snapshot()
+            payload = json.dumps(self.snapshot(), separators=(",", ":"))
             for subscriber in tuple(self._subscribers):
                 if subscriber.full():
                     with suppress(asyncio.QueueEmpty):
                         subscriber.get_nowait()
                 subscriber.put_nowait(payload)
 
-    def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=2)
+    def subscribe(self) -> asyncio.Queue[str]:
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=2)
         self._subscribers.add(queue)
         return queue
 
-    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+    def unsubscribe(self, queue: asyncio.Queue[str]) -> None:
         self._subscribers.discard(queue)
 
     def snapshot(self) -> dict[str, Any]:
@@ -418,8 +428,10 @@ class BinanceSpotFeed:
             current_1m = self.current_candles.get("1m")
             if current_1m:
                 replace_latest_candle(current_candles, current_1m, 500)
-            cvd = sum(delta for _, delta in self.trade_deltas)
-            self._analysis = calculate_analysis(current_candles, bids, asks, cvd)
+            self._prune_trades(int(time.time() * 1000))
+            self._analysis = calculate_analysis(current_candles, bids, asks, self._cvd_total)
+            seconds = self.settings.cvd_window_seconds
+            self._analysis["cvd"]["window"] = f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s"
             self._analysis["cvd"]["windowSeconds"] = self.settings.cvd_window_seconds
             self._analysis_at = now
         return {
@@ -464,8 +476,8 @@ class BinanceSpotFeed:
         }
 
     def book_levels(self, limit: int) -> tuple[list[list[float]], list[list[float]]]:
-        bids = [[price, quantity] for price, quantity in sorted(self.bids.items(), reverse=True)[:limit]]
-        asks = [[price, quantity] for price, quantity in sorted(self.asks.items())[:limit]]
+        bids = [[price, self.bids[price]] for price in heapq.nlargest(limit, self.bids)]
+        asks = [[price, self.asks[price]] for price in heapq.nsmallest(limit, self.asks)]
         return bids, asks
 
     def order_book_payload(self, limit: int) -> dict[str, Any] | None:
