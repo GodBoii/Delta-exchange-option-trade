@@ -42,6 +42,7 @@ export type StrategyRun = {
   createdAt: string;
   exchangeAccountId?: string | null;
   exchangeAccountName?: string | null;
+  recoveryRequired?: boolean;
 };
 
 /** One order Delta accepted for a run, entry or exit, with its audit trail. */
