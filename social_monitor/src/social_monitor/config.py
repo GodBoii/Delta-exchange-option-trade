@@ -14,6 +14,7 @@ class Target:
     value: str
     include_replies: bool = True
     poll_seconds: float | None = None
+    expected_author_id: str | None = None
 
     @property
     def key(self) -> str:
@@ -66,6 +67,12 @@ def load_config(path: Path) -> Config:
             raise ValueError("list target must have a numeric ID")
         if len(target.value) > 1000 or not isinstance(target.include_replies, bool):
             raise ValueError("invalid target value or include_replies")
+        if target.expected_author_id is not None and (
+            target.kind != "user"
+            or not isinstance(target.expected_author_id, str)
+            or not re.fullmatch(r"[0-9]{1,24}", target.expected_author_id)
+        ):
+            raise ValueError("expected_author_id must be a numeric string on a user target")
         if target.poll_seconds is not None and (
             type(target.poll_seconds) not in {int, float}
             or not math.isfinite(target.poll_seconds)
