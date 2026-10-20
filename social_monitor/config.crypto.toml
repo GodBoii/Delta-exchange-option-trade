@@ -1,9 +1,10 @@
-# Research roster reviewed 2026-10-15. Following on X does not configure collection.
+# Research roster reviewed 2026-10-20. Selection evidence is in ROSTER.md.
 state_dir = "state"
 crypto_only = true
 # Four priority sources use 60 seconds; others retain the original research cadence.
-# About 114 timeline page requests per 15 minutes including bounded reconciliation,
-# before retries and lookups. Observed quota was 500; reset headers remain authoritative.
+# About 198 timeline page requests per 15 minutes including bounded reconciliation,
+# before retries and lookups on the reply-inclusive endpoint. Its observed quota
+# is 500; the original-only endpoint is just 50. Reset headers remain authoritative.
 poll_seconds = 180
 timeout_seconds = 20
 batch_size = 80
@@ -83,3 +84,92 @@ name = "markus"
 kind = "user"
 value = "BillyM2k"
 poll_seconds = 300
+
+# Public forecasters and on-chain analysts. No independently established hit rate.
+[[targets]]
+name = "brandt"
+kind = "user"
+value = "PeterLBrandt"
+poll_seconds = 300
+expected_author_id = "247857712"
+
+[[targets]]
+name = "ki"
+kind = "user"
+value = "ki_young_ju"
+poll_seconds = 300
+expected_author_id = "302505363"
+
+[[targets]]
+name = "checkmate"
+kind = "user"
+value = "_Checkmatey_"
+poll_seconds = 300
+expected_author_id = "951920334831173632"
+
+[[targets]]
+name = "woo"
+kind = "user"
+value = "willywoo"
+poll_seconds = 300
+expected_author_id = "13418472"
+
+# Data providers overlap with their analysts and are not independent confirmations.
+[[targets]]
+name = "glassnode"
+kind = "user"
+value = "glassnode"
+poll_seconds = 300
+expected_author_id = "1022821051187822593"
+
+[[targets]]
+name = "cryptoquant"
+kind = "user"
+value = "cryptoquant_com"
+poll_seconds = 300
+expected_author_id = "1136819035163619328"
+
+# Official exchange announcements. Marketing and listings are not recommendations.
+[[targets]]
+name = "binance"
+kind = "user"
+value = "binance"
+poll_seconds = 120
+expected_author_id = "877807935493033984"
+
+[[targets]]
+name = "coinbase_assets"
+kind = "user"
+value = "CoinbaseAssets"
+poll_seconds = 90
+expected_author_id = "1422537905885442055"
+
+# Security and token-distribution investigations, not directional forecasters.
+[[targets]]
+name = "peckshield"
+kind = "user"
+value = "PeckShieldAlert"
+poll_seconds = 90
+expected_author_id = "1128606567354359808"
+
+[[targets]]
+name = "certik"
+kind = "user"
+value = "CertiKAlert"
+poll_seconds = 90
+expected_author_id = "1494146332528885767"
+
+[[targets]]
+name = "bubblemaps"
+kind = "user"
+value = "bubblemaps"
+poll_seconds = 120
+expected_author_id = "1385312402795859968"
+
+# Meme attention and promotion. Holdings and conflicts must be considered.
+[[targets]]
+name = "murad"
+kind = "user"
+value = "MustStopMurad"
+poll_seconds = 300
+expected_author_id = "844304603336232960"
