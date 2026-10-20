@@ -68,6 +68,10 @@ class Engine:
     def __init__(self, owner_id: str, db: Database) -> None:
         self.owner_id = owner_id
         self.application_data = db.local_data
+        self.subaccounts = None
+
+    async def managed_wallet(self, user_id):
+        return None
 
     async def save_capital_policy(self, user_id, mode, amount, *, actor_id=None, extensions=None):
         # The real engine method, writing through the real local store.
@@ -121,6 +125,8 @@ async def api(monkeypatch):
         db = Database(SETTINGS, pool)  # type: ignore[arg-type]
         await db.client.aclose()
         db.client = httpx.AsyncClient(transport=supabase(profiles, seen))
+        db.profiles.client = db.client
+        await db.profiles.import_rows(profiles)
         await add_account(pool, owner, connected=True, enabled=True)
         await add_account(pool, brother, connected=True, enabled=True)
         current = {"id": owner}
@@ -137,6 +143,10 @@ async def api(monkeypatch):
                                       current=current, seen=seen)
         finally:
             main.app.dependency_overrides.clear()
+            async with pool.connection() as connection:
+                await connection.execute("delete from trade.profiles where id=any(%s)", [
+                    [owner, brother, newcomer]
+                ])
             await db.close()
 
 
@@ -159,14 +169,26 @@ async def test_owner_sees_every_registered_user_including_themself(api):
     assert not any(word in response.text for word in FORBIDDEN)
 
 
-async def test_search_is_sanitized_before_reaching_postgrest(api):
+async def test_search_is_sanitized_and_queries_local_profiles(api):
     response = await api.client.get("/api/owner/users", params={"search": "bro,ther)*"})
     assert response.status_code == 200
     assert [item["id"] for item in response.json()["items"]] == [api.brother]
     assert response.json()["summary"]["registeredUsers"] == 3
     filters = [request.url.params["or"] for request in api.seen if "or" in request.url.params]
-    assert filters == ["(display_name.ilike.*brother*,email.ilike.*brother*)"]
+    assert filters == []  # User-list search no longer sends queries to Supabase.
     assert (await api.client.get("/api/owner/users", params={"limit": 500})).status_code == 400
+
+
+async def test_local_role_changes_are_owner_controlled_and_ordinary_profile_edits_cannot_promote(api):
+    response = await api.client.put("/api/profile", json={"user_type": "owner"})
+    assert response.status_code == 400
+    path = f"/api/owner/users/{api.brother}/role"
+    response = await api.client.put(path, json={"user_type": "owner"})
+    assert response.status_code == 200
+    assert (await api.db.profile(api.brother))["user_type"] == "owner"
+    await api.client.put(path, json={"user_type": "user"})
+    api.current["id"] = api.brother
+    assert (await api.client.put(path, json={"user_type": "owner"})).status_code == 403
 
 
 async def test_ordinary_user_cannot_call_owner_endpoints(api):
