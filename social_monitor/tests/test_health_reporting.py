@@ -44,6 +44,8 @@ class HealthReportingTests(unittest.TestCase):
             self.assertFalse(collection_status(self.config, NOW + timedelta(seconds=196))["healthy"])
             store.complete_poll(self.target.key, later, later, [], {}, "failed", "access_blocked")
             self.assertFalse(collection_status(self.config, later)["healthy"])
+            store.complete_poll(self.target.key, later, later, [], {}, "failed", "account_identity_mismatch")
+            self.assertFalse(collection_status(self.config, later)["healthy"])
 
     def test_future_clock_and_unpolled_target_fail_health(self):
         with closing(Store(self.root / "monitor.sqlite")) as store:
