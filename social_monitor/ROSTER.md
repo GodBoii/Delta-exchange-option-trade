@@ -10,6 +10,8 @@ criteria. None of these additions has an independently established prospective
 hit rate in our dataset. Public reputation and selected successful calls cannot
 establish that most predictions are right. Research collection is the starting
 point for measuring them, not an endorsement.
+Live profile follower counts ranged from approximately 68,000 to 16.1 million.
+Those counts describe potential reach, not average engagement or a prediction score.
 
 | New source | Poll interval | Reason to collect | Limitation |
 |---|---:|---|---|
