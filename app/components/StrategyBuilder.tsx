@@ -1466,21 +1466,23 @@ function RiskControl({ strategy, onChange, invalidFields }: {
     /* Switching trigger swaps a four-cell grid for a three-column one, so the
        panel tweens between the two heights instead of snapping. */
     <div className="risk-control t-resize">
-      <Select
-        label="Risk basis"
-        value={strategy.riskBasis}
-        onChange={value => onChange({ ...strategy, riskBasis: value as StrategyDefinition["riskBasis"] })}
-        options={[
-          { value: "net_debit", label: "Net debit" },
-          { value: "net_credit", label: "Net credit" },
-          { value: "defined_max_loss", label: "Defined maximum loss" }
-        ]}
-      />
-      <Toggle
-        label="Emergency exit enabled"
-        checked={strategy.emergencyExitEnabled}
-        onChange={emergencyExitEnabled => onChange({ ...strategy, emergencyExitEnabled })}
-      />
+      <div className="grid-2">
+        <Select
+          label="Risk basis"
+          value={strategy.riskBasis}
+          onChange={value => onChange({ ...strategy, riskBasis: value as StrategyDefinition["riskBasis"] })}
+          options={[
+            { value: "net_debit", label: "Net debit" },
+            { value: "net_credit", label: "Net credit" },
+            { value: "defined_max_loss", label: "Defined maximum loss" }
+          ]}
+        />
+        <Toggle
+          label="Emergency exit enabled"
+          checked={strategy.emergencyExitEnabled}
+          onChange={emergencyExitEnabled => onChange({ ...strategy, emergencyExitEnabled })}
+        />
+      </div>
       <Segmented
         label="Trigger"
         value={strategy.riskMode}
