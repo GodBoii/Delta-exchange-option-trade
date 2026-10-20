@@ -10,7 +10,7 @@ The standalone monitor was started on 8 October 2026 using the dedicated X accou
 - Compose project: `delta-social-monitor`
 - Container: `delta-social-monitor-monitor-1`
 - State volume: `delta-social-monitor_monitor-state`
-- Active roster: the twelve accounts in `config.crypto.toml`, including replies. Musk and Trump remain only in historical evidence.
+- Active roster: the twenty-four accounts in `config.crypto.toml`, including replies through the higher-quota timeline endpoint. Musk and Trump remain only in historical evidence.
 - Version 0.4 cadence: 60 seconds for CZ, Vitalik, Lookonchain and Wu Blockchain; 180 seconds for six accounts; 300 seconds for Ansem and Billy Markus.
 - Routine reads stop after a page contains three known post IDs. Deeper bounded checks run every 1800 seconds.
 - Limits: 256 MB memory and 0.5 CPU, unprivileged user, read-only root filesystem, no published ports.
