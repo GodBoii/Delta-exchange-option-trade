@@ -17,6 +17,7 @@ from .errors import AppError
 from .local_application_data import DEFAULT_AUTOMATION, LocalApplicationData
 from .local_control import LocalControl
 from .owner_ledger import OwnerLedger, capture_quietly
+from .strategy_cursor import decode_strategy_cursor
 
 TABLES = {
     "strategies": "strategies",
@@ -26,7 +27,7 @@ TABLES = {
     "strategy_proposals": "strategy_proposals",
     "automation_agent_runs": "analysis_jobs",
 }
-OPTIONS = frozenset({"select", "limit", "order", "offset"})
+OPTIONS = frozenset({"select", "limit", "order", "offset", "cursor"})
 TYPED_FIELDS = {
     "id": "id",
     "user_id": "owner_id",
@@ -105,6 +106,16 @@ def _ordering(table: str, params: dict[str, str]) -> sql.Composable:
     if not terms:
         terms = [sql.SQL("created_at asc"), sql.SQL("id asc")]
     return sql.SQL(", ").join(terms)
+
+
+def _projection(columns: str) -> sql.Composable:
+    if columns == "*":
+        return sql.SQL("data")
+    names = columns.split(",")
+    if any(not name.replace("_", "").isalnum() for name in names):
+        raise AppError(500, "Unsupported record projection", "unsupported_record_query")
+    pairs = [sql.SQL("{0}, data -> {0}").format(sql.Literal(name)) for name in names]
+    return sql.SQL("jsonb_build_object({})").format(sql.SQL(", ").join(pairs))
 
 
 def _project(rows: list[dict[str, Any]], columns: str) -> list[dict[str, Any]]:
@@ -213,8 +224,15 @@ class LocalRuntimeStore:
         if table not in TABLES:
             raise AppError(500, "Unknown local record table", "unsupported_record_query")
         where, values = _filters(table, params)
-        query = sql.SQL("select data from {} where {} order by {}").format(
-            sql.Identifier("trade", TABLES[table]), where, _ordering(table, params)
+        if params.get("cursor"):
+            if table != "strategies" or params.get("order") != "created_at.desc,id.desc":
+                raise AppError(422, "Cursor requires chronological strategy ordering", "strategy_cursor_invalid")
+            instant, identifier = decode_strategy_cursor(params["cursor"])
+            where = sql.SQL("({}) and (created_at,id)<(%s,%s)").format(where)
+            values.extend([instant, identifier])
+        projection = _projection("*" if raw else params.get("select", "*"))
+        query = sql.SQL("select {} from {} where {} order by {}").format(
+            projection, sql.Identifier("trade", TABLES[table]), where, _ordering(table, params)
         )
         limit = params.get("limit")
         offset = params.get("offset")
