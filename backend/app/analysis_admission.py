@@ -155,7 +155,8 @@ async def read_snapshot(pool: AsyncConnectionPool, args: dict[str, Any]) -> dict
                 or proposal_key(contender) > proposal_key(assigned)
             ):
                 continue
-        add(row["user_id"], key, instant(row["entry_at"]), instant(row["exit_at"]), strategy_asset(row))
+        add(row["user_id"], key, instant(row.get("entry_at") or now.isoformat()),
+            instant(row.get("exit_at") or end.isoformat()), strategy_asset(row))
     for item in shared:
         row = item["data"]
         if row["id"] in invalid or row.get("allocation_completed_at"):
@@ -167,7 +168,8 @@ async def read_snapshot(pool: AsyncConnectionPool, args: dict[str, Any]) -> dict
                 # An allocated or already funded copy replaces its shared commitment.
                 if (user_id, row["id"]) in funded_decisions:
                     continue
-                add(user_id, row["id"], instant(row["activation_time"]), instant(row["exit_at"]), run_asset(row))
+                add(user_id, row["id"], instant(row["activation_time"]),
+                    instant(row.get("exit_at") or end.isoformat()), run_asset(row))
     if not assigned:
         for row in jobs:
             if row["id"] == request.get("id") or row.get("outcome") or row.get("trigger") == "activation_recheck":
