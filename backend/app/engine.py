@@ -29,10 +29,12 @@ from .delta_events import DeltaEvents, PublicMarkFeeds
 from .entry_outcomes import entry_failure
 from .errors import AppError, DeltaOrderRejected
 from .fill_accounting import PositionResult, exclusive_fill_positions
+from .keyed_locks import KeyedLocks
 from .local_journal import LocalOrderJournal
 from .models import StrategyDefinition
 from .order_journal import OrderJournal
 from .push import PushNotifier, StrategyEvent, strategy_message
+from .recovery import Recovery
 from .run_accounting import run_detail_payload
 from .settlement import (
     decimal_value,
@@ -74,6 +76,11 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
         "manual_lots_exceed_capital_budget",
         "capital_slots_full",
         "capital_reserved",
+        "product_claim_conflict",
+        "contract_already_open",
+        "insufficient_funds",
+        "insufficient_balance",
+        "insufficient_margin",
         "option_chain_empty",
         "spot_price_missing",
         "strike_not_found",
@@ -147,8 +154,8 @@ class TradingEngine:
         self.db = db
         self.settings = settings
         self.notifier = notifier
-        self.contract_values: dict[str, Decimal] = {}
-        self.product_specs: dict[str, dict[str, Any]] = {}
+        self.contract_values: OrderedDict[str, Decimal] = OrderedDict()
+        self.product_specs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.last_attention_reconcile = 0.0
         self.startup_recovered = False
         self.running_operations: set[str] = set()
@@ -162,7 +169,8 @@ class TradingEngine:
         self.account_budgets: dict[str, RequestBudget] = {}
         self.account_groups: dict[str, str] = {}
         self.account_groups_refresh_at = 0.0
-        self.session_lock = asyncio.Lock()
+        self.session_locks = KeyedLocks()
+        self.execution_locks = KeyedLocks()
         self.wake = asyncio.Event()
         self.public_marks = (
             PublicMarkFeeds(self.wake, settings.delta_public_ws_url, settings.delta_private_ws_url)
@@ -173,6 +181,7 @@ class TradingEngine:
         self.risk_errors: dict[str, str] = {}
         self.application_data = getattr(db, "local_data", None)
         self.subaccounts = AccountManager(self) if isinstance(db, Database) else None
+        self.recovery = Recovery(db.pool) if isinstance(db, Database) else None
         self.subaccount_cleanup_task: asyncio.Task[None] | None = None
 
     async def client_for_run(self, row: dict[str, Any]) -> DeltaClient:
@@ -205,7 +214,7 @@ class TradingEngine:
             parent = str((overview.get("connection") or {}).get("delta_user_id") or "")
             if exchange_account_id != parent:
                 session_key = f"{user_id}:{exchange_account_id}"
-        async with self.session_lock:
+        async with self.session_locks.hold(user_id):
             session = self.sessions.get(session_key)
             # Credentials change only through connect/disconnect, which invalidate the cached session.
             credentials = (
@@ -223,9 +232,6 @@ class TradingEngine:
                 await self.close_session(session_key)
                 session = None
             if session is None:
-                for owner, idle in list(self.sessions.items()):
-                    if idle.leases == 0 and idle.watchers == 0 and time.monotonic() - idle.last_used > 300:
-                        await self.close_session(owner)
                 events = (
                     DeltaEvents(
                         credentials["api_key"],
@@ -299,12 +305,27 @@ class TradingEngine:
             await session.events.close()
 
     async def invalidate_credentials(self, user_id: str) -> None:
-        async with self.session_lock:
+        async with self.session_locks.hold(user_id):
             for key in {user_id, *(key for key in self.sessions if key.startswith(f"{user_id}:"))}:
                 self.invalidated_credentials.add(key)
                 session = self.sessions.get(key)
                 if session is not None and session.leases == 0:
                     await self.close_session(key)
+
+    async def cleanup_sessions(self) -> None:
+        now = time.monotonic()
+        for key in list(self.sessions):
+            async with self.session_locks.hold(key.split(":", 1)[0]):
+                session = self.sessions.get(key)
+                if session and not session.leases and not session.watchers and now - session.last_used > 300:
+                    await self.close_session(key)
+        referenced = {id(session.budget) for session in self.sessions.values()}
+        for key, budget in list(self.account_budgets.items()):
+            # Retain the full five-minute rate window even after a client/session is closed.
+            if id(budget) not in referenced and now >= budget.blocked_until and (
+                not budget.used or now - budget.used[-1][0] > 300
+            ):
+                self.account_budgets.pop(key, None)
 
     async def managed_wallet(self, user_id: str) -> tuple[Decimal, Decimal] | None:
         if self.subaccounts is not None and (await self.subaccounts.registry.settings(user_id))["mode"] != "main":
@@ -1107,9 +1128,14 @@ class TradingEngine:
                         {
                             "status": "attention",
                             "last_error": f"Entry preparation interrupted: {error}",
+                            "entry_outcome": {"status": "skipped", **entry_failure(error, iso_now())},
                         },
                         {"id": f"eq.{strategy_id}", "status": "eq.executing_entry"},
                     )
+                    try:
+                        await self.resolve_unsubmitted_run(await self.strategy_by_id(strategy_id), client)
+                    except Exception:
+                        logger.exception("Entry preparation needs recovery strategy_id=%s", strategy_id)
                 if reservation["created"]:
                     await self.release_capital_slot(str(row["user_id"]), strategy_id)
                 raise
@@ -1387,6 +1413,8 @@ class TradingEngine:
             if value <= 0:
                 raise AppError(502, f"Contract value is unavailable for {symbol}", "contract_value_unavailable")
             self.contract_values[symbol] = value
+            while len(self.contract_values) > 4096:
+                self.contract_values.popitem(last=False)
         return self.contract_values[symbol]
 
     async def product_spec(self, client: DeltaClient, symbol: str) -> dict[str, Any]:
@@ -1414,6 +1442,8 @@ class TradingEngine:
                         item_symbol = str(item.get("symbol") or "")
                         if item_symbol:
                             self.product_specs[item_symbol] = item
+                            while len(self.product_specs) > 4096:
+                                self.product_specs.popitem(last=False)
                     if symbol in self.product_specs:
                         return self.product_specs[symbol]
                     next_after = str((response.get("meta") or {}).get("after") or "")
@@ -1423,6 +1453,8 @@ class TradingEngine:
                     after = next_after
                 raise AppError(502, f"Product specification is unavailable for {symbol}", "product_spec_unavailable")
             self.product_specs[symbol] = product
+            while len(self.product_specs) > 4096:
+                self.product_specs.popitem(last=False)
         return self.product_specs[symbol]
 
     async def run_executions(self, strategy_id: str) -> list[dict[str, Any]]:
@@ -1764,6 +1796,46 @@ class TradingEngine:
             "settlement": None,
         }
 
+    async def recovery_failed(self, row: dict[str, Any], error: Exception | str) -> None:
+        if self.recovery is None or not await self.recovery.failed(str(row["id"]), "reconcile", error):
+            return
+        # Escalation changes diagnostics only. It never releases a wallet or assumes flat exposure.
+        current = await self.strategy_by_id(str(row["id"]))
+        state = current.get("risk_state") or {}
+        await self.db.update("strategies", {
+            "last_error": "Automatic recovery paused after five attempts; review the failure and resume recovery",
+            "risk_state": {**state, "recoveryStatus": "manual_review",
+                           "recoveryOriginalError": current.get("last_error")},
+        }, {"id": f"eq.{row['id']}", "status": "eq.attention"})
+        self.notify_strategy(str(row["id"]), "exit_failed", "Automatic recovery exhausted; manual review is required")
+
+    async def observe_recovery_positions(self) -> None:
+        """Keep known open exposure observable after escalation, using existing price streams only."""
+        rows = await self.strategy_pages({"status": "eq.attention", "select": "*"})
+        for row in rows:
+            state = row.get("risk_state") or {}
+            if state.get("exposureStatus") != "open" or state.get("recoveryStatus") != "manual_review":
+                continue
+            last = row.get("risk_monitor_at")
+            if last and (utc_now() - datetime.fromisoformat(str(last).replace("Z", "+00:00"))).total_seconds() < 10:
+                continue
+            account = str(state.get("exchangeAccount") or "").removeprefix("india:")
+            session = next((session for key, session in self.sessions.items()
+                            if key.split(":", 1)[0] == str(row["user_id"])
+                            and session.credentials.get("delta_user_id") == account), None)
+            events = session.events if session is not None else None
+            if session is not None:
+                session.last_used = time.monotonic()
+            orders = await self.entry_orders(str(row["id"]))
+            observation = {"at": iso_now(), "marks": {
+                str(order["product_symbol"]): events.watch_mark(str(order["product_symbol"]), 15)
+                if events is not None and not events.closed else None
+                for order in orders if decimal_value(order.get("filled_size")) > 0
+            }}
+            await self.db.update("strategies", {
+                "risk_state": {**state, "recoveryObservation": observation}, "risk_monitor_at": iso_now(),
+            }, {"id": f"eq.{row['id']}", "status": "eq.attention", "updated_at": f"eq.{row['updated_at']}"})
+
     async def reconcile_attention_runs(
         self,
         user_id: str | None = None,
@@ -1779,6 +1851,8 @@ class TradingEngine:
         rows = await self.strategy_pages(params)
         groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for row in rows:
+            if str(row["id"]) in self.running_operations:
+                continue
             risk_state = row.get("risk_state") or {}
             if not row.get("entry_execution_at") and not risk_state.get("exclusiveFillAccounting"):
                 continue
@@ -1791,6 +1865,8 @@ class TradingEngine:
                     reconciled_at = None
                 if reconciled_at and (utc_now() - reconciled_at).total_seconds() < FLAT_REPORT_RECONCILE_SECONDS:
                     continue
+            if self.recovery is not None and not await self.recovery.claim(str(row["id"]), "reconcile"):
+                continue
             identity = str(row.get("exchange_account_id") or risk_state.get("exchangeAccount") or "")
             groups.setdefault((str(row["user_id"]), identity), []).append(row)
         for (owner, identity), owned_rows in groups.items():
@@ -1801,19 +1877,33 @@ class TradingEngine:
                     == f"india:{identity.removeprefix('india:')}"
                 )
                 owned_client = client if reusable else await self.client_for_run(owned_rows[0])
-                snapshot = await self.account_exposure(owned_client)
+                snapshot = None
                 for row in owned_rows:
                     try:
                         await self.recover_order_records(row, owned_client)
                         if await self.resolve_unsubmitted_run(row, owned_client):
+                            if self.recovery is not None:
+                                await self.recovery.clear(str(row["id"]))
                             continue
+                        if snapshot is None:
+                            snapshot = await self.account_exposure(owned_client)
                         result = await self.reconcile_run_if_flat(row, owned_client, snapshot)
                         state = row.get("risk_state") or {}
                         if result is None and state.get("exclusiveFillAccounting") and state.get("exitRequested"):
                             await self.execute_exit(str(row["id"]))
-                    except Exception:
+                        if self.recovery is not None:
+                            if result is not None:
+                                await self.recovery.clear(str(row["id"]))
+                            else:
+                                await self.recovery_failed(row, "exposure_pending")
+                    except Exception as error:
+                        if self.recovery is not None:
+                            await self.recovery_failed(row, error)
                         logger.exception("Could not reconcile attention strategy %s", row["id"])
-            except Exception:
+            except Exception as error:
+                if self.recovery is not None:
+                    for row in owned_rows:
+                        await self.recovery_failed(row, error)
                 logger.exception("Could not load Delta exposure for user %s", owner)
             finally:
                 if owned_client is not None and owned_client is not client:
@@ -2036,20 +2126,24 @@ class TradingEngine:
         intents = await journal.strategy_intents(str(row["id"]))
         if any(intent["outcome"]["kind"] != "rejected" for intent in intents):
             return False
-        product_ids = {int(value) for value in state.get("plannedProductIds", [])}
-        if not product_ids or has_exchange_exposure(product_ids, await self.account_exposure(client)):
+        # Exclusive journaling commits an intent before dispatch. No accepted/unknown
+        # intent and no accepted recorded order proves THIS run never established exposure.
+        # Another run may legitimately own these same products, including expired ones.
+        orders = await self.run_orders(str(row["id"]))
+        if any(order.get("delta_order_id") or decimal_value(order.get("filled_size")) > 0
+               or order.get("state") == "unknown" for order in orders):
             return False
-        if any(await asyncio.gather(*(self.live_position_size(client, product_id) for product_id in product_ids))):
-            return False
-        await self.db.update(
+        cancelled = await self.db.update(
             "strategies",
             {
                 "status": "cancelled",
-                "last_error": "Entry did not establish exposure",
+                "last_error": row.get("last_error") or "Entry did not establish exposure",
                 "risk_state": {**state, "exposureStatus": "flat", "reconciledAt": iso_now()},
             },
             {"id": f"eq.{row['id']}", "status": "eq.attention"},
         )
+        if not cancelled:
+            return False
         await journal.call("orderIntents:releaseProducts", {"strategyId": str(row["id"])})
         await self.release_capital_slot(str(row["user_id"]), str(row["id"]))
         return True
@@ -2279,6 +2373,8 @@ class TradingEngine:
         )
 
         async def monitor_one(row: dict[str, Any]) -> None:
+            if str(row["id"]) in self.running_operations:
+                return
             try:
                 if await self.monitor_combined_strategy(row):
                     await self.execute_exit(str(row["id"]), preclaimed=True)
@@ -2623,14 +2719,14 @@ class TradingEngine:
             grouped.setdefault(self.account_groups.get(user_id, user_id), []).append(row)
         semaphore = asyncio.Semaphore(getattr(self.settings, "execution_account_concurrency", 8))
 
-        async def execute_account(items: list[dict[str, Any]]) -> None:
-            async with semaphore:
+        async def execute_account(key: str, items: list[dict[str, Any]]) -> None:
+            async with self.execution_locks.hold(key), semaphore:
                 for item in items:
                     await operation(item)
 
-        await asyncio.gather(*(execute_account(items) for items in grouped.values()))
+        await asyncio.gather(*(execute_account(key, items) for key, items in grouped.items()))
 
-    async def process_due_strategies(self) -> None:
+    async def process_due_strategies(self, *, include_risks: bool = True) -> None:
         monotonic_now = time.monotonic()
         if self.public_marks is not None and monotonic_now - self.last_public_mark_prune >= 60:
             await self.public_marks.prune(now=monotonic_now)
@@ -2668,7 +2764,8 @@ class TradingEngine:
                 logger.exception("Scheduled exit failed for strategy %s", row["id"])
 
         await self._dispatch_accounts(due_exits, exit_one)
-        await self.process_active_risks()
+        if include_risks:
+            await self.process_active_risks()
         if reconcile_attention:
             await self.reconcile_attention_runs()
         recheck_states = await self.activation_recheck_states([str(row["id"]) for row in due_entries])
@@ -2700,8 +2797,12 @@ class TradingEngine:
                     previous_outcome=row.get("entry_outcome"),
                 )
                 return
+            if self.recovery is not None and not await self.recovery.claim(str(row["id"]), "entry"):
+                return
             try:
                 await self.execute_entry(str(row["id"]))
+                if self.recovery is not None:
+                    await self.recovery.clear(str(row["id"]), "entry")
             except AppError as error:
                 if error.code in TERMINAL_SCHEDULED_ENTRY_CODES:
                     await self.reject_scheduled_entry(str(row["id"]), error)
@@ -2714,9 +2815,17 @@ class TradingEngine:
                     return
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
                 await self.record_entry_retry(str(row["id"]), error)
+                if self.recovery is not None and await self.recovery.failed(str(row["id"]), "entry", error):
+                    await self.reject_scheduled_entry(str(row["id"]), AppError(
+                        409, "Automatic entry retry limit reached", "entry_retry_exhausted"
+                    ))
             except Exception as error:
                 logger.exception("Scheduled entry failed for strategy %s", row["id"])
                 await self.record_entry_retry(str(row["id"]), error)
+                if self.recovery is not None and await self.recovery.failed(str(row["id"]), "entry", error):
+                    await self.reject_scheduled_entry(str(row["id"]), AppError(
+                        409, "Automatic entry retry limit reached", "entry_retry_exhausted"
+                    ))
 
         # Keep each wallet serial, with BTC getting first access to scarce capital.
         due_entries.sort(key=lambda row: (strategy_asset(row) != "BTC", row["entry_at"], row["id"]))
@@ -2825,16 +2934,25 @@ class Scheduler:
         self.last_error: str | None = None
         self.task: asyncio.Task[None] | None = None
         self.stop_event = asyncio.Event()
+        self.risk_task: asyncio.Task[None] | None = None
+        self.risk_last_completed_at: str | None = None
+        self.risk_last_error: str | None = None
+        self.risk_last_completed_monotonic = 0.0
 
     def start(self) -> None:
         if not self.enabled:
             logger.warning("Scheduler is disabled")
             return
         self.task = asyncio.create_task(self.run(), name="delta-strategy-scheduler")
+        self.risk_task = asyncio.create_task(self.run_risks(), name="delta-risk-scheduler")
 
     async def stop(self) -> None:
         self.stop_event.set()
         self.engine.wake.set()
+        if self.risk_task:
+            self.risk_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.risk_task
         if self.task:
             try:
                 await asyncio.wait_for(self.task, timeout=5)
@@ -2850,7 +2968,8 @@ class Scheduler:
             self.last_started_at = iso_now()
             try:
                 await self.engine.recover_interrupted_states()
-                await self.engine.process_due_strategies()
+                await self.engine.process_due_strategies(include_risks=False)
+                await self.engine.cleanup_sessions()
                 self.last_completed_at = iso_now()
                 self.last_error = "One or more strategy risk checks failed" if self.engine.risk_errors else None
             except Exception as exc:
@@ -2859,11 +2978,34 @@ class Scheduler:
             with suppress(TimeoutError):
                 await asyncio.wait_for(self.engine.wake.wait(), timeout=self.poll_seconds)
 
+    async def run_risks(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                if self.engine.startup_recovered:
+                    await self.engine.process_active_risks()
+                    await self.engine.observe_recovery_positions()
+                    self.risk_last_completed_at = iso_now()
+                    self.risk_last_completed_monotonic = time.monotonic()
+                    self.risk_last_error = None
+            except Exception as error:
+                self.risk_last_error = type(error).__name__
+                logger.exception("Independent risk polling cycle failed")
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self.stop_event.wait(), timeout=self.poll_seconds)
+
     def status(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
             "running": bool(self.task and not self.task.done()),
             "pollSeconds": self.poll_seconds,
+            "riskRunning": bool(self.risk_task and not self.risk_task.done()),
+            "riskHealthy": bool(self.risk_task and not self.risk_task.done()
+                                and self.risk_last_completed_monotonic
+                                and time.monotonic() - self.risk_last_completed_monotonic
+                                < max(30, self.poll_seconds * 5)
+                                and not self.risk_last_error),
+            "riskLastCompletedAt": self.risk_last_completed_at,
+            "riskLastError": self.risk_last_error,
             "lastStartedAt": self.last_started_at,
             "lastCompletedAt": self.last_completed_at,
             "lastError": self.last_error,
