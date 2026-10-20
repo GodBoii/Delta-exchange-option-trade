@@ -46,7 +46,7 @@ def _collector_snapshot(
                 healthy = bool(
                     latest
                     and success
-                    and latest["error_code"] not in ACCESS_ERRORS
+                    and latest["error_code"] not in ACCESS_ERRORS | {"account_identity_mismatch"}
                     and age is not None
                     and 0 <= age <= max_age
                     and attempt_age is not None
