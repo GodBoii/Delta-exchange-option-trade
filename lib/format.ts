@@ -14,12 +14,6 @@ const usdCompact = new Intl.NumberFormat("en-US", { style: "currency", currency:
 const compactNumber = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
 const tradingTimeZone = "Asia/Kolkata";
 
-export function isNumeric(value: unknown): value is number | string {
-  if (typeof value === "number") return Number.isFinite(value);
-  if (typeof value === "string" && value.trim() !== "") return Number.isFinite(Number(value));
-  return false;
-}
-
 /** Delta returns most quantities as strings; coerce defensively. */
 export function toNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -81,7 +75,6 @@ export function titleCase(value: string) {
   return humanize(value).replace(/\b\w/g, character => character.toUpperCase());
 }
 
-const dayMonthYear = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
 const dayMonthTime = new Intl.DateTimeFormat("en-IN", {
   day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: tradingTimeZone, timeZoneName: "short"
 });
@@ -94,11 +87,6 @@ const fullTimestamp = new Intl.DateTimeFormat("en-IN", {
 });
 
 /** `YYYY-MM-DD` expiry input value rendered for humans. */
-export function formatExpiry(value: string) {
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? "No expiry" : dayMonthYear.format(date);
-}
-
 export function formatDateTime(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return EM_DASH;
   const date = new Date(value);
