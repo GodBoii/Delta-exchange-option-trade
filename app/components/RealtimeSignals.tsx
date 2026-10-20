@@ -9,17 +9,31 @@ const RealtimeContext = createContext<Revisions>({});
 
 /** Backend revision stream: each change event tells subscribed views to refetch. */
 function RevisionStream({ onChange }: { onChange: (value: Revisions) => void }) {
+  const [token, setToken] = useState<string | null>(null);
   useEffect(() => {
+    let stopped = false;
+    let authChanged = false;
+    const auth = getSupabaseBrowserClient().auth;
+    const { data } = auth.onAuthStateChange((_event, session) => {
+      authChanged = true;
+      if (!stopped) setToken(session?.access_token ?? null);
+    });
+    void auth.getSession().then(({ data: initial }) => {
+      if (!stopped && !authChanged) setToken(initial.session?.access_token ?? null);
+    });
+    return () => { stopped = true; data.subscription.unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
+    if (!token) { onChange({}); return; }
     let stopped = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
     const connect = async () => {
       try {
-        const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-        if (!session) return;
         const origin = await apiOrigin();
         const response = await fetch(`${origin}/api/revisions`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
+          headers: { Authorization: `Bearer ${token}` },
           cache: "no-store", signal: controller.signal,
         });
         if (!response.ok || !response.body) throw new Error("Revision stream unavailable");
@@ -30,12 +44,13 @@ function RevisionStream({ onChange }: { onChange: (value: Revisions) => void }) 
           const { done, value } = await reader.read();
           if (done || stopped) break;
           buffer += decoder.decode(value, { stream: true });
+          if (buffer.length > 1_048_576) throw new Error("Revision frame too large");
           let boundary = buffer.indexOf("\n\n");
           while (boundary >= 0) {
             const event = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + 2);
             const data = event.split("\n").find(line => line.startsWith("data: "))?.slice(6);
-            if (data) {
+            if (data && !stopped) {
               try {
                 const parsed: unknown = JSON.parse(data);
                 if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -53,7 +68,7 @@ function RevisionStream({ onChange }: { onChange: (value: Revisions) => void }) 
     };
     void connect();
     return () => { stopped = true; controller.abort(); if (retry) clearTimeout(retry); };
-  }, [onChange]);
+  }, [onChange, token]);
   return null;
 }
 
