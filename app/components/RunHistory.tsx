@@ -23,7 +23,7 @@ const AUTO_REFRESH_MS = 30_000;
 const REALTIME_FALLBACK_MS = 300_000;
 
 type FilterId = "all" | "pending" | "live" | "attention" | "closed";
-type ActionKind = "cancel" | "exit" | "delete";
+type ActionKind = "cancel" | "exit" | "delete" | "recover";
 
 const FILTERS: { id: FilterId; label: string; match: (status: string) => boolean }[] = [
   { id: "all", label: "All", match: () => true },
@@ -38,6 +38,11 @@ const ACTION_COPY: Record<ActionKind, {
   confirm: string;
   describe: (name: string) => string;
 }> = {
+  recover: {
+    title: "Resume automatic recovery?",
+    confirm: "Resume recovery",
+    describe: name => `${name} will receive a new recovery attempt budget. The backend checks its original orders and account before taking action.`
+  },
   cancel: {
     title: "Cancel scheduled strategy?",
     confirm: "Cancel strategy",
@@ -94,6 +99,11 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
 }) {
   const { automation: automationRevision, strategies: strategyRevision } = useRealtimeSignals();
   const [runs, setRuns] = useState<StrategyRun[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [recoverySupported, setRecoverySupported] = useState(false);
+  const loadVersion = useRef(0);
+  const loadedPages = useRef(1);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterId>("all");
   const [accountFilter, setAccountFilter] = useState("all");
@@ -106,11 +116,28 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   report.current = onAttentionChange;
 
   const load = useCallback(async (quiet = false) => {
+    const version = ++loadVersion.current;
     if (!quiet) setLoading(true);
     try {
-      const data = await requestJson<{ result: StrategyRun[] }>("/api/strategies");
-      setRuns(data.result);
-      report.current?.(data.result.filter(run => run.status === "attention").length);
+      const [data, counts] = await Promise.all([
+        requestJson<{ result: StrategyRun[]; nextCursor?: string | null; recoverySupported?: boolean }>("/api/strategies"),
+        requestJson<{ attention: number }>("/api/strategies/counts").catch(() => null)
+      ]);
+      const collected = [...data.result];
+      let cursor = data.nextCursor ?? null;
+      for (let page = 1; page < loadedPages.current && cursor; page += 1) {
+        if (version !== loadVersion.current) return;
+        const older = await requestJson<{ result: StrategyRun[]; nextCursor?: string | null }>(
+          `/api/strategies?before=${encodeURIComponent(cursor)}`
+        );
+        collected.push(...older.result);
+        cursor = older.nextCursor ?? null;
+      }
+      if (version !== loadVersion.current) return;
+      setRuns(collected);
+      setNextCursor(cursor);
+      setRecoverySupported(data.recoverySupported === true);
+      report.current?.(counts?.attention ?? collected.filter(run => run.status === "attention").length);
     } catch (loadError) {
       onNotice({ tone: "error", text: errorMessage(loadError) });
     } finally {
@@ -131,6 +158,25 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
     );
     return () => window.clearInterval(timer);
   }, [automationRevision, load, strategyRevision]);
+
+  async function loadOlder() {
+    if (!nextCursor || loadingMore) return;
+    const version = loadVersion.current;
+    setLoadingMore(true);
+    try {
+      const data = await requestJson<{ result: StrategyRun[]; nextCursor?: string | null }>(
+        `/api/strategies?before=${encodeURIComponent(nextCursor)}`
+      );
+      if (version !== loadVersion.current) return;
+      setRuns(current => {
+        const ids = new Set(current.map(run => run.id));
+        return [...current, ...data.result.filter(run => !ids.has(run.id))];
+      });
+      setNextCursor(data.nextCursor ?? null);
+      loadedPages.current += 1;
+    } catch (error) { onNotice({ tone: "error", text: errorMessage(error) }); }
+    finally { setLoadingMore(false); }
+  }
 
   const counts = useMemo(() => {
     const result = {} as Record<FilterId, number>;
@@ -154,7 +200,10 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
     const { run, kind } = action;
     setBusy(true);
     try {
-      if (kind === "cancel") {
+      if (kind === "recover") {
+        await requestJson(`/api/strategies/${run.id}/recovery`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+        onNotice({ tone: "ok", text: "Recovery resumed. The backend will reconcile the recorded account." });
+      } else if (kind === "cancel") {
         await requestJson(`/api/strategies/${run.id}`, { method: "DELETE" });
         onNotice({ tone: "ok", text: `${run.name} cancelled before entry.` });
       } else if (kind === "delete") {
@@ -243,6 +292,7 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
                   <RunRow
                     key={run.id}
                     run={run}
+                    recoverySupported={recoverySupported}
                     onInspect={() => setDetail(run)}
                     onView={() => setViewing(run)}
                     onAction={kind => setAction({ run, kind })}
@@ -260,6 +310,10 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
               : "Choose another status filter to see the remaining runs."}
           />
         )}
+        {nextCursor && <button type="button" className="button secondary"
+          disabled={loadingMore} onClick={() => void loadOlder()}>
+          {loadingMore ? "Loading older runs…" : "Load older runs"}
+        </button>}
       </Panel>
 
       {viewing && <TradeMonitor key={viewing.id} run={viewing}
@@ -290,8 +344,9 @@ export default function RunHistory({ onNotice, onAttentionChange }: {
   );
 }
 
-function RunRow({ run, onInspect, onView, onAction }: {
+function RunRow({ run, recoverySupported, onInspect, onView, onAction }: {
   run: StrategyRun;
+  recoverySupported: boolean;
   onInspect: () => void;
   onView: () => void;
   onAction: (kind: ActionKind) => void;
@@ -315,6 +370,10 @@ function RunRow({ run, onInspect, onView, onAction }: {
       icon: <CircleStop />,
       tone: "danger" as const,
       onSelect: () => onAction("exit")
+    }] : []),
+    ...(recoverySupported && (run.status === "attention" || run.recoveryRequired) ? [{
+      id: "recover", label: "Resume recovery", hint: "Retry checks after resolving the underlying issue",
+      icon: <RefreshCw />, onSelect: () => onAction("recover")
     }] : []),
     ...(canCancel ? [{
       id: "cancel",
