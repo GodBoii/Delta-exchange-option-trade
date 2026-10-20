@@ -7,7 +7,7 @@ local configurations retain their prior behavior. Following an account on X does
 not change either configuration.
 
 The cadence is 60 seconds for CZ, Vitalik, Lookonchain and Wu Blockchain, 180
-seconds for the other accounts, with 300 seconds for Ansem and Billy Markus.
+seconds for the other six original accounts, with 300 seconds for Ansem and Billy Markus.
 The twelve added accounts use 90-, 120- or 300-second intervals. All sources use
 the reply-inclusive endpoint, which had a 500-request quota during the live pilot;
 the original-only endpoint had just 50. Reply IDs distinguish that context from
