@@ -20,10 +20,3 @@ export async function getSupabaseServerClient() {
     }
   });
 }
-
-export async function getAuthenticatedUser() {
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) return null;
-  return data.user;
-}
