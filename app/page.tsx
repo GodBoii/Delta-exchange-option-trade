@@ -9,7 +9,7 @@ import { requestJson, resetApiOrigin } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage } from "@/lib/format";
 import { resolveProfileAvatar } from "@/lib/profile-avatar";
-import type { Account, AppUser, SessionResponse, StrategyRun } from "@/lib/app-types";
+import type { Account, AppUser, SessionResponse } from "@/lib/app-types";
 import { AppShell, TAB_ORDER, type ConnectionState, type Tab } from "@/app/components/AppShell";
 import AuthView from "@/app/components/AuthView";
 import ConnectView from "@/app/components/ConnectView";
@@ -180,8 +180,10 @@ export default function Home() {
 
     const count = async () => {
       try {
-        const data = await requestJson<{ result: StrategyRun[] }>("/api/strategies");
-        if (!cancelled) setAttention(data.result.filter(run => run.status === "attention").length);
+        const counts = await requestJson<{ attention: number }>("/api/strategies/counts").catch(() => null);
+        const attention = counts?.attention ?? (await requestJson<{ result: { status: string }[] }>("/api/strategies"))
+          .result.filter(run => run.status === "attention").length;
+        if (!cancelled) setAttention(attention);
       } catch {
         // Background awareness only: a failed count must never raise a toast.
       }
