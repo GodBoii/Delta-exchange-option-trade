@@ -164,6 +164,25 @@ class DeltaClient:
             authenticated=True,
         )
 
+    async def all_open_orders(self) -> dict[str, Any]:
+        response = await self.open_orders()
+        rows = response.get("result")
+        if not isinstance(rows, list):
+            raise AppError(502, "Delta orders snapshot is unavailable", "orders_unknown")
+        orders = list(rows)
+        after = (response.get("meta") or {}).get("after")
+        seen: set[str] = set()
+        while after:
+            if not isinstance(after, str) or after in seen:
+                raise AppError(502, "Delta repeated an orders cursor", "orders_unknown")
+            seen.add(after)
+            page = await self.open_orders(after=after)
+            if not isinstance(page.get("result"), list):
+                raise AppError(502, "Delta orders page is unavailable", "orders_unknown")
+            orders.extend(page["result"])
+            after = (page.get("meta") or {}).get("after")
+        return {**response, "result": orders, "meta": {**(response.get("meta") or {}), "after": None}}
+
     async def positions(self) -> dict[str, Any]:
         return await self.request("GET", "/v2/positions/margined", authenticated=True)
 
