@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { listboxLayout, LISTBOX_MAX_HEIGHT } from "@/lib/listbox-layout";
 import { AlertTriangle, Check, ChevronDown, Info, MoreHorizontal, X } from "@/app/components/icons";
 import { DrawnTick, readMs, SwapText, useSlidingPill } from "@/app/components/motion";
 
@@ -765,25 +766,27 @@ export function DetailSection({ title, meta, children }: { title: string; meta?:
  * descendant, and a forwarded click on a listbox trigger would immediately
  * re-toggle the panel the first click just opened.
  */
-export function Field({ label, hint, error, invalid = false, labelId, children }: {
+export function Field({ label, hint, error, invalid = false, labelId, hintId, className = "", children }: {
   label: string;
   hint?: string;
   error?: string;
   invalid?: boolean;
   labelId?: string;
+  hintId?: string;
+  className?: string;
   children: ReactNode;
 }) {
-  const className = invalid || error ? "field invalid" : "field";
+  const fieldClass = `field${invalid || error ? " invalid" : ""} ${className}`.trim();
   const body = (
     <>
       <span className="field-label" id={labelId}>{label}</span>
       {children}
-      {error ? <small className="field-error">{error}</small> : hint ? <small className="field-hint">{hint}</small> : null}
+      {error ? <small className="field-error" id={hintId}>{error}</small> : hint ? <small className="field-hint" id={hintId}>{hint}</small> : null}
     </>
   );
 
-  if (labelId) return <div className={className}>{body}</div>;
-  return <label className={className}>{body}</label>;
+  if (labelId) return <div className={fieldClass}>{body}</div>;
+  return <label className={fieldClass}>{body}</label>;
 }
 
 export type SelectOption = {
@@ -812,9 +815,6 @@ function groupOptions(options: SelectOption[]) {
   return runs;
 }
 
-const LISTBOX_MAX_HEIGHT = 288;
-const LISTBOX_GAP = 6;
-const LISTBOX_VIEWPORT_MARGIN = 12;
 const TYPEAHEAD_RESET_MS = 700;
 
 /**
@@ -841,14 +841,17 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
   hint?: string;
   disabled?: boolean;
 }) {
-  const [rect, setRect] = useState<{ top: number; left: number; width: number; origin: "top" | "bottom" } | null>(null);
+  const [rect, setRect] = useState<ReturnType<typeof listboxLayout> | null>(null);
   const [phase, setPhase] = useState<"pre" | "open" | "closing">("pre");
   const [activeValue, setActiveValue] = useState(value);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const typeahead = useRef({ query: "", at: 0 });
+  const closeTimer = useRef<number | null>(null);
   const listId = useId();
   const labelId = useId();
+  const hintId = `${labelId}-hint`;
+  const mounted = rect !== null;
   const open = rect !== null && phase !== "closing";
 
   const selected = options.find(option => option.value === value);
@@ -860,26 +863,38 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
    * out of existence.
    */
   const close = useCallback((restoreFocus = true) => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
     setPhase("closing");
     if (restoreFocus) trigger.current?.focus();
-    window.setTimeout(() => setRect(null), readMs("--dropdown-close-dur", 150));
+    closeTimer.current = window.setTimeout(() => setRect(null), readMs("--dropdown-close-dur", 150));
+  }, []);
+
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
   }, []);
 
   const openPanel = useCallback(() => {
+    if (trigger.current?.matches(":disabled")) return;
     const bounds = trigger.current?.getBoundingClientRect();
     if (!bounds) return;
-    const wanted = Math.min(LISTBOX_MAX_HEIGHT, options.length * 44 + 12);
-    const fitsBelow = window.innerHeight - bounds.bottom > wanted + LISTBOX_VIEWPORT_MARGIN;
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    typeahead.current = { query: "", at: 0 };
     setPhase("pre");
-    setActiveValue(value);
-    setRect({
-      top: fitsBelow ? bounds.bottom + LISTBOX_GAP : Math.max(LISTBOX_VIEWPORT_MARGIN, bounds.top - LISTBOX_GAP - wanted),
-      left: bounds.left,
-      width: bounds.width,
-      // The panel grows out of the edge it is anchored to, not the top left.
-      origin: fitsBelow ? "top" : "bottom"
-    });
-  }, [options.length, value]);
+    setActiveValue(options.find(option => option.value === value && !option.disabled)?.value
+      ?? options.find(option => !option.disabled)?.value ?? "");
+    setRect(listboxLayout(bounds, { width: window.innerWidth, height: window.innerHeight }, LISTBOX_MAX_HEIGHT));
+  }, [options, value]);
+
+  useEffect(() => {
+    if (disabled && open) close(false);
+  }, [disabled, open, close]);
+
+  // Measure wrapped hints and group headings before paint; row counts cannot predict their height.
+  useLayoutEffect(() => {
+    if (phase !== "pre" || !panel.current || !trigger.current) return;
+    setRect(listboxLayout(trigger.current.getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight }, panel.current.scrollHeight + 2));
+  }, [phase, mounted]);
 
   // Flip to the open state one frame after mounting, so the growth transition
   // has a pre-open state to interpolate from.
@@ -924,6 +939,8 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
   }, [close, open]);
 
   function commit(next: string) {
+    if (trigger.current?.matches(":disabled")) return;
+    if (!enabled.some(option => option.value === next)) return;
     if (next !== value) onChange(next);
     close();
   }
@@ -964,9 +981,11 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
 
     switch (event.key) {
       case "Escape":
-      case "Tab":
         event.preventDefault();
         close();
+        return;
+      case "Tab":
+        close(false);
         return;
       case "ArrowDown":
         event.preventDefault();
@@ -995,7 +1014,7 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
   }
 
   return (
-    <Field label={label} invalid={invalid} hint={hint} labelId={labelId}>
+    <Field label={label} invalid={invalid} hint={hint} labelId={labelId} hintId={hintId} className="field-select">
       <button
         type="button"
         ref={trigger}
@@ -1006,6 +1025,8 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
         aria-haspopup="listbox"
         aria-controls={open ? listId : undefined}
         aria-labelledby={labelId}
+        aria-describedby={hint ? hintId : undefined}
+        aria-activedescendant={open && enabled.some(option => option.value === activeValue) ? `${listId}-${activeValue}` : undefined}
         aria-invalid={invalid || undefined}
         onClick={() => (open ? close() : openPanel())}
         onKeyDown={onKeyDown}
@@ -1020,14 +1041,14 @@ export function Select({ label, value, options, onChange, invalid, hint, disable
           data-origin={rect.origin === "top" ? "top-left" : "bottom-left"}
           id={listId}
           role="listbox"
+          aria-hidden={phase === "closing"}
           aria-labelledby={labelId}
-          aria-activedescendant={`${listId}-${activeValue}`}
           ref={panel}
           style={{
             top: rect.top,
             left: rect.left,
             width: rect.width,
-            maxHeight: LISTBOX_MAX_HEIGHT
+            maxHeight: rect.maxHeight
           }}
         >
           {groupOptions(options).map((run, runIndex) => (
@@ -1080,7 +1101,7 @@ export function NumberField({ label, value, min = 0, max, step, suffix, onChange
   hint?: string;
 }) {
   return (
-    <Field label={label} invalid={invalid} hint={hint}>
+    <Field label={label} invalid={invalid} hint={hint} className="field-number">
       <span className={suffix ? "input-affix" : undefined}>
         <input
           type="number"
@@ -1107,7 +1128,7 @@ export function OptionalNumberField({ label, value, onChange, invalid, hint, pla
   placeholder?: string;
 }) {
   return (
-    <Field label={label} invalid={invalid} hint={hint}>
+    <Field label={label} invalid={invalid} hint={hint} className="field-number">
       <input
         type="number"
         min="0"
