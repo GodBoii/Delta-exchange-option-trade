@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -71,7 +72,13 @@ class WalletProbe:
     """Bounded, briefly cached live wallet reads for owner views."""
 
     semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(WALLET_CONCURRENCY))
-    cache: dict[str, tuple[float, dict[str, Any]]] = field(default_factory=dict)
+    cache: OrderedDict[str, tuple[float, dict[str, Any]]] = field(default_factory=OrderedDict)
+
+    def remember(self, user_id: str, result: dict[str, Any]) -> None:
+        self.cache[user_id] = (time.monotonic(), result)
+        self.cache.move_to_end(user_id)
+        while len(self.cache) > 1000:
+            self.cache.popitem(last=False)
 
     async def read(self, request: Request, user_id: str) -> dict[str, Any]:
         cached = self.cache.get(user_id)
@@ -79,6 +86,9 @@ class WalletProbe:
             return cached[1]
         engine = request.app.state.engine
         async with self.semaphore:
+            cached = self.cache.get(user_id)
+            if cached and time.monotonic() - cached[0] < WALLET_CACHE_SECONDS:
+                return cached[1]
             try:
                 client = await engine.client_for_user(user_id)
                 try:
@@ -93,7 +103,7 @@ class WalletProbe:
                 code = error.code if isinstance(error, AppError) else type(error).__name__
                 logger.warning("Owner wallet read unavailable user=%s code=%s", user_id, code)
                 result = {"state": "unavailable", "reason": code, "observedAt": None}
-                self.cache[user_id] = (time.monotonic(), result)
+                self.remember(user_id, result)
                 return result
         observed = datetime.now(UTC)
         result = {
@@ -102,7 +112,7 @@ class WalletProbe:
             "availableBalance": str(available),
             "observedAt": observed.isoformat(),
         }
-        self.cache[user_id] = (time.monotonic(), result)
+        self.remember(user_id, result)
         db: Database = request.app.state.db
         if getattr(db.settings, "trading_writer_enabled", True):
             try:
@@ -610,3 +620,17 @@ async def owner_user_asset_automation(
         "automation": _automation_fields(bool(saved["enabled"]), saved.get("asset_enabled")),
         "savedAt": datetime.now(UTC).isoformat(),
     }
+
+
+class ProfileRoleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_type: Literal["owner", "user"]
+
+
+@router.put("/api/owner/users/{user_id}/role")
+async def update_profile_role(
+    request: Request, user_id: str, body: ProfileRoleUpdate, owner: OwnerUser
+) -> dict[str, Any]:
+    row = await request.app.state.db.profiles.save(_user_id(user_id), {"user_type": body.user_type})
+    logger.info("Profile role updated actor=%s subject=%s role=%s", owner["id"], user_id, body.user_type)
+    return {"success": True, "result": row}
