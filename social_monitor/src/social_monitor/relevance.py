@@ -4,7 +4,7 @@ import re
 
 from .domain import Post, references
 
-VERSION = 2
+VERSION = 3
 # These identify named assets for research, not a verified chain or contract.
 ASSETS = {
     "BTC": ("bitcoin", "btc"),
@@ -26,6 +26,10 @@ TOPICS = {
     "custody": r"\b(?:hardware wallets?|wallet seeds?|seed phrases?|crypto custody|self.custody)\b",
     "tokenization": r"\b(?:tokeni[sz]ed (?:stocks?|assets?|securities|bonds?|real estate)|asset tokeni[sz]ation)\b",
     "stablecoins": r"\b(?:usdt|usdc|tether|circle.s usdc)\b",
+    "chain_security": (
+        r"\b(?:smart contracts?|flash[ -]?loans?|wallet drainers?|token approvals?|rug[ -]?pulls?|liquidity pools?)\b"
+    ),
+    "meme_projects": r"\b(?:spx6900|fartcoin|mog coin)\b",
 }
 VENUE_HANDLES = frozenset({"aster_dex", "binance", "coinbase", "hyperliquidx", "uniswap", "raydiumprotocol"})
 ACTIVITY = re.compile(r"\b(?:wallets?|longs?|shorts?|trad\w*|deposits?|withdraw\w*|tokens?|perps?)\b", re.I)
