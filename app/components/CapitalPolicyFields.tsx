@@ -64,7 +64,11 @@ export default function CapitalPolicyFields({ value, onChange, disabled = false 
       BTC and ETH share the wallet. Open runs keep their entry budgets.</p>
     <RuleFields label="Default" rule={value} onChange={rule => { if (rule) onChange({ ...value, ...rule }); }} />
     <div className="capital-asset-fields">
-      {(["BTC", "ETH"] as const).map(asset => <div className="capital-rule" key={asset}>
+      {(["BTC", "ETH"] as const).map(asset => <section className="capital-rule capital-asset" key={asset} aria-label={`${asset} allocation`}>
+        <header className="capital-asset-heading">
+          <span aria-hidden="true">{asset === "BTC" ? "₿" : "Ξ"}</span>
+          <h3>{asset}<small>{asset === "BTC" ? "Bitcoin" : "Ethereum"}</small></h3>
+        </header>
         <RuleFields label={asset} rule={value.assetOverrides?.[asset]} inherit onChange={rule => {
           const overrides = { ...value.assetOverrides };
           if (rule) overrides[asset] = rule;
@@ -77,7 +81,7 @@ export default function CapitalPolicyFields({ value, onChange, disabled = false 
           else delete limits[asset];
           onChange({ ...value, assetLimits: limits });
         }} />
-      </div>)}
+      </section>)}
     </div>
     <LimitFields label="Overall" limit={value.overallLimit} onChange={overallLimit => onChange({ ...value, overallLimit })} />
     <p className="field-hint">Caps limit the sum of reserved budgets across open strategies and logins sharing this wallet.
