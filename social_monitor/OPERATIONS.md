@@ -60,7 +60,7 @@ For expired sessions, stop this monitor, renew the dedicated account's session t
 
 ## Version 0.4 rollout, 19 October 2026
 
-The active code release is `04ba9ce`. The implementation sequence and evidence
+Version 0.4 used code release `04ba9ce`. The implementation sequence and evidence
 rules are in [IMPROVEMENTS.md](IMPROVEMENTS.md). Version 0.4 retains the standalone
 volume, credentials, outbox and research databases. The trading services remain
 outside this deployment.
@@ -108,3 +108,37 @@ reader may use immutable read-only mode. Do not use immutable mode on live evide
 or ignore a nonempty WAL. A normal WAL reader may need to create shared-memory
 metadata, which a read-only volume mount prevents after graceful shutdown removes
 that metadata. Backup tooling must account for this distinction.
+
+## Version 0.5 expansion, 20 October 2026
+
+The active source is release `0b90157`, version 0.5.0. The twelve additions and
+their selection evidence are listed in [ROSTER.md](ROSTER.md). All new accounts
+have pinned author IDs; mismatches prevent timeline reads and fail source health.
+The original twelve targets and their poll intervals are unchanged.
+
+The pilot verified readable timelines for every addition. It exposed a 50-request
+original-post endpoint quota versus 500 for the reply-inclusive endpoint. The
+expanded roster uses the latter, with explicit reply context retained. Its nominal
+budget is approximately 198 pages per fifteen minutes before retries and lookups.
+
+All 62 tests passed inside the deployed Linux image. Windows passed 61 tests and
+skipped the POSIX-only signal test. Ruff and formatting checks passed. Tests cover
+pinned and cached identities, immediate identity-failure health, the roster budget,
+and conservative security/meme screening. Historical assessments remain unchanged.
+
+Both services were backed up consistently before replacement under
+`/home/arun/apps/x-social-monitor/backups/v5-0b90157-1792486722`.
+Migration checks on copies preserved every table's row contents, including 2,237
+posts, 687 alerts, 1,484 assessments and 2,016 market jobs. Both SQLite backups
+passed integrity checks.
+
+At approximately 14:32 IST all twenty-four targets had fresh successful reads and
+both services were healthy. The twelve new baselines stored 911 posts without
+creating historical alerts or prospective research events. Total evidence reached
+3,148 posts, with zero pending alerts. Research retained 2,016 completed jobs and
+no overdue or failed work. All sixteen other running containers had unchanged IDs
+and start times across this deployment.
+
+This confirms startup and baseline preservation. Prediction accuracy, independent
+source confirmation and improved latency for the expanded roster still require
+prospective measurements. No trading, notification or agent integration was added.
