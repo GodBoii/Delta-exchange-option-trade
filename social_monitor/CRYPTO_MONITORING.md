@@ -1,14 +1,19 @@
-# Crypto monitoring, version 0.4
+# Crypto monitoring, version 0.5
 
-The standalone Compose project uses `config.crypto.toml`. It watches the twelve
-accounts researched on 15 October 2026, including replies, and emits alerts only
+The standalone Compose project uses `config.crypto.toml`. It watches twenty-four
+accounts selected on 15 and 20 October 2026 and emits alerts only
 for posts with explicit crypto evidence. The old `config.example.toml` and existing
 local configurations retain their prior behavior. Following an account on X does
 not change either configuration.
 
 The cadence is 60 seconds for CZ, Vitalik, Lookonchain and Wu Blockchain, 180
 seconds for the other accounts, with 300 seconds for Ansem and Billy Markus.
-Twelve accounts share the existing session. Quotas, backoff and
+The twelve added accounts use 90-, 120- or 300-second intervals. All sources use
+the reply-inclusive endpoint, which had a 500-request quota during the live pilot;
+the original-only endpoint had just 50. Reply IDs distinguish that context from
+original announcements. [ROSTER.md](ROSTER.md) records the identities, selection evidence, source
+conflicts and forecast-evaluation limits.
+Twenty-four accounts share the existing session. Quotas, backoff and
 request duration can increase those intervals. This is a research collector, not
 a low-latency feed. Measure receipt delays before changing cadence.
 
@@ -24,13 +29,17 @@ filter is deterministic text screening; it does not interpret images, resolve
 missing reply context or promise complete semantic coverage. Crypto-related
 promotions may pass and should not be interpreted as recommendations.
 
-Screening version 2 also recognizes custody terms, selected protocols, stablecoin
+Screening version 2 recognizes custody terms, selected protocols, stablecoin
 names, tokenized assets and activity at a small explicit venue-handle list. Generic
 wallet theft, school-network hacks and language-model tokenization remain outside
 those rules. New posts receive the new version; stored assessments and research
 snapshots retain their original version. `review` compares them without rewriting
 history. Poll relevance counts describe newly stored posts rather than every
 repeated timeline result.
+Version 3 adds explicit on-chain security terminology and selected meme project
+names, while retaining unresolved tickers and unverified token identity. Pinned
+new accounts must match their configured numeric author ID before timeline access.
+An identity mismatch fails health for that source and leaves other sources running.
 
 Post direction stays `unclear`. A deposit is not proof of selling, and a mention
 is not an endorsement. Named assets and addresses are candidates, never verified
