@@ -213,7 +213,16 @@ class AccountManager:
             )
             rows = await cursor.fetchall()
         for row in rows:
+            recovery = getattr(self.engine, "recovery", None)
+            if recovery is not None and not await recovery.claim(row["strategy_id"], "release"):
+                continue
             try:
                 await self.release(row["owner_id"], row["strategy_id"])
-            except AppError as error:
-                logger.info("Subaccount release pending strategy=%s code=%s", row["strategy_id"], error.code)
+                if recovery is not None:
+                    await recovery.clear(row["strategy_id"], "release")
+            except Exception as error:
+                code = error.code if isinstance(error, AppError) else type(error).__name__
+                if recovery is not None and await recovery.failed(row["strategy_id"], "release", error):
+                    self.engine.notify_strategy(row["strategy_id"], "exit_failed",
+                                                "Subaccount release paused; resolve the failure and resume recovery")
+                logger.warning("Subaccount release pending strategy=%s code=%s", row["strategy_id"], code)
