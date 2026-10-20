@@ -95,6 +95,9 @@ class XCollector:
                     return None
                 self.user_ids[target.value] = user.id
             uid = self.user_ids[target.value]
+            if target.expected_author_id is not None and str(uid) != target.expected_author_id:
+                self.warning_codes.add("account_identity_mismatch")
+                return None
             method = self.api.user_tweets_and_replies_raw if target.include_replies else self.api.user_tweets_raw
             return method(uid, **options)
         if target.kind == "list":
@@ -153,7 +156,12 @@ class XCollector:
             deadline = asyncio.get_running_loop().time() + self.timeout_seconds
             stream = await self._stream(target)
             if stream is None:
-                return self._result(posts, details, "user_lookup_failed")
+                code = (
+                    "account_identity_mismatch"
+                    if "account_identity_mismatch" in self.warning_codes
+                    else "user_lookup_failed"
+                )
+                return self._result(posts, details, code)
             async with aclosing(stream):
                 while True:
                     try:
