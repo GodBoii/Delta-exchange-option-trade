@@ -49,7 +49,7 @@ class Engine:
 async def test_manual_preview_and_commit_use_the_same_resolved_contract(monkeypatch):
     engine = Engine()
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=engine, db=object())))
-    monkeypatch.setattr(main, "delta_client_for_user", lambda *_args: _client())
+    monkeypatch.setattr(engine, "client_for_user", lambda *_args: _client(), raising=False)
     monkeypatch.setattr(main, "current_account", lambda *_args, **_kwargs: _account())
     body = main.ExitScheduleRequest(
         savedStrategyId="strategy-1",
@@ -81,7 +81,7 @@ async def test_manual_preview_and_commit_use_the_same_resolved_contract(monkeypa
 async def test_manual_commit_rejects_stale_preview(monkeypatch):
     engine = Engine()
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine=engine, db=object())))
-    monkeypatch.setattr(main, "delta_client_for_user", lambda *_args: _client())
+    monkeypatch.setattr(engine, "client_for_user", lambda *_args: _client(), raising=False)
     monkeypatch.setattr(main, "current_account", lambda *_args, **_kwargs: _account())
     body = main.CommitExitScheduleRequest(
         savedStrategyId="strategy-1",
