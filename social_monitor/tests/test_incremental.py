@@ -62,6 +62,26 @@ class PageSource:
 
 
 class IncrementalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pinned_account_identity_is_checked_before_timeline_access(self):
+        source = PageSource([response([1, 2, 3])])
+        target = Target("example", "user", "example", expected_author_id="999")
+        result = await self.collector(source).fetch(target, 80)
+        self.assertEqual(result.error_code, "account_identity_mismatch")
+        self.assertEqual(source.reads, 0)
+        self.assertEqual(result.posts, [])
+
+    async def test_matching_identity_retains_collection_behavior(self):
+        source = PageSource([response([1, 2, 3])])
+        target = Target("example", "user", "example", expected_author_id="456")
+        collector = self.collector(source)
+        result = await collector.fetch(target, 80)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(len(result.posts), 3)
+        other = Target("other", "user", "example", include_replies=False, expected_author_id="999")
+        result = await collector.fetch(other, 80)
+        self.assertEqual(result.error_code, "account_identity_mismatch")
+        self.assertEqual(source.reads, 1)
+
     def setUp(self):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         self.root = Path(directory)
