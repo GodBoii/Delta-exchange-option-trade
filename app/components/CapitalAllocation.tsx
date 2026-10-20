@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CircleDollarSign, RefreshCw, Save } from "@/app/components/icons";
 import type { CapitalOverview, CapitalSettings } from "@/lib/app-types";
-import { requestJson } from "@/lib/api";
+import { requestJson, type ApiRequester } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import { capitalSettingsError, normalizeCapitalSettings } from "@/lib/capital";
 import CapitalPolicyFields from "@/app/components/CapitalPolicyFields";
@@ -14,7 +14,7 @@ import {
 } from "@/app/components/ui";
 
 /** Account default, BTC/ETH budgets and caps alongside live wallet previews. */
-export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandler }) {
+export default function CapitalAllocation({ onNotice, request = requestJson }: { onNotice: NoticeHandler; request?: ApiRequester }) {
   const { formatMoney } = useCurrency();
   const [overview, setOverview] = useState<CapitalOverview | null>(null);
   const [draft, setDraft] = useState<CapitalSettings>(() => normalizeCapitalSettings({ allocationMode: "half_balance" }));
@@ -25,7 +25,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await requestJson<CapitalOverview>("/api/capital/settings");
+      const data = await request<CapitalOverview>("/api/capital/settings");
       setOverview(data);
       setDraft(normalizeCapitalSettings(data.settings));
       setError("");
@@ -34,7 +34,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [request]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -47,7 +47,7 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
     setSaving(true);
     setError("");
     try {
-      const data = await requestJson<CapitalOverview>("/api/capital/settings", {
+      const data = await request<CapitalOverview>("/api/capital/settings", {
         method: "PUT",
         body: JSON.stringify({ ...draft, expectedRevision: overview?.capitalRevision ?? null })
       });
@@ -126,10 +126,12 @@ export default function CapitalAllocation({ onNotice }: { onNotice: NoticeHandle
               <dd>{overview ? formatMoney(overview.reservedBudget) : pending}</dd>
             </div>
             {overview && (["BTC", "ETH"] as const).map(asset => <div className="capital-asset-figure" key={asset}>
-              <dt>{asset} budget per strategy</dt><dd>{formatMoney(overview.assetBudgets[asset].nominalBudgetPerStrategy)}
-              <small className="field-hint">Next entry {formatMoney(overview.assetBudgets[asset].availableBudgetForNextStrategy)} ·
-                Reserved {formatMoney(overview.assetBudgets[asset].reservedBudget)} ·
-                Cap {formatMoney(overview.assetBudgets[asset].capitalLimit)}</small></dd>
+              <dt>{asset} budget per strategy</dt><dd>{formatMoney(overview.assetBudgets[asset].nominalBudgetPerStrategy)}</dd>
+              <dd className="capital-asset-detail">
+                <span>Next entry <b>{formatMoney(overview.assetBudgets[asset].availableBudgetForNextStrategy)}</b></span>
+                <span>Reserved <b>{formatMoney(overview.assetBudgets[asset].reservedBudget)}</b></span>
+                <span>Cap <b>{formatMoney(overview.assetBudgets[asset].capitalLimit)}</b></span>
+              </dd>
             </div>)}
           </dl>
 
