@@ -1,6 +1,8 @@
 # Independent X monitor
 
-Version 0.4 adds broader crypto screening, bounded transient recovery, lightweight
+Version 0.5 expands the roster to 24 accounts and adds pinned identity checks.
+See the [source selection and research limits](ROSTER.md).
+Version 0.4 added bounded transient recovery, lightweight
 health probes and local coverage/review tools. See the [implementation sequence](IMPROVEMENTS.md)
 and [crypto monitoring](CRYPTO_MONITORING.md)
 for configuration, measurement methods, commands and limitations. Legacy local
