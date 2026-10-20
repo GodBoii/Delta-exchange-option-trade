@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, Clock3, Layers, RefreshCw, Shield, TrendingUp, Wallet
 } from "@/app/components/icons";
@@ -62,19 +62,42 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
   const [cancelTarget, setCancelTarget] = useState<{ id: string; productId: number; label: string } | null>(null);
   const [closeTarget, setCloseTarget] = useState<{ productId: number; symbol: string; size: string } | null>(null);
 
+  const streamFeed = useRef(stream.feed);
+  streamFeed.current = stream.feed;
+  const loadVersion = useRef(0);
+  const hasRestData = useRef(false);
   const load = useCallback(async (quiet = false) => {
+    const version = ++loadVersion.current;
     if (!quiet) setLoading(true);
     try {
-      setData(await requestJson<AccountOverview>("/api/account/overview"));
+      if (quiet && hasRestData.current && streamFeed.current === "live") {
+        const metadata = await requestJson<Pick<AccountOverview, "riskStrategies">>(
+          "/api/account/overview?includeExchange=false"
+        );
+        if (version !== loadVersion.current) return;
+        setData(current => current ? { ...current, riskStrategies: metadata.riskStrategies } : current);
+      } else {
+        const snapshot = await requestJson<AccountOverview>("/api/account/overview");
+        if (version !== loadVersion.current) return;
+        setData(snapshot);
+        hasRestData.current = true;
+      }
       setRefreshedAt(new Date());
     } catch (loadError) {
       onNotice({ tone: "error", text: errorMessage(loadError) });
     } finally {
-      if (!quiet) setLoading(false);
+      if (!quiet && version === loadVersion.current) setLoading(false);
     }
   }, [onNotice]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const previousFeed = useRef(stream.feed);
+  useEffect(() => {
+    const previous = previousFeed.current;
+    previousFeed.current = stream.feed;
+    if (previous === "live" && stream.feed !== "live") void load(true);
+  }, [load, stream.feed]);
 
   // Balances and positions move without user action, so the view refreshes
   // itself on a conservative cadence that stays well inside Delta rate limits.
