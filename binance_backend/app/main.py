@@ -271,7 +271,7 @@ async def btcusd_stream(websocket: WebSocket) -> None:
     try:
         await websocket.send_json(feed.snapshot())
         while True:
-            await websocket.send_json(await queue.get())
+            await websocket.send_text(await queue.get())
     except WebSocketDisconnect:
         pass
     finally:
