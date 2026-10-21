@@ -2,6 +2,121 @@ from scripts.model_replay import recorded_result
 from scripts.score_model_replay import price_outcome, proxy_correct, regime_label, selection
 
 
+def test_candidate_receives_frozen_result_without_original_answer(monkeypatch):
+    import json
+
+    import httpx
+
+    from scripts import model_replay
+
+    requests = []
+
+    def respond(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        assert payload["model"] == "anthropic/claude-haiku-5.5"
+        assert payload["reasoning"]["effort"] == "medium"
+        if len(requests) == 1:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call1", "type": "function", "function": {"name": "packet", "arguments": "{}"}}],
+            }
+        else:
+            assert payload["messages"][-1] == {
+                "role": "tool",
+                "tool_call_id": "call1",
+                "content": "frozen market evidence",
+            }
+            assert "secret baseline answer" not in json.dumps(payload)
+            message = {"role": "assistant", "content": "## Market regime\nBullish"}
+        return httpx.Response(
+            200,
+            json={
+                "model": "anthropic/claude-haiku-5.5",
+                "choices": [{"finish_reason": "stop", "message": message}],
+                "usage": {"cost": 0.01},
+            },
+        )
+
+    client_class = httpx.Client
+    monkeypatch.setattr(
+        model_replay.httpx, "Client", lambda **kwargs: client_class(transport=httpx.MockTransport(respond), **kwargs)
+    )
+    result = model_replay.replay_case(
+        {
+            "messages": [{"role": "system", "content": "Analyze historical evidence"}],
+            "tools": [],
+            "original": {
+                "report": "secret baseline answer",
+                "tools": [{"name": "packet", "args": {}, "result": "frozen market evidence"}],
+            },
+        },
+        "test-key",
+        model="anthropic/claude-haiku-5.5",
+    )
+    assert result["status"] == "completed"
+    assert result["tools"][0]["exact_match"] is True
+    assert len(result["usage"]) == 2
+
+
+def test_summary_keeps_missing_evidence_out_of_incorrect_counts():
+    from scripts.score_model_replay import HORIZONS, summarize
+
+    rows = [
+        {
+            "baseline_regime": "bullish",
+            "candidate_regime": "bearish",
+            "outcomes": {str(h): {"status": "complete", "direction": "bullish"} for h in HORIZONS},
+        },
+        {
+            "baseline_regime": "bullish",
+            "candidate_regime": "bearish",
+            "outcomes": {str(h): {"status": "missing_candles"} for h in HORIZONS},
+        },
+    ]
+    summary = summarize(rows)["regime_price_proxy"]
+    assert summary["candidate"]["1"] == {"correct": 0, "incorrect": 1, "unscored": 1}
+    assert summary["baseline"]["1"] == {"correct": 1, "incorrect": 0, "unscored": 1}
+
+
+def test_catalog_ignores_original_validation_errors():
+    assert (
+        selection(
+            [],
+            [
+                {
+                    "tool_name": "show_available_strategy",
+                    "tool_call_error": True,
+                    "result": "Unexpected keyword argument",
+                }
+            ],
+        )["attempts"]
+        == 0
+    )
+
+
+def test_resume_refuses_results_from_another_model(monkeypatch, tmp_path):
+    import json
+    import sys
+
+    import pytest
+
+    from scripts.model_replay import main
+
+    cases = tmp_path / "cases.json"
+    cases.write_text('{"cases": []}')
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "run-config.json").write_text(json.dumps({"model": "other", "reasoning_effort": "medium"}))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        sys, "argv", ["replay", "run", str(cases), str(results), "--model", "anthropic/claude-haiku-5.5"]
+    )
+    with pytest.raises(ValueError, match="different model or effort"):
+        main()
+
+
 def test_replay_matches_arguments_and_preserves_empty_results():
     calls = [{"tool_name": "select_strategy_and_time", "tool_args": {"strategy_ref": "S01"}, "result": ""}]
     assert recorded_result(calls, "select_strategy_and_time", {"strategy_ref": "S01"}) == ("", True)
@@ -40,6 +155,8 @@ def test_regime_parser_ignores_invalidation_and_missing_headings():
     assert regime_label("## Market regime\nBullish or bearish breakout possible") == "unscored"
     assert regime_label("Sideways market, but no explicit regime heading") == "unscored"
     assert regime_label("## Market regime\n**Bullish continuation.** The sideways score is 90%.") == "bullish"
+    assert regime_label("## Market regime\n- **Intraday:** Sideways. The daily chart is bullish.") == "sideways"
+    assert regime_label("## Market regime\n- **Outcome:** No trade.\n- **Daily:** bullish") == "unscored"
 
 
 def test_selection_keeps_only_the_matching_exit_preview():
