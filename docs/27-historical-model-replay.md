@@ -1,8 +1,8 @@
 # Historical model replay
 
-Compare GPT-6.1 Sol at medium reasoning with the original DeepSeek v4.1 Flash
-and MiMo v2.6 Pro decisions. The original models are identified from each saved
-Agno session, not from today's configured default.
+Compare a selected OpenRouter model with the original saved decisions. The
+original models are identified from each saved Agno session. The default replay
+model remains GPT-6.1 Sol at medium reasoning.
 
 ## Export and prepare
 
@@ -14,6 +14,9 @@ and PNG charts. It does not export exchange credentials or call trading tools.
 python -m scripts.export_model_replay /private/evidence.json --hours 72
 ```
 
+Use `--hours 168` for the last seven days. The export includes every report and
+stored chart in that window, including reports without persisted sessions.
+
 Prepare cases on a machine with this Git repository. Run from the backend directory.
 
 ```powershell
@@ -24,6 +27,10 @@ The original system and user messages stop before the first original assistant
 response. Stored chart bytes are restored to the user message in their recorded
 order. GPT receives neither the baseline's answer nor future market candles.
 Each input has a SHA-256 digest.
+Preparation also writes `cases.coverage.json`, listing reports without a replay
+case. Missing prompts and sessions cannot be reconstructed from a final report.
+Original tool validation errors remain in the evidence but do not establish
+valid schema parameters.
 
 Original tool schemas were not persisted. Preparation reconstructs them from Git
 at each run's timestamp. If recorded arguments prove that deployment preceded
@@ -31,21 +38,25 @@ the matching commit, preparation uses the matching current callable definition
 and lists that correction in the case metadata. This approximation limits claims
 of exact original-environment fidelity.
 
-## Run GPT
+## Run a candidate
 
 Use a funded `OPENROUTER_API_KEY` in the execution environment. The runner always
-requests `openai/gpt-6.1-sol` with medium reasoning and requires provider parameter
-support. It verifies the returned model ID and stores provider usage and latency.
+defaults to `openai/gpt-6.1-sol` with medium reasoning and requires provider parameter
+support. Select another model with `--model` and reasoning with `--effort`.
+It verifies the returned model ID and stores provider usage and latency.
 It excludes private reasoning content; written reports, tool arguments and their
 explicit reasoning summaries are the analysis evidence.
 
 ```powershell
 python -m scripts.model_replay run /private/cases.json /private/results --workers 3
 python -m scripts.model_replay run /private/cases.json /private/results --workers 3 --retry-failed
+python -m scripts.model_replay run /private/cases.json /private/haiku-results --model anthropic/claude-haiku-5.5 --effort medium --workers 3
 ```
 
 Results are resumable by case ID and input digest. Retry preserves successful
-results. Keep separate directories for different input datasets. The spending
+results. `run-config.json` prevents mixing different models or reasoning settings.
+Use a fresh directory for older results without this configuration file.
+Keep separate directories for different input datasets. The spending
 limit belongs to the configured provider key; the runner does not change it.
 
 The dispatcher only matches saved tool names and exact arguments. It never
@@ -65,7 +76,11 @@ python -m scripts.score_model_replay /private/cases.json /private/results /priva
 
 The report includes paired regime checks, proposed strategies and entry times,
 written reports, provider costs and durations. JSON retains per-case results and
-CSV provides a compact index. Market candles are fetched once from Delta's
+CSV provides a compact index. Candidate fields use the `candidate_` prefix,
+replacing the earlier `gpt_` names. `summary.json` counts correct, incorrect and
+unscored regime checks separately at each horizon. These are repeated checks of
+the same cases, so do not add horizons together as independent predictions.
+Market candles are fetched once from Delta's
 public BTCUSD and ETHUSD history API and cached privately.
 
 Scoring uses complete one-minute candles over 1, 3 and 6 hours. Snapshot checks
