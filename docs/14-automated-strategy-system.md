@@ -191,7 +191,7 @@ The built-in default is 90%, but Strategy Builder stores it as a user-controlled
 
 ## 6. Strategy explanations and builder definitions
 
-`Premium buying` is a category, not one strategy. Long call, long put, long straddle, and long strangle are premium-buying strategies.
+`Premium buying` is a category, not one strategy. Long call, long put, and long strangle are available premium-buying strategies.
 
 ### 6.1 Long call
 
@@ -283,54 +283,12 @@ maximum loss = entry debit
 expiry breakeven = put strike - entry debit per underlying unit
 ```
 
-### 6.3 Long straddle
+### 6.3 Long ATM straddle retired
 
-#### What it does
-
-A long straddle buys an ATM call and ATM put with the same strike and expiry. It benefits from a large move in either direction or a strong increase in implied volatility. It loses value when BTC remains quiet because both legs experience time decay.
-
-#### Suitable market
-
-- Large move expected.
-- Direction is uncertain.
-- Volatility expansion expected.
-- Expected movement is greater than the combined premium hurdle.
-
-#### Builder definition
-
-```text
-name: Long ATM straddle
-category: premium_buying
-market outlook: large_move_unknown_direction
-price source: cash
-holding mode: user selected
-expiry policy: user selected
-risk basis: net_debit
-stop loss: combined debit percentage, maximum 100%
-take profit: 90% of combined entry debit
-allocation: account capital policy
-lots: auto and equal for both legs
-square-off: complete
-
-legs:
-  1. Buy ATM call
-  2. Buy ATM put
-
-same expiry and order type for both legs
-```
-
-#### Profit and loss
-
-```text
-entry debit = call premium + put premium
-maximum loss = entry debit
-upper expiry breakeven = ATM strike + entry debit
-lower expiry breakeven = ATM strike - entry debit
-```
-
-#### Main weakness
-
-The strategy pays two premiums. A move can be directionally correct but still too small or too late.
+Long ATM straddle was removed on October 21, 2026. The AI cannot list or select
+it, and the backend rejects new entries even from stale selections or renamed
+ATM call-and-put buy pairs. Saved templates are soft-deleted and AI-disabled.
+Historical runs and exit monitoring remain available.
 
 ### 6.4 Long strangle
 
@@ -494,7 +452,7 @@ lower expiry breakeven = put strike - entry credit
 
 ### Additional built-in market choices
 
-The built-in library has thirteen active templates. The original six remain unchanged; seven additions cover directional drift and sessions beyond today's settlement.
+The built-in catalog has eleven BTC and eight ETH templates. Long ATM straddle and duplicate expiry-only templates are retired. Holding windows are selected when scheduling.
 
 | Added template | Intended setup | Contract / holding window |
 |---|---|---|
@@ -502,7 +460,6 @@ The built-in library has thirteen active templates. The original six remain unch
 | Short OTM call | Neutral-to-bearish drift or a range with intact resistance | Two listed steps OTM; next-day expiry; up to seven hours |
 | Long ITM call | Established bullish trend or steady upward grind | Two listed steps ITM; seven-day-or-later expiry; up to seven hours |
 | Long ITM put | Established bearish trend or steady downward grind | Two listed steps ITM; seven-day-or-later expiry; up to seven hours |
-| Long ATM straddle - next-day expiry | Large uncertain-direction move whose event window extends beyond today's expiry | ATM call and put; next-day expiry; up to seven hours |
 | Short ATM straddle - next-day expiry | Tight centered range when today's expiry cannot cover the hold | ATM call and put; next-day expiry; up to seven hours |
 | Short strangle - next-day expiry | Wider range when today's expiry cannot cover the hold | Both legs two listed steps OTM; next-day expiry; up to seven hours |
 
