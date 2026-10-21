@@ -11,7 +11,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = BACKEND_DIR / ".env"
 
 MODEL_ID = "xiaomi/mimo-v2.6-pro"
-AUTOMATION_MODEL_ID = "deepseek/deepseek-v4.1-flash-1017"
+AUTOMATION_MODEL_ID = "deepseek/deepseek-v4.1-flash"
 AUTOMATION_SESSION_TABLE = "automation_agent_sessions"
 SESSION_TABLE = "news_agent_sessions"
 DB_SCHEMA = "ai"
