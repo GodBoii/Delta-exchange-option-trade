@@ -80,8 +80,8 @@ Migration `009` replaces the original per-account built-in strategies with one s
 Then apply migrations `010` through `018` in order. Migration `011` repairs and releases terminal capital slots, `012` updates the shared strategy descriptions, `013` and `014` guard agent-run scheduling, `015` adds the five-minute activation recheck and retires the two iron strategies, `016` links follow-ups to the run that requested them so they receive its full final response, `017` adds the pre-expiry review, and `018` unifies every agent on one OpenRouter model. Apply later migrations in order; migration `026` records the earlier MiMo model rollout.
 
 The news research agent uses `xiaomi/mimo-v2.6-pro`. Automation agents use
-`deepseek/deepseek-v4.1-flash-1017`.
-The trading writer applies local PostgreSQL migration `backend/db/013_deepseek_flash_1017.sql`
+`deepseek/deepseek-v4.1-flash`.
+The trading writer applies local PostgreSQL migration `backend/db/015_deepseek_flash.sql`
 on startup to align saved settings and scheduled analyses. It preserves automation
 switches and leaves running and historical jobs unchanged. Rebuild and restart both
 `delta-exchange` and `news-analyzer` when deploying this model change.
