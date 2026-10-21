@@ -74,8 +74,7 @@ def regime_label(report: str | None) -> str:
         return "unscored"
     # Restrict to the leading statement. Invalidation and scenario text are not predictions.
     lead = match.group(1).strip().split("\n\n", 1)[0][:240].lower()
-    declared = re.match(r"[-\s]*\*\*(.*?)\*\*", lead, flags=re.S)
-    lead = declared.group(1) if declared else re.split(r"\.\s|\n", lead, maxsplit=1)[0]
+    lead = re.split(r"\.\s|\n", lead.replace("**", ""), maxsplit=1)[0]
     if "sideways" in lead or "range-bound" in lead or "range bound" in lead:
         return "sideways"
     bullish = bool(re.search(r"bullish|uptrend|upside breakout", lead))
@@ -88,9 +87,13 @@ def regime_label(report: str | None) -> str:
 def selection(tools: list[dict], catalog_tools: list[dict]) -> dict:
     catalog = {}
     for call in catalog_tools:
+        if call.get("tool_call_error"):
+            continue
         if (call.get("tool_name") or call.get("name")) == "show_available_strategy":
             value = call.get("result")
             data = json.loads(value) if isinstance(value, str) else value
+            if not isinstance(data, dict) or "strategies" not in data:
+                continue
             catalog = {s["strategyRef"]: s for s in (data or {}).get("strategies", [])}
             break
     candidates = [t for t in tools if (t.get("tool_name") or t.get("name")) == "select_strategy_and_time"]
@@ -144,27 +147,28 @@ def compare(cases_document: dict, results: dict, market: dict) -> list[dict]:
             str(h): price_outcome(market[case["asset"]], as_of, h, cutoff, THRESHOLDS[case["asset"]]) for h in HORIZONS
         }
         baseline_label = regime_label(original.get("report"))
-        gpt_label = regime_label(result.get("report")) if result["status"] == "completed" else "unscored"
+        candidate_label = regime_label(result.get("report")) if result["status"] == "completed" else "unscored"
         rows.append(
             {
                 "case_id": case["id"],
                 "asset": case["asset"],
                 "baseline_model": original["model"],
+                "candidate_model": result.get("model", "unknown"),
                 "time_ist": datetime.fromtimestamp(as_of, IST).isoformat(),
-                "gpt_status": result["status"],
+                "candidate_status": result["status"],
                 "baseline_regime": baseline_label,
-                "gpt_regime": gpt_label,
+                "candidate_regime": candidate_label,
                 "baseline_selection": selection(original["tools"], original["tools"]),
-                "gpt_selection": selection(result.get("tools", []), original["tools"]),
+                "candidate_selection": selection(result.get("tools", []), original["tools"]),
                 "baseline_seconds": original["metrics"].get("duration"),
-                "gpt_seconds": result.get("duration_seconds"),
+                "candidate_seconds": result.get("duration_seconds"),
                 "outcomes": truth,
-                "gpt_exact_calls": sum(t["exact_match"] for t in result.get("tools", [])),
-                "gpt_unavailable_calls": sum(not t["exact_match"] for t in result.get("tools", [])),
-                "gpt_cost_usd": sum(u.get("cost", 0) or 0 for u in result.get("usage", [])),
+                "candidate_exact_calls": sum(t["exact_match"] for t in result.get("tools", [])),
+                "candidate_unavailable_calls": sum(not t["exact_match"] for t in result.get("tools", [])),
+                "candidate_cost_usd": sum(u.get("cost", 0) or 0 for u in result.get("usage", [])),
             }
         )
-        for model_name in ("baseline", "gpt"):
+        for model_name in ("baseline", "candidate"):
             choice = rows[-1][model_name + "_selection"]
             activation = choice.get("activation_time")
             if not activation:
@@ -192,6 +196,21 @@ def proxy_correct(label: str, outcome: dict) -> bool | None:
     return label == outcome["direction"] and (label != "sideways" or outcome["range_held"])
 
 
+def summarize(rows: list[dict]) -> dict:
+    """Count each decision separately at each horizon; missing evidence never counts as incorrect."""
+    totals = {}
+    for model in ("baseline", "candidate"):
+        totals[model] = {}
+        for horizon in HORIZONS:
+            scores = [proxy_correct(row[model + "_regime"], row["outcomes"][str(horizon)]) for row in rows]
+            totals[model][str(horizon)] = {
+                "correct": sum(score is True for score in scores),
+                "incorrect": sum(score is False for score in scores),
+                "unscored": sum(score is None for score in scores),
+            }
+    return {"cases": len(rows), "regime_price_proxy": totals}
+
+
 def write_report(document: dict, rows: list[dict], output: Path) -> None:
     groups = defaultdict(list)
     for row in rows:
@@ -200,17 +219,18 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
     start = datetime.fromisoformat(window["start"]).astimezone(IST).isoformat()
     end = datetime.fromisoformat(window["end"]).astimezone(IST).isoformat()
     lines = [
-        "# GPT-6.1 Sol historical market replay",
+        "# Historical market replay",
         "",
         f"Window: {start} through {end}.",
         "",
-        f"{len(rows)} decision sessions. GPT setting: medium. Exact original prompts and stored PNG charts.",
+        f"{len(rows)} decision sessions. Candidate: {document.get('candidate_config', {})}. "
+        "Original prompts and stored PNG charts.",
         "",
         "## What this test measures",
         "",
         "Recorded tool results are returned only for identical names and arguments. New arguments return an "
         "unavailable result. Scheduling never reaches a trading service. Intended selections below are attempts, "
-        "not executed trades. This strict replay constrains GPT when it chooses a different strategy, exit or time.",
+        "not executed trades. This replay constrains the candidate when it chooses a different strategy, exit or time.",
         "",
         "Tool schemas were reconstructed from Git because sessions do not store their original schemas. "
         "Where recorded calls proved deployment preceded Git, matching current definitions supplied the schema. "
@@ -231,14 +251,20 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
         "Options returns, fills, fees, slippage, time decay and implied volatility are not inferred from underlying "
         "candles. No option-profit winner can be established by this test. Only stored decision sessions are "
         "replayed; reports without corresponding saved sessions are excluded. Historical model latency includes "
-        "the original agent and tools; GPT latency includes API and replay overhead, so timing is not controlled.",
+        "the original agent and tools; candidate latency includes API and replay overhead. Timing is not controlled.",
+        "",
+        "## Correct and incorrect price-direction checks",
+        "",
+        "```json",
+        json.dumps(summarize(rows), indent=2),
+        "```",
         "",
         "## Paired regime checks",
         "",
-        "Each row compares GPT with one baseline on the same timestamps. DeepSeek and MiMo were used on "
+        "Each row compares Candidate with one baseline on the same timestamps. DeepSeek and MiMo were used on "
         "different periods; their totals are not a direct head-to-head comparison.",
         "",
-        "| Baseline | Horizon | Paired scored cases | Baseline matches | GPT matches |",
+        "| Baseline | Horizon | Paired scored cases | Baseline matches | Candidate matches |",
         "|---|---:|---:|---:|---:|",
     ]
     for model, subset in groups.items():
@@ -246,30 +272,30 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
             pairs = [
                 (
                     proxy_correct(row["baseline_regime"], row["outcomes"][str(h)]),
-                    proxy_correct(row["gpt_regime"], row["outcomes"][str(h)]),
+                    proxy_correct(row["candidate_regime"], row["outcomes"][str(h)]),
                 )
                 for row in subset
             ]
             pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
             lines.append(f"| {model} | {h}h | {len(pairs)} | {sum(a for a, _ in pairs)} | {sum(b for _, b in pairs)} |")
-    completed = [r for r in rows if r["gpt_status"] == "completed"]
+    completed = [r for r in rows if r["candidate_status"] == "completed"]
     lines.extend(
         [
             "",
-            f"GPT completed {len(completed)}/{len(rows)} cases. Recorded tool matches: "
-            f"{sum(r['gpt_exact_calls'] for r in rows)}. Unavailable calls: "
-            f"{sum(r['gpt_unavailable_calls'] for r in rows)}. "
-            f"Reported GPT cost: ${sum(r['gpt_cost_usd'] for r in rows):.4f}.",
+            f"Candidate completed {len(completed)}/{len(rows)} cases. Recorded tool matches: "
+            f"{sum(r['candidate_exact_calls'] for r in rows)}. Unavailable calls: "
+            f"{sum(r['candidate_unavailable_calls'] for r in rows)}. "
+            f"Reported Candidate cost: ${sum(r['candidate_cost_usd'] for r in rows):.4f}.",
             "",
         ]
     )
     selected_baselines = sum(r["baseline_selection"]["attempts"] > 0 for r in rows)
-    selected_gpt = sum(r["gpt_selection"]["attempts"] > 0 for r in completed)
+    selected_candidate = sum(r["candidate_selection"]["attempts"] > 0 for r in completed)
     lines.extend(
         [
             "",
             f"Baseline selection calls: {selected_baselines}/{len(rows)} sessions. "
-            f"GPT selection calls: {selected_gpt}/{len(completed)} completed sessions.",
+            f"Candidate selection calls: {selected_candidate}/{len(completed)} completed sessions.",
             "",
             "Selection coverage is not profitability. A no-trade decision abstains from a trade-return score. "
             "A higher-timeframe bullish description also does not mean the model predicted an immediate rise.",
@@ -280,16 +306,19 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
             "Two-sided volatility strategies and no-trade decisions are excluded. "
             "Profitability still requires option prices.",
             "",
-            "| Baseline | Horizon | Directional selections scored | Direction matches |",
+            "| Model | Horizon | Directional selections scored | Direction matches |",
             "|---|---:|---:|---:|",
         ]
     )
-    for model, subset in groups.items():
+    directional_groups = [(model, subset, "baseline") for model, subset in groups.items()]
+    candidate_name = document.get("candidate_config", {}).get("model", "candidate")
+    directional_groups.append((candidate_name, completed, "candidate"))
+    for model, subset, prefix in directional_groups:
         for h in HORIZONS:
             scored = [
                 proxy_correct(
-                    r["baseline_selection"].get("directional_bias", "unscored"),
-                    r["baseline_entry_outcomes"].get(str(h), {"status": "unavailable"}),
+                    r[prefix + "_selection"].get("directional_bias", "unscored"),
+                    r[prefix + "_entry_outcomes"].get(str(h), {"status": "unavailable"}),
                 )
                 for r in subset
             ]
@@ -297,16 +326,16 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
             lines.append(f"| {model} | {h}h | {len(scored)} | {sum(scored)} |")
     if completed:
         lines.append(
-            f"Mean GPT duration: {mean(r['gpt_seconds'] for r in completed):.1f}s. "
-            f"Mean original duration: {mean(r['baseline_seconds'] for r in completed if r['baseline_seconds']):.1f}s."
+            f"Mean Candidate duration: {mean(r['candidate_seconds'] for r in completed):.1f}s. "
+            "Original durations are retained in comparison.json."
         )
     lines.extend(
         [
             "",
             "## Decisions and actual moves",
             "",
-            "| Time IST | Asset | Baseline | Original strategy | GPT intended strategy | "
-            "Regime original / GPT | 1h return | 3h return | 6h return |",
+            "| Time IST | Asset | Baseline | Original strategy | Candidate intended strategy | "
+            "Regime original / Candidate | 1h return | 3h return | 6h return |",
             "|---|---|---|---|---|---|---:|---:|---:|",
         ]
     )
@@ -317,11 +346,11 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
             else row["outcomes"][str(h)]["status"]
             for h in HORIZONS
         ]
-        model = "MiMo" if "mimo" in row["baseline_model"] else "DeepSeek"
+        model = row["baseline_model"]
         lines.append(
             f"| {row['time_ist']} | {row['asset']} | {model} | "
-            f"{row['baseline_selection']['strategy']} | {row['gpt_selection']['strategy']} | "
-            f"{row['baseline_regime']} / {row['gpt_regime']} | {' | '.join(moves)} |"
+            f"{row['baseline_selection']['strategy']} | {row['candidate_selection']['strategy']} | "
+            f"{row['baseline_regime']} / {row['candidate_regime']} | {' | '.join(moves)} |"
         )
     lines.extend(["", "## Per-case evidence", ""])
     for row in rows:
@@ -330,23 +359,24 @@ def write_report(document: dict, rows: list[dict], output: Path) -> None:
             [
                 f"### {row['time_ist']} {row['asset']} {row['case_id']}",
                 "",
-                f"Baseline model: {row['baseline_model']}. GPT status: {row['gpt_status']}.",
+                f"Baseline model: {row['baseline_model']}. Candidate status: {row['candidate_status']}.",
                 "",
                 f"Original intended entry: {row['baseline_selection']['activation_time']}. "
-                f"GPT intended entry: {row['gpt_selection']['activation_time']}.",
+                f"Candidate intended entry: {row['candidate_selection']['activation_time']}.",
                 f"Original previewed exit: {row['baseline_selection'].get('planned_exit_utc')}. "
-                f"GPT previewed exit: {row['gpt_selection'].get('planned_exit_utc')}.",
+                f"Candidate previewed exit: {row['candidate_selection'].get('planned_exit_utc')}.",
                 "",
                 f"Original tools: {', '.join(t['tool_name'] for t in case['original']['tools'])}.",
-                f"GPT tool calls: {row['gpt_exact_calls']} exact, {row['gpt_unavailable_calls']} unavailable.",
+                f"Candidate tool calls: {row['candidate_exact_calls']} exact, "
+                f"{row['candidate_unavailable_calls']} unavailable.",
                 "",
                 "Original written analysis:",
                 "",
                 case["original"].get("report") or "No report.",
                 "",
-                "GPT written analysis:",
+                "Candidate written analysis:",
                 "",
-                row.get("gpt_report") or "No completed report.",
+                row.get("candidate_report") or "No completed report.",
                 "",
             ]
         )
@@ -369,11 +399,17 @@ def main() -> None:
         end = int(datetime.fromisoformat(document["window"]["end"]).timestamp())
         market = {asset: fetch_candles(asset + "USD", start, end) for asset in THRESHOLDS}
         market_path.write_text(json.dumps(market), encoding="utf-8")
-    results = {path.stem: json.loads(path.read_text()) for path in args.results.glob("*.json")}
+    config_path = args.results / "run-config.json"
+    document["candidate_config"] = json.loads(config_path.read_text()) if config_path.exists() else {}
+    results = {
+        path.stem: json.loads(path.read_text())
+        for path in args.results.glob("*.json")
+        if path.name != "run-config.json"
+    }
     rows = compare(document, results, market)
     for row in rows:
-        row["gpt_report"] = results.get(row["case_id"], {}).get("report")
-        row["gpt_tool_trace"] = results.get(row["case_id"], {}).get("tools", [])
+        row["candidate_report"] = results.get(row["case_id"], {}).get("report")
+        row["candidate_tool_trace"] = results.get(row["case_id"], {}).get("tools", [])
     (args.output / "comparison.json").write_text(json.dumps(rows), encoding="utf-8")
     with (args.output / "comparison.csv").open("w", newline="", encoding="utf-8") as file:
         columns = [
@@ -381,18 +417,20 @@ def main() -> None:
             "asset",
             "baseline_model",
             "time_ist",
-            "gpt_status",
+            "candidate_status",
             "baseline_regime",
-            "gpt_regime",
+            "candidate_regime",
             "baseline_seconds",
-            "gpt_seconds",
-            "gpt_exact_calls",
-            "gpt_unavailable_calls",
-            "gpt_cost_usd",
+            "candidate_seconds",
+            "candidate_exact_calls",
+            "candidate_unavailable_calls",
+            "candidate_cost_usd",
         ]
         writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+    summary = summarize(rows)
+    (args.output / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     write_report(document, rows, args.output / "report.md")
     print(json.dumps({"cases": len(rows), "candles": {k: len(v) for k, v in market.items()}}))
 
