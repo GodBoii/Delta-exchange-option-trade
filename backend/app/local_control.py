@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .assets import ASSETS, asset_run_key, automation_asset_enabled, parse_asset, run_asset
+from .default_strategies import is_retired_long_atm_straddle
 from .errors import AppError
 from .local_research_operations import LocalResearchOperations
 
@@ -314,7 +315,8 @@ class LocalControl:
                 raise AppError(409, "Delta connection required", "delta_not_connected")
             await cursor.execute("select * from trade.saved_strategies where id=%s", (decision["saved_strategy_id"],))
             saved = await cursor.fetchone()
-            if not saved or saved["deleted"] or saved["user_id"] is not None or not saved["enabled_for_ai"]:
+            if (not saved or saved["deleted"] or saved["user_id"] is not None or not saved["enabled_for_ai"]
+                    or is_retired_long_atm_straddle(saved["definition_json"])):
                 raise AppError(409, "Built-in strategy changed", "shared_strategy_changed")
             if saved["version"] != decision["saved_strategy_version"]:
                 raise AppError(409, "Built-in strategy changed", "shared_strategy_changed")
