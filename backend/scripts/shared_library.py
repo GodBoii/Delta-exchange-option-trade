@@ -7,6 +7,7 @@ Commands print the planned change unless ``--apply`` is given:
   take-profit    set every shared template to a 50% take profit (refused while runs are open)
   emergency-stop set shared short-leg templates to a 300% emergency stop for future entries
   eth-catalog    mirror current BTC rules into eight ETH templates; retire ETH straddles
+  retire-long-straddle  disable and soft-delete long ATM straddle templates for all owners
 
 Every update increments the template version so open editors detect the change.
 """
@@ -23,7 +24,12 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.default_strategies import ETH_INSTRUMENT, ETH_TEMPLATE_SOURCES, builtin_strategy_definitions
+from app.default_strategies import (
+    ETH_INSTRUMENT,
+    ETH_TEMPLATE_SOURCES,
+    builtin_strategy_definitions,
+    is_retired_long_atm_straddle,
+)
 from app.exit_schedule import validate_template
 
 # Stable identities for templates added after the original catalog, so reruns stay idempotent.
@@ -289,10 +295,38 @@ Retirement only changes shared templates; run definitions and history are intact
     return len(planned) + len(retired)
 
 
+def retire_long_straddle(cursor: psycopg.Cursor, apply: bool) -> int:
+    """Retire templates while retaining run definitions, orders, and exit monitoring."""
+    cursor.execute(
+        """select id::text as id,name,definition_json,version,deleted,enabled_for_ai
+           from trade.saved_strategies order by id for update"""
+    )
+    retired = [
+        row for row in cursor.fetchall()
+        if is_retired_long_atm_straddle({**row["definition_json"], "name": row["name"]})
+        and (not row["deleted"] or row["enabled_for_ai"] or row["definition_json"].get("enabledForAi") is not False)
+    ]
+    for row in retired:
+        print(f"{'Retiring' if apply else 'Would retire'}: {row['name']} ({row['id']})")
+        if apply:
+            cursor.execute(
+                """update trade.saved_strategies set deleted=true,enabled_for_ai=false,
+                   definition_json=jsonb_set(definition_json,'{enabledForAi}','false'::jsonb),
+                   version=version+1,updated_at=now() where id=%s and version=%s""",
+                (row["id"], row["version"]),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"{row['name']} changed during retirement")
+    return len(retired)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "command", choices=("seed", "descriptions", "take-profit", "emergency-stop", "exit-templates", "eth-catalog")
+        "command", choices=(
+            "seed", "descriptions", "take-profit", "emergency-stop", "exit-templates", "eth-catalog",
+            "retire-long-straddle",
+        )
     )
     parser.add_argument("--apply", action="store_true", help="Commit the changes")
     parser.add_argument("--database-url", default=os.getenv("LOCAL_DATABASE_URL"))
@@ -306,6 +340,7 @@ def main() -> None:
         "emergency-stop": emergency_stop,
         "exit-templates": exit_templates,
         "eth-catalog": eth_catalog,
+        "retire-long-straddle": retire_long_straddle,
     }[args.command]
     with psycopg.connect(args.database_url, row_factory=dict_row) as connection, connection.cursor() as cursor:
         changed = operation(cursor, args.apply)
