@@ -22,6 +22,7 @@ from app.automation_schedule import (
     utc_text,
 )
 from app.capital import policy_from_row
+from app.default_strategies import is_retired_long_atm_straddle
 from app.errors import AppError
 from app.exit_schedule import ExitChoice, resolve_exit_schedule, template_from_definition
 from app.models import StrategyDefinition
@@ -92,6 +93,7 @@ class AutomationStrategyTools(Toolkit):
                 row
                 for row in rows
                 if row["enabled_for_ai"]
+                and not is_retired_long_atm_straddle(row["definition_json"])
                 and (self.user_id != SHARED_USER_ID or row.get("user_id") is None)
                 # Each agent lists only strategies written for its own underlying.
                 and ((row.get("definition_json") or {}).get("instrument") or {}).get("underlying") == self.asset
@@ -360,7 +362,8 @@ class AutomationStrategyTools(Toolkit):
         self, saved_id: str, expected_version: int, activation: datetime, choice: ExitChoice
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         rows, _ = self.application_data.selection_context(self.user_id, saved_id)
-        if not rows or not rows[0]["enabled_for_ai"]:
+        if (not rows or not rows[0]["enabled_for_ai"]
+                or is_retired_long_atm_straddle(rows[0]["definition_json"])):
             raise ValueError("Selected strategy is unavailable")
         strategy = rows[0]
         if strategy["version"] != expected_version:
