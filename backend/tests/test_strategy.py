@@ -194,7 +194,6 @@ def test_default_library_contains_unique_strategy_shapes():
     assert [definition.name for definition in definitions] == [
         "Long call",
         "Long put",
-        "Long ATM straddle",
         "Long strangle",
         "Short ATM straddle",
         "Short strangle",
