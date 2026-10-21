@@ -24,6 +24,7 @@ from .capital import (
 )
 from .config import Settings
 from .database import Database
+from .default_strategies import is_retired_long_atm_straddle
 from .delta import DeltaClient, RequestBudget
 from .delta_events import DeltaEvents, PublicMarkFeeds
 from .entry_outcomes import entry_failure
@@ -93,6 +94,7 @@ TERMINAL_SCHEDULED_ENTRY_CODES = frozenset(
         "invalid_profit_target",
         "emergency_policy_incomplete",
         "saved_strategy_version_changed",
+        "strategy_retired",
         "automation_disabled",
         "unsupported_payoff",
         "unbounded_payoff",
@@ -966,6 +968,8 @@ class TradingEngine:
         if not self.startup_recovered:
             raise AppError(503, "Interrupted executions must be recovered before entry", "startup_recovery_pending")
         row = await self.strategy_by_id(strategy_id)
+        if is_retired_long_atm_straddle(row["definition_json"]):
+            raise AppError(409, "Long ATM straddle has been retired", "strategy_retired")
         if row.get("entry_execution_at"):
             raise AppError(409, "Strategy entry has already run", "already_executed")
         if row.get("shared_decision_id"):
