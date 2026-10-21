@@ -1,7 +1,7 @@
 # ETH strategy catalog
 
-ETH mirrors the ten current BTC strategy shapes except Long ATM straddle and
-Short ATM straddle. Its shared library contains:
+ETH provides eight strategy shapes. BTC Long ATM straddle was retired on
+October 21, 2026; ETH Long ATM straddle and ETH Short ATM straddle remain retired. The ETH shared library contains:
 
 | ETH strategy | Strike selection |
 |---|---|
