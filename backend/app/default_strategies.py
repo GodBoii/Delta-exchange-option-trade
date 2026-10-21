@@ -9,6 +9,25 @@ from .models import StrategyDefinition
 IST = ZoneInfo("Asia/Kolkata")
 
 
+def is_retired_long_atm_straddle(definition: dict[str, Any]) -> bool:
+    """Recognize legacy names and renamed copies without blocking other option shapes."""
+    name = str(definition.get("name", "")).strip().casefold()
+    if name.removeprefix("eth ").removeprefix("btc ") in {
+        "long atm straddle", "long atm straddle - next-day expiry",
+    }:
+        return True
+    legs = definition.get("legs") or []
+    return (
+        len(legs) == 2
+        and all(
+            leg.get("position") == "buy" and leg.get("strikeMode") == "atm"
+            and leg.get("strikeSteps", 0) == 0 for leg in legs
+        )
+        and legs[0].get("expiry") == legs[1].get("expiry")
+        and {leg.get("optionType") for leg in legs} == {"call", "put"}
+    )
+
+
 def _schedule(now: datetime) -> tuple[str, str]:
     local_now = now.astimezone(IST)
     entry = (local_now + timedelta(minutes=15)).replace(second=0, microsecond=0)
@@ -132,26 +151,6 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
             risk_basis="net_debit",
             risk_mode="strategy_level",
             legs=[_leg("long-put", position="buy", option_type="put", role="long_put", expiry=seven_day)],
-        ),
-        _base(
-            now,
-            name="Long ATM straddle",
-            description=(
-                "Buy an at-the-money call and put when a sharp move is likely during the selected hold "
-                "but its direction is unclear. Either leg can gain from a large move. The combined debit is at "
-                "risk, and the move must outweigh both premiums, rapid same-day time decay, and any drop in "
-                "implied volatility."
-            ),
-            category="premium_buying",
-            outlook="large_move_unknown_direction",
-            expiry_policy="same_day",
-            holding_mode="intraday",
-            risk_basis="net_debit",
-            risk_mode="strategy_level",
-            legs=[
-                _leg("long-straddle-call", position="buy", option_type="call", role="long_call", expiry=same_day),
-                _leg("long-straddle-put", position="buy", option_type="put", role="long_put", expiry=same_day),
-            ],
         ),
         _base(
             now,
@@ -359,7 +358,7 @@ def default_strategy_definitions(now: datetime | None = None) -> list[StrategyDe
     return [StrategyDefinition.model_validate(definition) for definition in definitions]
 
 
-# Mirror the current BTC strategy shapes except the two ATM straddles.
+# Mirror the current BTC strategy shapes except the short ATM straddle and credit spreads.
 # Listed strike steps remain unchanged; ETH's price distances depend on its chain.
 ETH_TEMPLATE_SOURCES = (
     "Long call",
@@ -394,6 +393,6 @@ def eth_strategy_definitions(now: datetime | None = None) -> list[StrategyDefini
 
 
 def builtin_strategy_definitions(now: datetime | None = None) -> list[StrategyDefinition]:
-    """Every canonical shape: twelve BTC followed by eight ETH templates."""
+    """Every canonical shape: eleven BTC followed by eight ETH templates."""
     now = now or datetime.now(UTC)
     return [*default_strategy_definitions(now), *eth_strategy_definitions(now)]
