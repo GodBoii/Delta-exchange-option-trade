@@ -32,10 +32,10 @@ const DRAFT_ID_STORAGE_KEY = "delta-strategy-draft-id-v1";
 const LOCAL_DRAFT_KEY = "delta-strategy-local-draft-v1";
 const MAX_LEGS = 12;
 const DEFAULT_STRATEGY_NAMES = [
-  "Long call", "Long put", "Long ATM straddle", "Long strangle",
+  "Long call", "Long put", "Long strangle",
   "Short ATM straddle", "Short strangle"
 ] as const;
-const RETIRED_DEFAULT_STRATEGY_NAMES = new Set(["Iron condor", "Iron butterfly"]);
+const RETIRED_DEFAULT_STRATEGY_NAMES = new Set(["Iron condor", "Iron butterfly", "Long ATM straddle", "Long ATM straddle - next-day expiry"]);
 
 const tomorrow = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
