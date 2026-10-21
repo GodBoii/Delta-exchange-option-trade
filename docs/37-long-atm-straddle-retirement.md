@@ -35,3 +35,25 @@ docker compose --env-file backend/.env run --rm --no-deps delta-exchange \
 docker compose --env-file backend/.env run --rm --no-deps delta-exchange \
   python -m scripts.shared_library retire-long-straddle --apply
 ```
+
+## Completed verification and deployment
+
+- Backend suite passed locally and in a Linux Python 3.13 test image, with 816
+  passed and 137 database-dependent tests skipped in each run.
+- The isolated PostgreSQL and retirement regression run passed all 21 tests.
+- Changed Python files passed Ruff. Frontend typecheck and all 70 frontend tests
+  passed.
+- Pushed each changed file in its own commit to `origin main`. Pulled `main` on
+  Ubuntu, rebuilt the backend and analyzer, and restarted both after retirement.
+- Updated three template records. All four stored BTC and ETH long ATM straddle
+  variants now have `deleted=true`, `enabled_for_ai=false`, and JSON
+  `enabledForAi=false`. A second retirement pass made no changes.
+- Compared all 148 strategy run records before and after the retirement
+  transaction. They were unchanged. Template backup is in the persistent backend
+  volume at `/app/state/long-atm-straddle-retirement-20261021.json`.
+- Read the live writer library through the deployed AI discovery tool. BTC lists
+  nine strategies and ETH lists eight, with no retired long straddle. A stale
+  reference to the BTC long straddle was rejected before scheduling.
+- Both Docker services reported healthy. Backend trading and automation
+  schedulers reported running with no last error. The analyzer reported its
+  database ready. Removed the disposable test database and staged test artifacts.
