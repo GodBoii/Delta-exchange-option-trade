@@ -34,7 +34,7 @@ from .shared_analysis import enabled as shared_enabled
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/automation", tags=["automation"])
 news_analyzer_url = "http://news-analyzer:8002"
-MODEL_ID = "deepseek/deepseek-v4.1-flash-1017"
+MODEL_ID = "deepseek/deepseek-v4.1-flash"
 FIXED_RUN_LOOKAHEAD = timedelta(hours=36)
 FIXED_RUN_CATCH_UP = timedelta(minutes=10)
 FIXED_RUN_SYNC_SECONDS = 60.0
