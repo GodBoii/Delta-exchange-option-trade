@@ -10,7 +10,11 @@ from app.exit_schedule import ExitChoice, template_from_definition
 
 ENTRY = datetime(2026, 9, 29, 13, tzinfo=UTC)
 EXPIRY = datetime(2026, 9, 30, 12, tzinfo=UTC)
-TEMPLATE = template_from_definition(default_strategy_definitions(ENTRY)[4].model_dump(mode="json", exclude_none=True))
+TEMPLATE = template_from_definition(
+    next(
+        item for item in default_strategy_definitions(ENTRY) if item.name == "Short ATM straddle"
+    ).model_dump(mode="json", exclude_none=True)
+)
 
 
 class CatalogClient:
