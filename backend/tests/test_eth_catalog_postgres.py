@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 
 from app.default_strategies import ETH_INSTRUMENT, ETH_TEMPLATE_SOURCES, default_strategy_definitions
 from app.exit_schedule import validate_template
-from scripts.shared_library import ETH_FIXED_IDS, ETH_RETIRED_NAMES, eth_catalog, seed
+from scripts.shared_library import ETH_FIXED_IDS, ETH_RETIRED_NAMES, eth_catalog, retire_long_straddle, seed
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TEST_ETH_CATALOG_DATABASE_URL"), reason="Requires disposable eth_catalog_test PostgreSQL"
@@ -35,6 +35,13 @@ def catalog():
             cursor.execute("create schema if not exists trade")
             cursor.execute((Path(__file__).parents[1] / "db/002_application_state.sql").read_text(encoding="utf-8"))
             definitions = default_strategy_definitions(datetime(2026, 10, 11, tzinfo=UTC))
+            # Reproduce the legacy catalog even though long straddle is no longer seeded.
+            legacy = next(item for item in definitions if item.name == "Long strangle").model_copy(deep=True)
+            legacy.name = "Long ATM straddle"
+            for leg in legacy.legs:
+                leg.strikeMode = "atm"
+                leg.strikeSteps = 0
+            definitions.append(legacy)
             for item in definitions:
                 definition = validate_template(item.model_dump(mode="json", exclude_none=True))
                 # Production edits to BTC controls must be copied instead of defaults.
@@ -101,6 +108,44 @@ def test_dry_run_does_not_mutate_templates(catalog):
     before = library(catalog)
     assert eth_catalog(catalog, False) == 8
     assert library(catalog) == before
+
+
+def test_long_straddle_retirement_is_idempotent_and_preserves_runs(catalog):
+    catalog.execute("select id,status,data from trade.strategies order by id")
+    runs = catalog.fetchall()
+    before = library(catalog)
+    assert retire_long_straddle(catalog, False) == 2
+    assert library(catalog) == before
+    assert retire_long_straddle(catalog, True) == 2
+    after = library(catalog)
+    for row in after:
+        previous = next(item for item in before if item["id"] == row["id"])
+        if row["name"] in ("Long ATM straddle", "ETH Long ATM straddle"):
+            assert row["deleted"] and not row["enabled_for_ai"]
+            assert row["definition_json"]["enabledForAi"] is False
+            assert row["version"] == previous["version"] + 1
+        else:
+            assert row == previous
+    assert retire_long_straddle(catalog, True) == 0
+    seed(catalog, True)
+    catalog.execute("select name from trade.saved_strategies where not deleted and name like '%Long ATM straddle%'")
+    assert catalog.fetchall() == []
+    catalog.execute("select id,status,data from trade.strategies order by id")
+    assert catalog.fetchall() == runs
+
+
+def test_long_straddle_retirement_includes_renamed_user_copy(catalog):
+    catalog.execute(
+        """insert into trade.saved_strategies
+           (id,user_id,name,definition_json,enabled_for_ai,version,created_at,updated_at)
+           select %s,'test-owner','My renamed strategy',
+                  jsonb_set(definition_json,'{name}','"My renamed strategy"'),true,1,now(),now()
+           from trade.saved_strategies where name='Long ATM straddle'""",
+        (uuid4(),),
+    )
+    assert retire_long_straddle(catalog, True) == 3
+    catalog.execute("select deleted,enabled_for_ai from trade.saved_strategies where user_id='test-owner'")
+    assert catalog.fetchone() == {"deleted": True, "enabled_for_ai": False}
 
 
 def test_rollout_is_idempotent_and_generic_seed_does_not_revive_straddles(catalog):
