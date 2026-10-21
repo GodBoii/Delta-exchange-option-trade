@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 
 from .assets import Asset, asset_run_key, automation_asset_enabled, run_asset
 from .capital import policy_from_row
+from .default_strategies import is_retired_long_atm_straddle
 from .errors import AppError
 from .exit_schedule import validate_session_schedule
 from .materialized_definition import validate_materialized_definition
@@ -178,6 +179,7 @@ class LocalResearchOperations:
             not saved
             or saved["deleted"]
             or not saved["enabled_for_ai"]
+            or is_retired_long_atm_straddle(saved["definition_json"])
             or saved["version"] != version
             or (saved["user_id"] is not None and saved["user_id"] != user_id)
         ):
