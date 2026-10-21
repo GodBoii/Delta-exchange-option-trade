@@ -131,6 +131,8 @@ def prepare_cases(evidence: dict, repo: Path) -> list[dict]:
             _, current_schemas = historical_schemas(repo, int(time.time()) + 86400, asset)
             corrections = []
             for call in run.get("tools") or []:
+                if call.get("tool_call_error"):
+                    continue
                 name = call["tool_name"]
                 observed = normalized_args(call.get("tool_args"))
                 existing = next((s for s in schemas if s["function"]["name"] == name), None)
@@ -164,7 +166,7 @@ def prepare_cases(evidence: dict, repo: Path) -> list[dict]:
     return sorted(cases, key=lambda case: (case["created_at"], case["id"]))
 
 
-def replay_case(case: dict, api_key: str, max_rounds: int = 12) -> dict:
+def replay_case(case: dict, api_key: str, max_rounds: int = 12, *, model: str = MODEL, effort: str = "medium") -> dict:
     messages = list(case["messages"])
     trace, usages = [], []
     started = time.perf_counter()
@@ -175,8 +177,8 @@ def replay_case(case: dict, api_key: str, max_rounds: int = 12) -> dict:
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": "Bearer " + api_key},
                 json={
-                    "model": MODEL,
-                    "reasoning": {"effort": "medium", "exclude": True},
+                    "model": model,
+                    "reasoning": {"effort": effort, "exclude": True},
                     "messages": messages,
                     "tools": case["tools"],
                     "provider": {"require_parameters": True},
@@ -200,7 +202,7 @@ def replay_case(case: dict, api_key: str, max_rounds: int = 12) -> dict:
             data = response.json()
             if data.get("error"):
                 raise RuntimeError(f"Provider error: {data['error'].get('message', 'unknown')}")
-            if data.get("model") != MODEL:
+            if data.get("model") != model:
                 raise RuntimeError(f"Unexpected model {data.get('model')}")
             usages.append({**(data.get("usage") or {}), "request_seconds": time.perf_counter() - request_started})
             choice = data["choices"][0]
@@ -211,8 +213,8 @@ def replay_case(case: dict, api_key: str, max_rounds: int = 12) -> dict:
             if not message.get("tool_calls"):
                 return {
                     "status": "completed",
-                    "model": MODEL,
-                    "reasoning_effort": "medium",
+                    "model": model,
+                    "reasoning_effort": effort,
                     "report": message.get("content"),
                     "tools": trace,
                     "usage": usages,
@@ -247,18 +249,34 @@ def main() -> None:
     run.add_argument("output", type=Path)
     run.add_argument("--workers", type=int, default=3)
     run.add_argument("--retry-failed", action="store_true")
+    run.add_argument("--model", default=MODEL)
+    run.add_argument("--effort", choices=("low", "medium", "high"), default="medium")
     args = parser.parse_args()
     if args.command == "prepare":
         evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
         cases = prepare_cases(evidence, args.repo or Path(__file__).resolve().parents[2])
         args.output.write_text(json.dumps({"window": evidence["window"], "cases": cases}), encoding="utf-8")
-        print(json.dumps({"prepared": len(cases), "output": str(args.output)}))
+        covered = {case["id"] for case in cases}
+        coverage = {
+            "reports": len(evidence["reports"]),
+            "prepared": len(cases),
+            "reports_without_replay": [r["id"] for r in evidence["reports"] if r["id"] not in covered],
+        }
+        args.output.with_suffix(".coverage.json").write_text(json.dumps(coverage, indent=2), encoding="utf-8")
+        print(json.dumps({**coverage, "output": str(args.output)}))
         return
     if not 1 <= args.workers <= 4:
         parser.error("workers must be between 1 and 4")
     api_key = os.environ["OPENROUTER_API_KEY"]
     cases = json.loads(args.cases.read_text(encoding="utf-8"))["cases"]
     args.output.mkdir(parents=True, exist_ok=True)
+    config = {"model": args.model, "reasoning_effort": args.effort}
+    config_path = args.output / "run-config.json"
+    if config_path.exists() and json.loads(config_path.read_text()) != config:
+        raise ValueError("Output directory belongs to a different model or effort; choose a new directory")
+    if not config_path.exists() and any(args.output.glob("*.json")):
+        raise ValueError("Existing results lack model provenance; choose a new output directory")
+    config_path.write_text(json.dumps(config), encoding="utf-8")
     pending = []
     for case in cases:
         path = args.output / (case["id"] + ".json")
@@ -268,14 +286,16 @@ def main() -> None:
         if previous is None or (args.retry_failed and previous.get("status") == "failed"):
             pending.append(case)
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(replay_case, case, api_key): case for case in pending}
+        futures = {
+            executor.submit(replay_case, case, api_key, model=args.model, effort=args.effort): case for case in pending
+        }
         for future in as_completed(futures):
             case = futures[future]
             try:
                 result = future.result()
             except (httpx.HTTPError, RuntimeError, ValueError, KeyError, IndexError) as error:
                 result = {"status": "failed", "error": str(error)[:300]}
-            result.update({"case_id": case["id"], "input_sha256": case["input_sha256"]})
+            result.update({"case_id": case["id"], "input_sha256": case["input_sha256"], **config})
             (args.output / (case["id"] + ".json")).write_text(json.dumps(result), encoding="utf-8")
             print(json.dumps({"case": case["id"], "asset": case["asset"], "status": result["status"]}), flush=True)
 
