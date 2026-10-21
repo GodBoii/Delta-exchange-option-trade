@@ -18,7 +18,7 @@ from .owner_ledger import record_policy
 
 DEFAULT_AUTOMATION = {
     "enabled": False,
-    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "model_id": "deepseek/deepseek-v4.1-flash",
     "minimum_follow_up_minutes": 5,
     "maximum_agent_runs_per_day": 3,
 }
