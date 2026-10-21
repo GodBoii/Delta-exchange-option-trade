@@ -14,7 +14,10 @@ from automation_agent.tools import materialize_live_definition
 
 NOW = datetime(2026, 9, 4, 14, tzinfo=UTC)
 DEFINITIONS = default_strategy_definitions(NOW)
-ADDED = DEFINITIONS[6:10]
+ADDED = [
+    item for item in DEFINITIONS
+    if item.name in {"Short OTM put", "Short OTM call", "Long ITM call", "Long ITM put"}
+]
 CHAIN = [
     {
         "product_id": strike + offset,
