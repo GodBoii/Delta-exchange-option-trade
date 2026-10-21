@@ -13,12 +13,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_model_rollout_preserves_flags_history_and_idempotence():
-    target = "deepseek/deepseek-v4.1-flash-1017"
-    previous = "deepseek/deepseek-v4.1-flash"
+@pytest.mark.parametrize(
+    ("migration_name", "previous", "target"),
+    [
+        ("013_deepseek_flash_1017.sql", "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash-1017"),
+        ("015_deepseek_flash.sql", "deepseek/deepseek-v4.1-flash-1017", "deepseek/deepseek-v4.1-flash"),
+    ],
+)
+def test_model_rollout_preserves_flags_history_and_idempotence(migration_name, previous, target):
     user = str(uuid4())
     jobs = {status: str(uuid4()) for status in ("scheduled", "running", "completed")}
-    migration = Path(__file__).resolve().parents[1] / "db" / "013_deepseek_flash_1017.sql"
+    migration = Path(__file__).resolve().parents[1] / "db" / migration_name
     settings = {"enabled": False, "model_id": previous, "asset_enabled": {"BTC": False, "ETH": True}}
 
     with psycopg.connect(os.environ["TEST_LOCAL_DATABASE_URL"]) as connection:
