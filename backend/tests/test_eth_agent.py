@@ -43,9 +43,9 @@ def test_eth_builtins_mirror_btc_except_straddles_and_retired_spreads():
     assert all(leg.strikeMode == "atm" for item in eth[:2] for leg in item.legs)
     assert all("BTC" not in item.description for item in eth)
     # BTC and ETH catalogs each contain one template per strategy shape.
-    assert len(default_strategy_definitions(NOW)) == 12
+    assert len(default_strategy_definitions(NOW)) == 11
     assert all(item.instrument.underlying == "BTC" for item in default_strategy_definitions(NOW))
-    assert len(builtin_strategy_definitions(NOW)) == 20
+    assert len(builtin_strategy_definitions(NOW)) == 19
 
 
 def test_asset_helpers_keep_legacy_btc_rows_and_prefix_other_assets():
