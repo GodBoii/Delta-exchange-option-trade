@@ -44,7 +44,9 @@ def test_verified_action_precedes_unexecuted_model_suggestion():
 
 def test_materializes_same_day_hold_to_expiry_schedule() -> None:
     activation = datetime(2026, 8, 25, 6, tzinfo=UTC)
-    definition = default_strategy_definitions(activation)[4].model_dump(mode="json", exclude_none=True)
+    definition = next(
+        item for item in default_strategy_definitions(activation) if item.name == "Short ATM straddle"
+    ).model_dump(mode="json", exclude_none=True)
     expiry = datetime(2026, 8, 25, 12, tzinfo=UTC)
 
     live, exit_at = materialize_live_definition(
@@ -470,8 +472,10 @@ async def test_automatic_lots_reject_one_lot_outside_selected_cap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_half_balance_fits_one_long_straddle_lot_from_exchange_quotes() -> None:
-    definition = default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))[2]
+async def test_half_balance_fits_one_long_strangle_lot_from_exchange_quotes() -> None:
+    definition = next(
+        item for item in default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC)) if item.name == "Long strangle"
+    )
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
     class Client:
@@ -513,7 +517,10 @@ async def test_half_balance_fits_one_long_straddle_lot_from_exchange_quotes() ->
 
 @pytest.mark.asyncio
 async def test_short_straddle_margin_estimate_matches_half_balance_example() -> None:
-    definition = default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))[4]
+    definition = next(
+        item for item in default_strategy_definitions(datetime(2026, 8, 26, tzinfo=UTC))
+        if item.name == "Short ATM straddle"
+    )
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
 
     class Client:
@@ -555,7 +562,9 @@ async def test_short_straddle_margin_estimate_matches_half_balance_example() -> 
 
 @pytest.mark.parametrize("leverage,expected_lots", [("200", 122), ("50", 30)])
 async def test_live_option_sizing_uses_selected_exchange_leverage(leverage, expected_lots):
-    definition = default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC))[6]
+    definition = next(
+        item for item in default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC)) if item.name == "Short OTM put"
+    )
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
     engine.product_spec = AsyncMock(return_value={"contract_value": "0.001", "initial_margin": "0.5"})
     client = DeltaClient(SimpleNamespace(delta_production_url="https://api.india.delta.exchange"))
@@ -584,7 +593,9 @@ async def test_live_option_sizing_uses_selected_exchange_leverage(leverage, expe
 
 
 async def test_live_option_sizing_rejects_unknown_account_leverage():
-    definition = default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC))[6]
+    definition = next(
+        item for item in default_strategy_definitions(datetime(2026, 9, 24, tzinfo=UTC)) if item.name == "Short OTM put"
+    )
     engine = TradingEngine(SimpleNamespace(), SimpleNamespace())
     engine.product_spec = AsyncMock(return_value={"contract_value": "0.001", "initial_margin": "0.5"})
     client = DeltaClient(SimpleNamespace(delta_production_url="https://api.india.delta.exchange"))
