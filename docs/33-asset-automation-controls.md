@@ -4,6 +4,27 @@ The owner can pause or resume each asset on the Automation page. These controls 
 to shared analysis and automated entries for every account. The existing account
 participation switch remains independent.
 
+Every account, including the owner, also has BTC and ETH switches under **Your asset
+automation** on its Automation page. These save the same account preferences that
+the owner can edit on the Users page. Either the user or owner can change them; the
+last saved change applies. The owner's separate **Global asset automation** controls
+still pause shared analysis and automated entries for everyone.
+
+`PUT /api/automation/settings/assets/BTC` or `/ETH` accepts a strict boolean
+`enabled` field. Authentication supplies the target account; callers cannot supply
+another user ID. The response contains `assetEnabled`, and the overview includes the
+same preferences at `settings.assetEnabled`. Missing stored flags default to true.
+An older backend without that overview field leaves the new controls disabled with
+an update message. Deploy the backend before the frontend.
+
+Account asset preferences live in `trade.users.automation.asset_enabled`. They remain
+saved when the master account switch is paused. New entries require the account
+master switch, the account asset preference and the global asset switch to allow
+them. A personal pause uses the existing transactional account operation, cancelling
+only that account and asset's pending automated work. Other accounts, the other
+asset, shared analysis, manual strategies and active trades keep their behavior.
+Resuming does not revive cancelled entries. No migration is needed.
+
 `PUT /api/automation/assets/BTC` or `/ETH` accepts `{"enabled": false}` or `true`.
 The backend verifies the owner role and the configured system owner. The overview
 returns `assetAutomation` with the effective state of both assets.
@@ -34,3 +55,12 @@ API responses. PostgreSQL tests used a disposable database on Ubuntu, without pr
 credentials or exchange calls. The broader database check found an existing failure in
 `test_library_save_revision_and_soft_delete`, reproduced using the unchanged test image.
 That fixture lacks fields now required by strategy validation.
+
+The personal-controls change passed 97 frontend tests and 33 focused backend tests,
+TypeScript, focused ESLint, Ruff and the production Next.js build. Local synthetic browser checks covered
+personal switching, keyboard activation, saved display after reload, failed saves,
+the global-pause explanation and the owner's separate personal/global controls.
+The panel also fit a 390-pixel static browser preview. PostgreSQL integration tests,
+including the expanded owner/personal cancellation test, were skipped because no
+isolated database was configured and the local Docker daemon was stopped. These
+checks did not use real account settings or submit exchange orders.
