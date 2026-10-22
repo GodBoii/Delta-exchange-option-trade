@@ -248,6 +248,7 @@ export type AutomationOverview = {
   assetAutomation?: Record<AgentAsset, boolean>;
   settings: {
     enabled: boolean;
+    assetEnabled?: Record<AgentAsset, boolean>;
     maximumConcurrentStrategies?: number | null;
   };
   enabledStrategies: number;
