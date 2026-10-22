@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  describeOrder, NO_PRICES, parseStreamMessage, positionView, positionViews, totalUnrealized
+  describeOrder, NO_PRICES, parseStreamMessage, positionView, positionViews, totalUnrealized, walletViews
 } from "../lib/portfolio";
 
 const product = {
@@ -8,6 +8,15 @@ const product = {
   strike_price: "83600", settlement_time: "2026-09-27T12:00:00Z", spot_index: { symbol: ".DEXBTUSD" },
   underlying_asset: { symbol: "BTC" }
 };
+
+test("a larger REF_USD quantity cannot replace the zero USD trading wallet", () => {
+  const wallet = (asset_symbol: string, balance: string) => ({ asset_symbol, balance, available_balance: balance, blocked_margin: "0" });
+  const rows = walletViews([wallet("REF_USD", "50"), wallet("USD", "0"), wallet("BTC", "0")]);
+  expect(rows.map(row => row.asset)).toEqual(["USD", "REF_USD"]);
+  expect(rows[0].balance).toBe(0);
+  expect(walletViews([])).toEqual([]);
+  expect(walletViews([{ asset_symbol: "USD", balance: "invalid" }])).toEqual([]);
+});
 // Figures from a live short put on Delta India.
 const shortPut = {
   product_id: 154884, product_symbol: "P-BTC-83600-270926", size: -17, entry_price: "126.7", margin: "9.29",
