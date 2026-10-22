@@ -62,3 +62,79 @@ Work stays on `main`. Each changed file is committed separately and commits are
 pushed to `origin main` as development progresses. Production backend changes
 require a backend-first release; frontend code must remain compatible while the
 two deployments differ.
+
+## Implemented behavior
+
+The workspace now models loading, signed-out, verified, and unavailable sessions
+separately. Auth events invalidate in-flight checks on sign-out or a different
+user, and private feature views remount for a different authenticated user.
+Temporary failures retain only the same user's last known connection. The UI
+offers public/offline capabilities until verification recovers, with a 15-second
+retry and checks when connectivity or foreground visibility returns.
+
+Normal sign-out uses Supabase's local scope. API errors retain HTTP status and
+backend codes. A rejected authenticated GET can refresh and retry once, with
+coalescing and a cooldown to prevent refresh loops. Writes are never replayed.
+Delta credential errors do not terminate application authentication. Older
+backends returning an unauthenticated HTTP 200 are handled during rollout.
+
+The session endpoint requires application authentication. Revoked connections no
+longer become connected after reload. Fixed-name session events and credential
+connection/revocation logs use verified user/session identifiers without tokens,
+secrets, emails, request bodies, or exchange payloads.
+
+The portfolio headline selects USD explicitly and preserves a reported zero USD
+row. Other funded assets remain separate. Missing or invalid wallet data does not
+become a fabricated zero, and non-USD margin is not added to USD margin.
+
+Theme preferences use timestamped localStorage and a non-sensitive cookie. The
+newest successfully saved preference wins, including when either store fails.
+Legacy plain-text preferences remain readable. The before-paint script and React
+use the same selection rules. When both stores fail, the account panel explains
+that the theme applies until reload. Normal localStorage changes synchronize
+across tabs; a cookie-only fallback is picked up by other tabs on reload.
+
+Main-account key setup now verifies the profile and wallet, position, and
+order-list responses before saving. Probe failure preserves the previous key.
+The interface says that read access was checked and does not claim that a read
+probe establishes order-placement permission. No test order is submitted.
+
+## Verification
+
+The production build, TypeScript checking, and ESLint passed. The frontend suite
+passed 97 tests. Regression tests cover typed errors, read-only auth
+recovery, no write replay, refresh coalescing/cooldown, account identity changes,
+outage retention, revoked/disconnected sessions, device-local sign-out, USD wallet
+selection, legacy theme values, partial storage failure, and before-paint restore.
+
+The backend suite passed in the repository virtual environment: 895 passed and
+138 skipped. Skips require unavailable isolated database or other integration
+fixtures. The system Python was missing unrelated test dependencies; it was not
+used for the final full suite. Production databases were not used for tests.
+
+Browser checks used the real Home, AppShell, Dashboard, Automation, and theme
+components with temporary auth and network fixtures. Checks covered an outage
+and recovery without losing the account, a response arriving after sign-out, an
+old response arriving after a different user signs in, device sign-out, a zero
+USD wallet alongside REF_USD, Dark surviving reload after a localStorage write
+failure, and visible feedback when both stores fail. The owner had three
+automation switches and the regular user had one, preserving the global-control
+boundary. The 390px phone viewport had no document horizontal overflow.
+
+Temporary verification routes and client substitutions were removed before the
+final build and commits. Screenshots contain fixture accounts and are stored
+outside the repository. No real sign-out, order, transfer, capital edit, or
+participation edit was performed during browser verification.
+
+## Backend release
+
+The backend was released from `main` at `1de5c3f` on 22 October 2026. Before
+recreation there were no active strategies, entries, exits, analyses, or rechecks.
+The rebuilt trading API became healthy. Post-release checks confirmed healthy
+schedulers, profile synchronization and database connections. Both absent and
+invalid application tokens returned HTTP 401 with `not_authenticated`.
+
+Read-only database checks confirmed that all saved Delta connection statuses and
+credential-update timestamps were unchanged. Child participation remained
+disabled, and no account-management overrides were introduced. The frontend
+release follows the main-branch push after final validation.
