@@ -41,6 +41,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
   const [runningAssets, setRunningAssets] = useState<readonly AgentAsset[]>([]);
   const [saving, setSaving] = useState(false);
   const [savingAsset, setSavingAsset] = useState<AgentAsset | null>(null);
+  const [savingAccountAsset, setSavingAccountAsset] = useState<AgentAsset | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async (quiet = false) => {
@@ -124,6 +125,26 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
     }
   }
 
+  async function updateAccountAssetEnabled(asset: AgentAsset, enabled: boolean) {
+    if (!overview?.settings.assetEnabled || savingAccountAsset) return;
+    setSavingAccountAsset(asset);
+    try {
+      const saved = await requestJson<{ assetEnabled: Record<AgentAsset, boolean> }>(`/api/automation/settings/assets/${asset}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled })
+      });
+      setOverview(current => current && { ...current, settings: { ...current.settings, assetEnabled: saved.assetEnabled } });
+      onNotice({ tone: "ok", text: enabled
+        ? `${asset} automation enabled for your account. The account and global switches still apply.`
+        : `${asset} automation paused for your account. Pending entries were cancelled. Open trades keep their exit rules.` });
+      await load(true);
+    } catch (saveError) {
+      onNotice({ tone: "error", text: errorMessage(saveError) });
+    } finally {
+      setSavingAccountAsset(null);
+    }
+  }
+
   const slots = useMemo(() => groupScheduleSlots(overview?.upcomingRuns ?? []), [overview?.upcomingRuns]);
   const latestDecision = overview?.runs.find(run => run.outcome || run.report);
   const enabled = overview?.settings.enabled ?? false;
@@ -171,9 +192,38 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
 
+      {overview && (
+        <Panel>
+          <PanelHeader icon={<Bot />} title="Your asset automation" meta="Your account only" />
+          <p className="field-hint">
+            Choose which assets your account trades automatically. The Automation switch must also be live.
+            Open trades keep their exit and risk rules.
+          </p>
+          {!overview.settings.assetEnabled && <InlineMessage tone="warning">Update the trading backend to use account asset controls.</InlineMessage>}
+          <div className="automation-asset-controls">
+            {AGENT_ASSETS.map(asset => (
+              <AutomationSwitch
+                key={asset}
+                label={asset}
+                ariaLabel={`${asset} automated entries for my account`}
+                enabled={overview.settings.assetEnabled?.[asset] ?? false}
+                busy={savingAccountAsset === asset}
+                disabled={!overview.settings.assetEnabled || savingAccountAsset !== null || saving}
+                onChange={next => void updateAccountAssetEnabled(asset, next)}
+              />
+            ))}
+          </div>
+          {AGENT_ASSETS.some(asset => overview.assetAutomation?.[asset] === false) && (
+            <p className="field-hint">
+              {AGENT_ASSETS.filter(asset => overview.assetAutomation?.[asset] === false).join(" and ")} automation is paused globally by the owner. Your preferences are saved and apply when it resumes.
+            </p>
+          )}
+        </Panel>
+      )}
+
       {isOwner && overview && (
         <Panel>
-          <PanelHeader icon={<ShieldCheck />} title="Asset automation" meta="Owner controls · All accounts" />
+          <PanelHeader icon={<ShieldCheck />} title="Global asset automation" meta="Owner controls · All accounts" />
           <p className="field-hint">
             Pause BTC or ETH analysis and new automated entries independently. Open trades keep their exit and risk rules.
           </p>
