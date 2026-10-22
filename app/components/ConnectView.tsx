@@ -15,7 +15,7 @@ import {
  *
  * This is the only screen where a live trading credential is entered, so it
  * states plainly what happens to the secret and what does not happen on submit
- * (no order is placed). Trading access is verified server-side before the
+ * (no order is placed). Account read access is verified server-side before the
  * connection is stored.
  */
 export default function ConnectView({ user, onConnected, onSignOut, embedded = false }: {
@@ -90,7 +90,7 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
             </div>
             <div>
               <dt><LockKeyhole aria-hidden="true" />Verified before connecting</dt>
-              <dd>Trading permission is checked against Delta before the connection is accepted.</dd>
+              <dd>Account, wallet, position and order-list access are checked before saving. Order-placement permission is not tested.</dd>
             </div>
             <div>
               <dt><KeyRound aria-hidden="true" />Revocable at any time</dt>
@@ -103,8 +103,8 @@ export default function ConnectView({ user, onConnected, onSignOut, embedded = f
           <section className={`entry-card t-input${error ? " is-error" : ""}`} ref={card}>
             {verified ? (
               <div className="connect-verified" role="status">
-                <SuccessCheck shown label="Trading access verified" size={56} />
-                <strong>Trading access verified</strong>
+                <SuccessCheck shown label="Account read access verified" size={56} />
+                <strong>Account read access verified</strong>
                 <small>Opening your dashboard</small>
               </div>
             ) : (
