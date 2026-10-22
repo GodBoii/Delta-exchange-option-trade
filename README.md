@@ -238,6 +238,10 @@ responses cannot schedule a trade. Active trades retain their exit and risk rule
 manual strategies remain unchanged. Resuming creates future session reviews without
 reviving cancelled entries. Both assets default to enabled for existing installations.
 The original account automation switch still controls only that account's participation.
+Every user's Automation page also has personal BTC and ETH switches under **Your
+asset automation**, including the owner's own account. These share the preferences
+edited in the owner's Users page. Account and global switches still gate new entries;
+personal asset pauses leave shared analysis, other accounts and open trades unchanged.
 See [asset automation controls](docs/33-asset-automation-controls.md) for storage and checks.
 
 Deploy all three application services to an always-on Docker host. The Delta service still needs a stable outbound public IP because the tunnel changes inbound routing only. On the server, create the ignored `.env.local` containing the server variables.
