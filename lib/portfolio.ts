@@ -17,6 +17,30 @@ export type PriceMap = Readonly<Record<string, number>>;
 export type LivePrices = { readonly marks: PriceMap; readonly indices: PriceMap };
 export const NO_PRICES: LivePrices = { marks: {}, indices: {} };
 
+export type WalletView = {
+  asset: string;
+  balance: number;
+  available: number;
+  blocked: number;
+  positionMargin: number;
+  orderMargin: number;
+};
+
+/** Keep a reported zero USD wallet and never rank unlike asset units by quantity. */
+export function walletViews(balances: readonly DeltaRecord[]): WalletView[] {
+  return balances.flatMap(row => {
+    const asset = readText(row, "asset_symbol", "symbol");
+    const balance = readNumber(row, "balance"), available = readNumber(row, "available_balance");
+    const blocked = readNumber(row, "blocked_margin");
+    if (!asset || balance === null || available === null || blocked === null) return [];
+    return [{ asset, balance, available, blocked,
+      positionMargin: (readNumber(row, "position_margin") ?? 0) + (readNumber(row, "cross_position_margin") ?? 0),
+      orderMargin: (readNumber(row, "order_margin") ?? 0) + (readNumber(row, "cross_order_margin") ?? 0) }];
+  }).filter(wallet => wallet.asset === "USD" || wallet.balance !== 0 || wallet.blocked !== 0 || wallet.available !== 0)
+    .sort((left, right) => left.asset === right.asset ? 0 : left.asset === "USD" ? -1
+      : right.asset === "USD" ? 1 : left.asset.localeCompare(right.asset));
+}
+
 export type ProtectiveOrder = {
   kind: "stop_loss" | "take_profit";
   orderId: string | null;
