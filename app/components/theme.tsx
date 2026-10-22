@@ -16,42 +16,24 @@
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode
 } from "react";
-
-export type ThemeChoice = "system" | "light" | "dark";
-export type ResolvedTheme = "light" | "dark";
-
-const STORAGE_KEY = "trade-cognition-theme";
-const SCHEME_QUERY = "(prefers-color-scheme: light)";
-
-function isThemeChoice(value: unknown): value is ThemeChoice {
-  return value === "system" || value === "light" || value === "dark";
-}
-
-/**
- * Runs before first paint, so the stored choice is on the document element
- * before any surface renders and the page never flashes the wrong theme. It is
- * duplicated logic on purpose: the alternative is a hydration-time correction,
- * which is exactly the flash this avoids.
- */
-export const THEME_BOOT_SCRIPT = `(function(){try{
-var s=localStorage.getItem(${JSON.stringify(STORAGE_KEY)});
-var c=(s==="light"||s==="dark"||s==="system")?s:"dark";
-var r=c==="system"?(matchMedia(${JSON.stringify(SCHEME_QUERY)}).matches?"light":"dark"):c;
-var e=document.documentElement;
-e.dataset.theme=r;e.dataset.themeChoice=c;e.style.colorScheme=r;
-}catch(_){}})();`;
+import {
+  isThemeChoice, saveThemeChoice, storedThemeChoice, THEME_SCHEME_QUERY, THEME_STORAGE_KEY,
+  type ResolvedTheme, type ThemeChoice,
+} from "@/lib/theme-preference";
+export { THEME_BOOT_SCRIPT, type ResolvedTheme, type ThemeChoice } from "@/lib/theme-preference";
 
 type ThemeContextValue = {
   choice: ThemeChoice;
   resolved: ResolvedTheme;
   setChoice: (choice: ThemeChoice) => void;
+  preferenceSaved: boolean;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function systemTheme(): ResolvedTheme {
   if (typeof window === "undefined") return "dark";
-  return window.matchMedia(SCHEME_QUERY).matches ? "light" : "dark";
+  return window.matchMedia(THEME_SCHEME_QUERY).matches ? "light" : "dark";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -66,13 +48,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return isThemeChoice(attribute) ? attribute : "dark";
   });
   const [system, setSystem] = useState<ResolvedTheme>(systemTheme);
+  const [preferenceSaved, setPreferenceSaved] = useState(true);
 
   useEffect(() => {
-    const query = window.matchMedia(SCHEME_QUERY);
+    const query = window.matchMedia(THEME_SCHEME_QUERY);
     const onChange = () => setSystem(query.matches ? "light" : "dark");
     onChange();
     query.addEventListener("change", onChange);
     return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === THEME_STORAGE_KEY || event.key === null) setChoiceState(storedThemeChoice());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const resolved: ResolvedTheme = choice === "system" ? system : choice;
@@ -86,15 +77,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setChoice = useCallback((next: ThemeChoice) => {
     setChoiceState(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // A blocked storage quota must not stop the theme from applying for the
-      // rest of the session.
-    }
+    setPreferenceSaved(saveThemeChoice(next));
   }, []);
 
-  const value = useMemo(() => ({ choice, resolved, setChoice }), [choice, resolved, setChoice]);
+  const value = useMemo(() => ({ choice, resolved, setChoice, preferenceSaved }), [choice, resolved, setChoice, preferenceSaved]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
