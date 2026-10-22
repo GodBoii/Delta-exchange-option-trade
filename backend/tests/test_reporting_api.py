@@ -468,7 +468,8 @@ async def test_owner_cannot_overwrite_a_more_recent_user_capital_edit(api):
     assert current["capitalRevision"] == user_edit.json()["capitalRevision"]
 
 
-async def test_account_asset_pause_preserves_other_assets_accounts_live_and_manual_runs(api):
+@pytest.mark.parametrize("personal", [False, True])
+async def test_account_asset_pause_preserves_other_assets_accounts_live_and_manual_runs(api, personal):
     runtime = api.db.runtime
     rows = {}
     for user in (api.owner, api.brother):
@@ -486,9 +487,16 @@ async def test_account_asset_pause_preserves_other_assets_accounts_live_and_manu
     manual = str(uuid4())
     await runtime.write("strategies", {"id": manual, "user_id": api.brother, "status": "scheduled", "asset": "ETH"})
     path = f"/api/owner/users/{api.brother}"
-    response = await api.client.put(f"{path}/automation/assets/ETH", json={"enabled": False})
+    if personal:
+        api.current["id"] = api.brother
+    asset_path = "/api/automation/settings/assets/ETH" if personal else f"{path}/automation/assets/ETH"
+    response = await api.client.put(asset_path, json={"enabled": False})
     assert response.status_code == 200
-    assert response.json()["automation"] == {"enabled": True, "assetEnabled": {"BTC": True, "ETH": False}}
+    if personal:
+        assert response.json()["assetEnabled"] == {"BTC": True, "ETH": False}
+        api.current["id"] = api.owner
+    else:
+        assert response.json()["automation"] == {"enabled": True, "assetEnabled": {"BTC": True, "ETH": False}}
     for (user, asset, status), run_id in rows.items():
         row = (await runtime.select("strategies", {"id": f"eq.{run_id}"}))[0]
         expected = "cancelled" if user == api.brother and asset == "ETH" and status == "scheduled" else status
