@@ -666,6 +666,7 @@ async def automation_overview(request: Request, user: RequiredUser) -> dict[str,
         "assetAutomation": {asset: automation_asset_enabled(analysis, asset) for asset in ASSETS},
         "settings": {
             "enabled": settings["enabled"],
+            "assetEnabled": {asset: (settings.get("asset_enabled") or {}).get(asset, True) for asset in ASSETS},
             "maximumConcurrentStrategies": capital_policy.concurrency_limit(),
         },
         "enabledStrategies": sum(bool(row["enabled_for_ai"]) for row in strategies),
@@ -720,6 +721,23 @@ async def update_automation_settings(
     db: Database = request.app.state.db
     settings = await set_account_automation(db, str(user["id"]), body.enabled)
     return {"success": True, "settings": settings}
+
+
+@router.put("/settings/assets/{asset}")
+async def update_account_asset_automation(
+    asset: Asset, request: Request, body: AssetAutomationUpdate, user: RequiredUser
+) -> dict[str, Any]:
+    db: Database = request.app.state.db
+    user_id = str(user["id"])
+    await ensure_settings(db, user_id)
+    saved = await db.runtime.data.request(
+        "accountAutomation:setAssetEnabled",
+        {"userId": user_id, "asset": asset, "enabled": body.enabled}, mutation=True,
+    )
+    logger.info("Account asset automation change user=%s asset=%s enabled=%s", user_id, asset, body.enabled)
+    return {"success": True, "assetEnabled": {
+        item: (saved.get("asset_enabled") or {}).get(item, True) for item in ASSETS
+    }}
 
 
 @router.put("/assets/{asset}")
