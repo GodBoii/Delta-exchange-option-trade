@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { Session } from "@supabase/supabase-js";
 
 /**
  * Browser client for the private FastAPI trading backend.
@@ -11,6 +12,48 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export type ApiRequester = <T>(url: string, init?: RequestInit) => Promise<T>;
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export const SESSION_AUTH_EVENT = "trade-cognition-session-auth";
+let pendingRefresh: { userId: string; promise: Promise<Session | null> } | null = null;
+let lastForcedRefresh: { userId: string; at: number } | null = null;
+
+export function authFailure(error: { status?: number; name?: string }) {
+  return new ApiError("Your session could not be verified. Please retry.",
+    error.name === "AuthRetryableFetchError" || (error.status ?? 0) >= 500 ? 503 : 401,
+    error.name === "AuthRetryableFetchError" || (error.status ?? 0) >= 500 ? "auth_unavailable" : "not_authenticated");
+}
+
+function notifyAuthFailure(userId: string | null) {
+  window.dispatchEvent(new CustomEvent(SESSION_AUTH_EVENT, { detail: { userId } }));
+}
+
+export async function refreshReadSession(original: Session): Promise<Session | null> {
+  const auth = getSupabaseBrowserClient().auth;
+  const current = await auth.getSession();
+  if (current.error) throw authFailure(current.error);
+  if (current.data.session?.user.id !== original.user.id) return null;
+  if (current.data.session.access_token !== original.access_token) return current.data.session;
+  if (pendingRefresh?.userId === original.user.id) return pendingRefresh.promise;
+  if (lastForcedRefresh?.userId === original.user.id && Date.now() - lastForcedRefresh.at < 30_000) return null;
+  lastForcedRefresh = { userId: original.user.id, at: Date.now() };
+  const promise = auth.refreshSession().then(({ data, error }) => {
+    if (error) throw authFailure(error);
+    return data.session?.user.id === original.user.id ? data.session : null;
+  });
+  pendingRefresh = { userId: original.user.id, promise };
+  try {
+    return await promise;
+  } finally {
+    if (pendingRefresh?.promise === promise) pendingRefresh = null;
+  }
+}
+
 const DEFAULT_PORTS = "8000,8585,8085,8011,8001";
 const PROBE_TIMEOUT_MS = 12_000;
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -22,6 +65,7 @@ let pendingResolution: Promise<string> | null = null;
 export function resetApiOrigin() {
   resolvedOrigin = null;
   pendingResolution = null;
+  lastForcedRefresh = null;
 }
 
 function candidateOrigins() {
@@ -83,30 +127,61 @@ export async function backendUrl(path: string) {
  * the default timeout.
  */
 export async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const auth = await getSupabaseBrowserClient().auth.getSession();
+  if (auth.error) {
+    const error = authFailure(auth.error);
+    if (error.status === 401) notifyAuthFailure(null);
+    throw error;
+  }
+  const session = auth.data.session;
   const origin = await apiOrigin();
-  const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
   const signal = init && Object.prototype.hasOwnProperty.call(init, "signal")
     ? init.signal
     : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 
-  const response = await fetch(`${origin}${url}`, {
-    ...init,
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-      ...init?.headers
-    }
-  });
-
-  const data = await response.json().catch(() => ({})) as T & {
-    message?: string;
-    error?: string | { message?: string; code?: string };
+  const send = async (token: string | undefined) => {
+    const headers = new Headers(init?.headers);
+    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
+    const response = await fetch(`${origin}${url}`, { ...init, signal, headers, cache: "no-store" });
+    const data: unknown = await response.json().catch(() => null);
+    return { response, data };
   };
-
-  if (!response.ok) {
-    const nested = typeof data.error === "object" ? data.error?.message : data.error;
-    throw new Error(data.message || nested || `Request failed (${response.status})`);
+  let { response, data } = await send(session?.access_token);
+  const failure = (payload: unknown, status: number) => {
+    const body = payload && typeof payload === "object" ? payload : {};
+    const error = "error" in body ? body.error : null;
+    const nested = error && typeof error === "object" ? error : {};
+    const message = "message" in body && typeof body.message === "string" ? body.message
+      : typeof error === "string" ? error
+        : "message" in nested && typeof nested.message === "string" ? nested.message : `Request failed (${status})`;
+    const code = "code" in nested && typeof nested.code === "string" ? nested.code : "request_failed";
+    return new ApiError(message, status, code);
+  };
+  let error = failure(data, response.status);
+  // Only an application-auth rejection is recoverable here. Writes are never replayed.
+  if (response.status === 401 && error.code === "not_authenticated" && session
+    && (init?.method ?? "GET").toUpperCase() === "GET" && !new Headers(init?.headers).has("Authorization")) {
+    try {
+      const refreshed = await refreshReadSession(session);
+      if (refreshed && !signal?.aborted) ({ response, data } = await send(refreshed.access_token));
+    } catch (refreshError) {
+      if (refreshError instanceof ApiError && refreshError.status === 401) notifyAuthFailure(session.user.id);
+      throw refreshError;
+    }
+    error = failure(data, response.status);
   }
-  return data;
+  if (!response.ok) {
+    if (error.status === 401 && error.code === "not_authenticated") notifyAuthFailure(session?.user.id ?? null);
+    throw error;
+  }
+  return data as T;
+}
+
+/** Best-effort diagnostics use only fixed event names and a verified caller on the server. */
+export function reportSessionEvent(event: "signed_in" | "token_refreshed" | "sign_out_local", token: string) {
+  void requestJson("/api/session/events", {
+    method: "POST", headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ event }), signal: AbortSignal.timeout(2_000),
+  }).catch(() => { /* An unavailable diagnostic endpoint must not block authentication. */ });
 }
