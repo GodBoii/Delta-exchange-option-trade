@@ -1,4 +1,4 @@
-"""Owner asset pauses survive reload and protect the other asset and live trades."""
+"""Personal asset controls and owner pauses preserve account isolation and live trades."""
 
 import os
 from datetime import UTC, datetime, timedelta
@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx
 import pytest
+from fastapi import FastAPI
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 from pydantic import ValidationError
@@ -49,6 +51,63 @@ def test_asset_switch_requires_a_boolean():
     for value in ("false", 0, None):
         with pytest.raises(ValidationError):
             automation.AssetAutomationUpdate(enabled=value)
+
+
+@pytest.mark.parametrize("asset", ["BTC", "ETH"])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_personal_asset_endpoint_targets_authenticated_account(monkeypatch, asset, enabled):
+    mutation = AsyncMock(return_value={"enabled": False, "asset_enabled": {asset: enabled}})
+    db = SimpleNamespace(runtime=SimpleNamespace(data=SimpleNamespace(request=mutation)))
+    initialize = AsyncMock()
+    monkeypatch.setattr(automation, "ensure_settings", initialize)
+    app = FastAPI()
+    app.state.db = db
+    app.include_router(automation.router)
+    app.dependency_overrides[automation.require_user] = lambda: {"id": "regular-user"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.put(f"/api/automation/settings/assets/{asset}", json={"enabled": enabled})
+        assert response.status_code == 200
+        assert response.json()["assetEnabled"] == {"BTC": True, "ETH": True, asset: enabled}
+        initialize.assert_awaited_once_with(db, "regular-user")
+        mutation.assert_awaited_once_with(
+            "accountAutomation:setAssetEnabled",
+            {"userId": "regular-user", "asset": asset, "enabled": enabled}, mutation=True,
+        )
+        mutation.reset_mock()
+        for payload in ({"enabled": "false"}, {"enabled": 0}, {"enabled": None},
+                        {"enabled": False, "userId": "other-user"}):
+            invalid = await client.put(f"/api/automation/settings/assets/{asset}", json=payload)
+            assert invalid.status_code == 422
+        invalid = await client.put("/api/automation/settings/assets/SOL", json={"enabled": False})
+        assert invalid.status_code == 422
+        mutation.assert_not_awaited()
+
+
+@pytest.mark.parametrize("flags", [None, {"BTC": False, "ETH": True}])
+async def test_overview_returns_personal_preferences_even_when_master_is_paused(monkeypatch, flags):
+    settings = {"enabled": False, "asset_enabled": flags}
+    monkeypatch.setattr(automation, "ensure_settings", AsyncMock(return_value=settings))
+    db = SimpleNamespace(
+        select=AsyncMock(return_value=[]), charts=SimpleNamespace(available=AsyncMock(return_value=set())),
+    )
+    engine = SimpleNamespace(
+        capital_policy=AsyncMock(return_value=SimpleNamespace(concurrency_limit=lambda: None)),
+        saved_strategies=AsyncMock(return_value=[]),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=db, engine=engine)))
+    result = await automation.automation_overview(request, {"id": "regular-user"})
+    assert result["settings"]["assetEnabled"] == (flags or {"BTC": True, "ETH": True})
+    assert result["settings"]["enabled"] is False
+    assert result["assetAutomation"] == {"BTC": False, "ETH": False}
+
+
+async def test_personal_asset_endpoint_requires_sign_in():
+    app = FastAPI()
+    app.include_router(automation.router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        with pytest.raises(AppError) as caught:
+            await client.put("/api/automation/settings/assets/ETH", json={"enabled": False})
+    assert caught.value.status == 401
 
 
 @pytest.fixture
