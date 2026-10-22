@@ -454,7 +454,7 @@ function AccountPanel({ account, connection, pages, current, onClose, onNavigate
 }) {
   const appearanceId = useId();
   const currencyId = useId();
-  const { choice, setChoice } = useTheme();
+  const { choice, setChoice, preferenceSaved } = useTheme();
   const { currency, setCurrency, rateState } = useCurrency();
   const appearancePill = useSlidingPill(choice, '[aria-checked="true"]');
   const currencyPill = useSlidingPill(currency, '[aria-checked="true"]');
@@ -525,6 +525,9 @@ function AccountPanel({ account, connection, pages, current, onClose, onNavigate
                 </button>
               ))}
             </div>
+            {!preferenceSaved && <p className="field-hint" role="status">
+              This browser could not save your appearance. It applies until you reload.
+            </p>}
           </div>
 
           <div className="account-section">
@@ -566,7 +569,7 @@ function AccountPanel({ account, connection, pages, current, onClose, onNavigate
               </button>
             )}
             <button type="button" className="account-action" onClick={onSignOut}>
-              <LogOut aria-hidden="true" />Sign out
+              <LogOut aria-hidden="true" />Sign out of this device
             </button>
           </div>
         </div>
