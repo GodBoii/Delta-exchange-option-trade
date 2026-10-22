@@ -34,7 +34,8 @@ class SupabaseAuth:
     async def user(self, token: str) -> dict[str, Any] | None:
         try:
             header = jwt.get_unverified_header(token)
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as error:
+            logger.info("Application access token rejected reason=%s", type(error).__name__)
             return None
         algorithm = header.get("alg")
         kid = header.get("kid")
@@ -53,12 +54,14 @@ class SupabaseAuth:
                 options={"require": ["exp", "sub", "iss", "aud"]},
                 leeway=5,
             )
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as error:
+            logger.info("Application access token rejected reason=%s", type(error).__name__)
             return None
         if claims.get("role") != "authenticated":
             return None
         return {
             "id": str(claims["sub"]),
+            "session_id": claims.get("session_id"),
             "email": claims.get("email"),
             "phone": claims.get("phone"),
             "user_metadata": claims.get("user_metadata") or {},
