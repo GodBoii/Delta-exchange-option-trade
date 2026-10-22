@@ -23,7 +23,6 @@ from .account_api import router as account_router
 from .auth import (
     create_connection,
     current_account,
-    optional_user,
     remove_connection,
     require_user,
 )
@@ -185,7 +184,6 @@ app.include_router(push_router)
 app.include_router(account_router)
 
 RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
-OptionalUser = Annotated[dict[str, Any] | None, Depends(optional_user)]
 
 
 class ResearchOperation(BaseModel):
@@ -366,9 +364,11 @@ async def health(request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/session")
-async def session(request: Request, user: OptionalUser) -> dict[str, Any]:
+async def session(request: Request, user: RequiredUser) -> dict[str, Any]:
     db: Database = request.app.state.db
     account = await current_account(db, user, required=False)
+    logger.info("Application session checked user_id=%s session_id=%s connected=%s",
+                user["id"], user.get("session_id"), bool(account and account["connection_id"]))
     return {
         "success": True,
         "authenticated": account is not None,
@@ -392,6 +392,18 @@ async def session(request: Request, user: OptionalUser) -> dict[str, Any]:
         if account and account["connection_id"]
         else None,
     }
+
+
+class SessionEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal["signed_in", "token_refreshed", "sign_out_local"]
+
+
+@app.post("/api/session/events")
+async def session_event(request: Request, body: SessionEvent, user: RequiredUser) -> dict[str, bool]:
+    logger.info("Application session event=%s user_id=%s session_id=%s",
+                body.event, user["id"], user.get("session_id"))
+    return {"success": True}
 
 
 class ProfileUpdate(BaseModel):
