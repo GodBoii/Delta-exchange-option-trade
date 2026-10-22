@@ -15,7 +15,7 @@ import {
 import type { AccountOverview, DeltaRecord, RiskStrategy } from "@/lib/app-types";
 import {
   describeOrder, isProtectiveOrder, positionViews, readNumber, readText, readValue, totalUnrealized,
-  triggerMethodLabel, type PositionView, type ProtectiveOrder
+  triggerMethodLabel, walletViews, type WalletView, type PositionView, type ProtectiveOrder
 } from "@/lib/portfolio";
 import {
   AnimatedNumber, ConfirmModal, DetailList, EmptyState, IconSwap, Meter, Panel, PanelHeader, Revealed,
@@ -26,31 +26,6 @@ import {
 const AUTO_REFRESH_MS = 30_000;
 /** Live prices tick several times a second; a full digit replay at most this often. */
 const PRICE_REPLAY_MS = 900;
-
-type Wallet = {
-  asset: string;
-  balance: number;
-  available: number;
-  blocked: number;
-  positionMargin: number;
-  orderMargin: number;
-};
-
-function walletRows(balances: DeltaRecord[]): Wallet[] {
-  return balances
-    .map(row => ({
-      asset: readText(row, "asset_symbol", "symbol") ?? "—",
-      balance: readNumber(row, "balance") ?? 0,
-      available: readNumber(row, "available_balance") ?? 0,
-      blocked: readNumber(row, "blocked_margin") ?? 0,
-      // Isolated and cross margin are reported separately and both are real
-      // commitments; Delta sends "0" for the unused mode, so they are summed.
-      positionMargin: (readNumber(row, "position_margin") ?? 0) + (readNumber(row, "cross_position_margin") ?? 0),
-      orderMargin: (readNumber(row, "order_margin") ?? 0) + (readNumber(row, "cross_order_margin") ?? 0)
-    }))
-    .filter(wallet => wallet.balance !== 0 || wallet.blocked !== 0 || wallet.available !== 0)
-    .sort((left, right) => right.balance - left.balance);
-}
 
 export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
   const { formatMoney, currencyCode } = useCurrency();
@@ -113,8 +88,8 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
   const balances = live?.balances ?? data?.balances;
   const positionRecords = live?.positions ?? data?.positions;
   const orderRecords = live?.orders ?? data?.orders;
-  const wallets = useMemo(() => walletRows(balances ?? []), [balances]);
-  const primary = wallets[0];
+  const wallets = useMemo(() => walletViews(balances ?? []), [balances]);
+  const primary = wallets.find(wallet => wallet.asset === "USD");
   const orders = useMemo(() => orderRecords ?? [], [orderRecords]);
   const positions = useMemo(
     () => positionViews(positionRecords ?? [], orders, stream.prices),
@@ -122,10 +97,7 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
   );
   const unrealized = useMemo(() => totalUnrealized(positions), [positions]);
 
-  const positionMargin = useMemo(
-    () => wallets.reduce((total, wallet) => total + wallet.positionMargin, 0),
-    [wallets]
-  );
+  const positionMargin = primary?.positionMargin ?? 0;
   const protectiveCount = useMemo(() => orders.filter(isProtectiveOrder).length, [orders]);
   const unfilled = useMemo(
     () => orders
@@ -200,14 +172,14 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
           <div className="tile-grid">
             <Tile
               icon={<Wallet />}
-              label={primary ? primary.asset === "USD" && currencyCode === "INR" ? "USD wallet · INR value" : `${primary.asset} wallet balance` : "Wallet balance"}
-              value={primary ? primary.asset === "USD" ? formatMoney(primary.balance, { digits: 4 }) : `${quantity(primary.balance, 4)} ${primary.asset}` : EM_DASH}
-              note={primary ? `${primary.asset === "USD" ? formatMoney(primary.available, { digits: 4 }) : `${quantity(primary.available, 4)} ${primary.asset}`} available to trade` : "No funded asset found"}
+              label={currencyCode === "INR" ? "USD wallet · INR value" : "USD wallet balance"}
+              value={primary ? formatMoney(primary.balance, { digits: 4 }) : EM_DASH}
+              note={primary ? `${formatMoney(primary.available, { digits: 4 })} available to trade` : "USD wallet unavailable"}
             />
             <Tile
               icon={<Shield />}
               label="Margin in use"
-              value={primary ? primary.asset === "USD" ? formatMoney(primary.blocked, { digits: 4 }) : `${quantity(primary.blocked, 4)} ${primary.asset}` : EM_DASH}
+              value={primary ? formatMoney(primary.blocked, { digits: 4 }) : EM_DASH}
               note={primary && primary.balance > 0
                 ? `${percent((primary.blocked / primary.balance) * 100, 1)} of ${primary.asset} balance`
                 : "Includes positions and open orders"}
@@ -701,9 +673,9 @@ function orderTone(state: string): StatusTone {
  * Per-asset table rather than a single summed figure: wallet assets are
  * denominated differently, so one total would be arithmetically meaningless.
  */
-function WalletsPanel({ wallets }: { wallets: Wallet[] }) {
+function WalletsPanel({ wallets }: { wallets: WalletView[] }) {
   const { formatMoney, currencyCode } = useCurrency();
-  const walletAmount = (wallet: Wallet, value: number) => wallet.asset === "USD"
+  const walletAmount = (wallet: WalletView, value: number) => wallet.asset === "USD"
     ? formatMoney(value, { digits: 6 }) : quantity(value, 6);
   return (
     <Panel>
