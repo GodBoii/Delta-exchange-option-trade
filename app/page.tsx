@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { RefreshCw, WifiOff } from "@/app/components/icons";
 import { ThinkingOrb } from "thinking-orbs";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { requestJson, resetApiOrigin } from "@/lib/api";
+import { reportSessionEvent, requestJson, resetApiOrigin, SESSION_AUTH_EVENT } from "@/lib/api";
 import { useRealtimeSignals } from "@/app/components/RealtimeSignals";
 import { errorMessage } from "@/lib/format";
-import { resolveProfileAvatar } from "@/lib/profile-avatar";
-import type { Account, AppUser, SessionResponse } from "@/lib/app-types";
+import type { Account, AppUser } from "@/lib/app-types";
+import { readWorkspaceSession, signOutThisDevice, type WorkspaceSession } from "@/lib/workspace-session";
 import { AppShell, TAB_ORDER, type ConnectionState, type Tab } from "@/app/components/AppShell";
 import AuthView from "@/app/components/AuthView";
 import ConnectView from "@/app/components/ConnectView";
@@ -85,10 +85,15 @@ const ATTENTION_POLL_MS = 60_000;
  */
 export default function Home() {
   const { automation: automationRevision, strategies: strategyRevision } = useRealtimeSignals();
-  const [sessionLoading, setSessionLoading] = useState(true);
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
-  const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
+  const [workspace, setWorkspace] = useState<WorkspaceSession>({ kind: "loading" });
+  const currentSession = useRef<WorkspaceSession>(workspace);
+  const loadVersion = useRef(0);
+  const loadController = useRef<AbortController | null>(null);
+  const lastCheck = useRef(0);
+  const user = workspace.kind === "ready" || workspace.kind === "unavailable" ? workspace.user : null;
+  const account = workspace.kind === "ready" || workspace.kind === "unavailable" ? workspace.account : null;
+  const backendStatus: BackendStatus = workspace.kind === "loading" ? "checking"
+    : workspace.kind === "ready" ? "online" : "offline";
   // Null until the operator picks a section, so the landing surface follows the
   // session state once it is known instead of a hard-coded default.
   const [selectedTab, setTab] = useState<Tab | null>(null);
@@ -96,46 +101,109 @@ export default function Home() {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [attention, setAttention] = useState(0);
 
-  const loadSession = useCallback(async () => {
-    try {
-      const { data: { session } } = await getSupabaseBrowserClient().auth.getSession();
-      if (!session?.user) {
-        setUser(null);
-        setAccount(null);
-        setBackendStatus("offline");
-        return;
-      }
-
-      const metadata = session.user.user_metadata ?? {};
-      const authUser: AppUser = {
-        id: session.user.id,
-        email: session.user.email,
-        displayName: String(metadata.full_name ?? metadata.name ?? session.user.email?.split("@")[0] ?? "Client"),
-        avatarUrl: resolveProfileAvatar(metadata.avatar_url, metadata.picture)
-      };
-      setUser(authUser);
-
-      try {
-        resetApiOrigin();
-        const data = await requestJson<SessionResponse>("/api/session", { signal: AbortSignal.timeout(12_000) });
-        setBackendStatus("online");
-        setAccount(data.connected ? data.account : null);
-        if (data.user) setUser({
-          ...data.user,
-          avatarUrl: resolveProfileAvatar(authUser.avatarUrl, data.user.avatarUrl)
-        });
-      } catch {
-        setBackendStatus("offline");
-        setAccount(null);
-      }
-    } catch (error) {
-      setNotice({ tone: "error", text: errorMessage(error) });
-    } finally {
-      setSessionLoading(false);
-    }
+  const applySession = useCallback((next: WorkspaceSession) => {
+    currentSession.current = next;
+    setWorkspace(next);
   }, []);
 
-  useEffect(() => { void loadSession(); }, [loadSession]);
+  const invalidateSession = useCallback(() => {
+    ++loadVersion.current;
+    loadController.current?.abort();
+  }, []);
+
+  const loadSession = useCallback(async () => {
+    const version = ++loadVersion.current;
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    lastCheck.current = Date.now();
+    try {
+      const next = await readWorkspaceSession(currentSession.current,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]));
+      if (version === loadVersion.current) applySession(next);
+    } catch {
+      // Cancellation discards an old user's response. A timeout keeps the last known identity.
+      if (version === loadVersion.current && !controller.signal.aborted) {
+        const old = currentSession.current;
+        applySession({ kind: "unavailable", user: "user" in old ? old.user : null,
+          account: "account" in old ? old.account : null });
+      }
+    }
+  }, [applySession]);
+
+  useEffect(() => {
+    let scheduled: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      clearTimeout(scheduled);
+      // Keep Supabase calls outside its auth callback/refresh lock.
+      scheduled = setTimeout(() => { void loadSession(); }, 0);
+    };
+    const { data } = getSupabaseBrowserClient().auth.onAuthStateChange((event, session) => {
+      const current = currentSession.current;
+      if (event === "SIGNED_OUT") {
+        invalidateSession();
+        clearTimeout(scheduled);
+        applySession({ kind: "signed-out" });
+        setTab(null);
+        setConfirmDisconnect(false);
+        setAttention(0);
+        resetApiOrigin();
+        return;
+      }
+      const sameUser = "user" in current && current.user?.id === session?.user.id;
+      if (event === "SIGNED_IN" && sameUser && current.kind === "ready") return;
+      if (event === "SIGNED_IN" && !sameUser) {
+        invalidateSession();
+        applySession({ kind: "loading" });
+        setTab(null);
+        setConfirmDisconnect(false);
+        setNotice(null);
+      }
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (session) {
+          const name = event === "SIGNED_IN" ? "signed_in" : "token_refreshed";
+          setTimeout(() => reportSessionEvent(name, session.access_token), 0);
+        }
+      }
+      if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED"
+        || event === "USER_UPDATED") schedule();
+    });
+    const recheck = (event: Event) => {
+      const current = currentSession.current;
+      const detail: unknown = event instanceof CustomEvent ? event.detail : null;
+      if ("user" in current && current.user && detail && typeof detail === "object"
+        && "userId" in detail && (detail.userId === current.user.id || detail.userId === null)
+        && Date.now() - lastCheck.current > 5_000) schedule();
+    };
+    const resume = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastCheck.current > 30_000) schedule();
+    };
+    window.addEventListener(SESSION_AUTH_EVENT, recheck);
+    window.addEventListener("online", schedule);
+    document.addEventListener("visibilitychange", resume);
+    schedule();
+    return () => {
+      invalidateSession();
+      clearTimeout(scheduled);
+      data.subscription.unsubscribe();
+      window.removeEventListener(SESSION_AUTH_EVENT, recheck);
+      window.removeEventListener("online", schedule);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [applySession, invalidateSession, loadSession]);
+
+  useEffect(() => {
+    if (workspace.kind !== "unavailable") return;
+    const timer = setTimeout(() => { void loadSession(); }, 15_000);
+    return () => clearTimeout(timer);
+  }, [loadSession, workspace]);
+
+  const setAccount = (next: Account | null) => {
+    ++loadVersion.current;
+    loadController.current?.abort();
+    const current = currentSession.current;
+    if ("user" in current && current.user) applySession({ kind: "ready", user: current.user, account: next });
+  };
 
   // A tapped phone notification opens `/?tab=runs`; honour it once, then clean the URL.
   useEffect(() => {
@@ -149,7 +217,7 @@ export default function Home() {
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  const connected = Boolean(account);
+  const connected = backendStatus === "online" && Boolean(account);
   const isOwner = backendStatus === "online" && user?.userType === "owner";
   const availableTabs = tabsFor(
     connected ? CONNECTED_TABS : backendStatus === "online" ? UNCONNECTED_TABS : OFFLINE_TABS,
@@ -211,22 +279,29 @@ export default function Home() {
 
   async function signOut() {
     try {
-      await getSupabaseBrowserClient().auth.signOut();
-      setUser(null);
-      setAccount(null);
-      setBackendStatus("offline");
+      const { data } = await getSupabaseBrowserClient().auth.getSession();
+      if (data.session) reportSessionEvent("sign_out_local", data.session.access_token);
+      await signOutThisDevice();
+      ++loadVersion.current;
+      loadController.current?.abort();
+      applySession({ kind: "signed-out" });
       setTab(null);
     } catch (error) {
       setNotice({ tone: "error", text: errorMessage(error) });
     }
   }
 
-  if (sessionLoading) return <LoadingScreen />;
+  if (workspace.kind === "loading") return <LoadingScreen />;
 
-  if (!user) return <AuthView onAuthenticated={loadSession} />;
+  if (workspace.kind === "unavailable" && !user) return (
+    <div className="boot-screen"><Brand /><OfflineBanner onRetry={loadSession} /></div>
+  );
+
+  if (!user) return <><AuthView onAuthenticated={loadSession} />
+    {notice && <div className="toast-region"><Toast notice={notice} onClose={() => setNotice(null)} /></div>}</>;
 
   const connection: ConnectionState = connected
-    ? { label: "Delta connected", detail: "Live trading enabled", tone: "active" }
+    ? { label: "Delta connected", detail: "Exchange account linked", tone: "active" }
     : backendStatus === "online"
       ? { label: "Delta not connected", detail: "Research is available", tone: "neutral" }
       : { label: "Trading services unavailable", detail: "Public market data is available", tone: "warning" };
@@ -249,6 +324,7 @@ export default function Home() {
         banner={backendStatus === "offline" ? <OfflineBanner onRetry={loadSession} /> : undefined}
       >
         <WorkspaceBody
+          key={user.id}
           tab={tab}
           connected={connected}
           backendOnline={backendStatus === "online"}
