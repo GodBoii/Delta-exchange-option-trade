@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from fastapi import Header, Request
@@ -7,6 +8,8 @@ from .credential_store import account_store
 from .database import Database
 from .delta import DeltaClient
 from .errors import AppError
+
+logger = logging.getLogger(__name__)
 
 
 def bearer_token(authorization: str | None) -> str | None:
@@ -21,12 +24,18 @@ async def optional_user(request: Request, authorization: str | None = Header(def
     if not token:
         return None
     db: Database = request.app.state.db
-    return await db.auth_user(token)
+    user = await db.auth_user(token)
+    if user:
+        request.state.user_id = str(user["id"])
+        request.state.session_id = user.get("session_id")
+    return user
 
 
 async def require_user(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     user = await optional_user(request, authorization)
     if not user:
+        logger.info("Application authentication rejected route=%s token_present=%s",
+                    getattr(request.scope.get("route"), "path", "unknown"), bool(bearer_token(authorization)))
         raise AppError(401, "Sign in to continue", "not_authenticated")
     return user
 
@@ -68,7 +77,7 @@ async def current_account(
     metadata = user.get("user_metadata") or {}
     return {
         "id": user_id,
-        "connection_id": connection.get("id") if connection else None,
+        "connection_id": connection.get("id") if connection and connection.get("status") == "connected" else None,
         "delta_user_id": connection.get("delta_user_id") if connection else None,
         "account_name": connection.get("account_name") if connection else None,
         "email_masked": connection.get("email_masked") if connection else None,
@@ -96,7 +105,14 @@ async def create_connection(
 ) -> dict[str, Any]:
     client = DeltaClient(settings, api_key.strip(), api_secret.strip())
     try:
-        profile = (await client.profile())["result"]
+        profile = (await client.profile()).get("result")
+        if not isinstance(profile, dict) or not profile.get("id"):
+            raise AppError(502, "Delta account identity could not be verified", "invalid_delta_response")
+        # Establish required read access before replacing any saved credential.
+        # These probes do not prove order-placement permission and never place an order.
+        for response in (await client.balances(), await client.positions(), await client.open_orders()):
+            if not isinstance(response.get("result"), list):
+                raise AppError(502, "Delta account read access could not be verified", "delta_access_unknown")
     finally:
         await client.close()
     store = account_store(db)
@@ -126,6 +142,7 @@ async def create_connection(
             "email_masked": mask_email(profile.get("email")),
         },
     )
+    logger.info("Delta connection saved user_id=%s delta_user_id=%s", user_id, profile["id"])
     return {
         "connectionId": str(connection_id),
         "account": {
@@ -140,6 +157,7 @@ async def create_connection(
 async def remove_connection(db: Database, user_id: str) -> None:
     await guard_subaccount_connections(db, user_id)
     await account_store(db).data.request("accounts:revoke", {"userId": user_id}, mutation=True)
+    logger.info("Delta connection revoked user_id=%s", user_id)
 
 
 async def guard_subaccount_connections(db: Database, user_id: str) -> None:
