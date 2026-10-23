@@ -169,6 +169,7 @@ export type CapitalRule = {
 export type CapitalLimit = { mode: "percentage" | "fixed_amount"; value: number };
 
 export type CapitalSettings = CapitalRule & {
+  allowSmallerEntries?: boolean;
   assetOverrides?: Partial<Record<AgentAsset, CapitalRule>> | null;
   overallLimit?: CapitalLimit | null;
   assetLimits?: Partial<Record<AgentAsset, CapitalLimit>> | null;
@@ -176,6 +177,8 @@ export type CapitalSettings = CapitalRule & {
 };
 
 export type CapitalOverview = {
+  accountMode?: "main" | "automatic" | "manual";
+  walletScope?: "main" | "managed_pool";
   success: boolean;
   capitalRevision?: string | null;
   settings: CapitalSettings;
@@ -194,9 +197,20 @@ export type CapitalOverview = {
     availableBudgetForNextStrategy: number;
     reservedBudget: number;
     capitalLimit: number;
+    reason?: string | null;
   }>;
   reservedBudget: number;
   overallCapitalLimit: number;
+};
+
+export type CapitalPreview = CapitalOverview & {
+  asset: AgentAsset;
+  entryPreview: {
+    status: "estimated" | "blocked";
+    reason: string;
+    account: { id: string; name: string } | null;
+    transfers: { source: string; target: string; amount: string; purpose: string }[];
+  };
 };
 
 /** Shared built-in template or reusable definition in the account's private library. */
