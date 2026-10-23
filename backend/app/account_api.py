@@ -95,6 +95,7 @@ async def overview(request: Request, user: User) -> dict[str, Any]:
                 "checkedAt": row["checked_at"],
                 "strategyId": row["strategy_id"],
                 "strategyName": row["strategy_name"],
+                "strategyStatus": row["strategy_status"],
                 "budget": str(row["budget"]) if row["budget"] else None,
             }
             for row in rows
