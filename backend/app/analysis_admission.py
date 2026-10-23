@@ -224,6 +224,8 @@ def evaluate(snapshot: dict[str, Any], available: Decimal, total: Decimal) -> Ad
     maximum = policy.concurrency_limit(total)
     asset = snapshot.get("asset", "BTC")
     budget = policy_budget(available, total, policy, asset)
+    if budget <= 0:
+        return "full"
     reserved = Decimal(snapshot["reserved"])
     if not reserved.is_finite() or reserved < 0 or not budget.is_finite():
         raise AppError(503, "Committed capacity is invalid", "capital_capacity_unavailable")
@@ -238,6 +240,8 @@ def evaluate(snapshot: dict[str, Any], available: Decimal, total: Decimal) -> Ad
         other = policy_from_row(row["capital"])
         code = row.get("asset", "BTC")
         amount = policy_budget(available, total, other, code)
+        if amount == 0 and not other.allow_smaller_entries:
+            return "pending"
         if not amount.is_finite() or amount <= 0:
             raise AppError(503, "Committed capacity is invalid", "capital_capacity_unavailable")
         count = int(row["owner"] == snapshot["owner"])
