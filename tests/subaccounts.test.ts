@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mode, parseOverview, parsePendingRuns, parseServerIp, parseSnapshot, validTransferAmount } from "@/lib/subaccounts";
+import { accountState, mode, parseOverview, parsePendingRuns, parseServerIp, parseSnapshot, validTransferAmount } from "@/lib/subaccounts";
 
 const overview = {
   mainAccount: { id: "100", name: "Main" },
@@ -12,6 +12,15 @@ const overview = {
 };
 
 describe("Profile subaccounts", () => {
+  it("does not label API access alone as ready to trade", () => {
+    const account = parseOverview(overview).accounts[0];
+    expect(accountState(account, null)).toBe("Connected; check account");
+    const snapshot = parseSnapshot({ available: "0", balance: "0", positions: [], orders: [] });
+    expect(accountState(account, snapshot)).toBe("Idle; funding needed");
+    expect(accountState({ ...account, busy: true, strategyStatus: "active" }, snapshot)).toBe("Trading");
+    expect(accountState({ ...account, busy: true, strategyStatus: "completed" }, snapshot)).toBe("Checking release");
+    expect(accountState(account, snapshot, "Wallet unavailable")).toBe("Account check failed");
+  });
   it("keeps the main-account default and uncertain transfer state", () => {
     const parsed = parseOverview(overview);
     expect(parsed.settings.mode).toBe("main");
