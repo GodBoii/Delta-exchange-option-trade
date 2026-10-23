@@ -196,19 +196,25 @@ def validated_events(brief: Brief, review: Review, documents: dict[str, dict]) -
 
 def render_events(events: list[dict], gaps: list[str]) -> str:
     # Titles and interpretation are model-written. Avoid promoting them to uncited factual headlines.
+    def plain(text: str) -> str:
+        return re.sub(r"([\\`*_{}\[\]<>()!#])", r"\\\1", " ".join(text.split()))
+
+    def link(url: str) -> str:
+        return url.replace("(", "%28").replace(")", "%29").replace(" ", "%20")
+
     lines = ["## Source-backed findings", ""]
     for index, event in enumerate(events, 1):
         heading = event["title"] if event.get("metadata_verified") else f"Development {index}"
-        lines.append(f"### {heading}")
+        lines.append(f"### {plain(heading)}")
         for claim in event["claims"]:
-            lines.append(f"\n- {claim['text']} [Original source]({claim['url']})")
+            lines.append(f"\n- {plain(claim['text'])} [Original source]({link(claim['url'])})")
         if event["interpretation"]:
-            lines.append(f"\nConditional interpretation: {event['interpretation']}")
+            lines.append(f"\nConditional interpretation: {plain(event['interpretation'])}")
         if event.get("metadata_verified"):
             event_time = format_time(event.get("event_at")) or "unknown"
             lines.append(f"\nEvent status: {event['status']}. Event time: {event_time}.")
         lines.append(
-            f"\nDirection: {event['direction']}. Volatility: {event['volatility']}. Horizon: {event['horizon']}."
+            f"\nDirection: {event['direction']}. Volatility: {event['volatility']}. Horizon: {plain(event['horizon'])}."
         )
     if not events:
         lines.append(
@@ -222,7 +228,7 @@ def render_events(events: list[dict], gaps: list[str]) -> str:
         [
             "\n## Sources",
             *[
-                f"\n- [Original source]({url})"
+                f"\n- [Original source]({link(url)})"
                 for url in sorted({claim["url"] for event in events for claim in event["claims"]})
             ],
         ]
