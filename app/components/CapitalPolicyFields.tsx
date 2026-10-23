@@ -1,36 +1,38 @@
 "use client";
 
 import { useCurrency } from "@/app/components/currency";
-import { NumberField, Select, type SelectOption } from "@/app/components/ui";
+import { NumberField, Segmented, Select } from "@/app/components/ui";
 import type { CapitalLimit, CapitalRule, CapitalSettings } from "@/lib/app-types";
-import { CAPITAL_MODE_OPTIONS, isCapitalAllocationMode, normalizeCapitalRule } from "@/lib/capital";
+import { capitalRulePercent, capitalRuleText, capitalStrategyLimit } from "@/lib/capital";
 
-function RuleFields({ label, rule, onChange, inherit = false }: {
-  label: string; rule: CapitalRule | undefined; onChange: (rule: CapitalRule | undefined) => void; inherit?: boolean;
+function RuleFields({ label, rule, onChange }: {
+  label: string; rule: CapitalRule; onChange: (rule: CapitalRule) => void;
 }) {
   const { currencyCode, convertFromUsd, convertToUsd } = useCurrency();
-  const options: SelectOption[] = CAPITAL_MODE_OPTIONS.map(option => option.value === "fixed_amount"
-    ? { ...option, label: `Fixed ${currencyCode} amount` } : { ...option });
-  if (inherit) options.unshift({ value: "inherit", label: "Use default budget", hint: "Follow the account default" });
-  return <div className="capital-rule">
-    <Select label={`${label} budget per strategy`} value={rule?.allocationMode ?? "inherit"} options={options}
-      onChange={value => {
-        if (value === "inherit") onChange(undefined);
-        else if (isCapitalAllocationMode(value)) onChange(normalizeCapitalRule({
-          allocationMode: value, capitalAmount: rule?.capitalAmount ?? 100,
-          allocationPercent: rule?.allocationPercent ?? 10, divisionCount: rule?.divisionCount ?? 10
-        }));
-      }} />
-    {rule?.allocationMode === "fixed_amount" && <NumberField label={`${label} amount`} min={0.01} step={0.01}
-      value={convertFromUsd(Number(rule.capitalAmount ?? 100))} suffix={currencyCode}
-      invalid={!(Number(rule.capitalAmount) > 0)} onChange={value => onChange({ ...rule, capitalAmount: convertToUsd(value) })} />}
-    {rule?.allocationMode === "custom_percentage" && <NumberField label={`${label} percentage`} min={0.01} max={100} step={0.01}
-      value={Number(rule.allocationPercent ?? 10)} suffix="%"
-      invalid={!(Number(rule.allocationPercent) > 0 && Number(rule.allocationPercent) <= 100)}
-      onChange={value => onChange({ ...rule, allocationPercent: value })} />}
-    {rule?.allocationMode === "equal_parts" && <NumberField label={`${label} equal parts`} min={1} max={100} step={1}
-      value={rule.divisionCount ?? 10} invalid={!Number.isInteger(rule.divisionCount) || !(Number(rule.divisionCount) >= 1 && Number(rule.divisionCount) <= 100)}
-      onChange={value => onChange({ ...rule, divisionCount: value })} />}
+  const percentage = capitalRulePercent(rule);
+  const fixed = rule.allocationMode === "fixed_amount";
+  return <div className="budget-rule">
+    <Segmented label={`${label} budget`} value={fixed ? "fixed" : "percentage"}
+      options={[{ value: "percentage", label: "Percentage" }, { value: "fixed", label: "Fixed amount" }]}
+      onChange={kind => onChange(kind === "fixed"
+        ? { allocationMode: "fixed_amount", capitalAmount: 100 }
+        : { allocationMode: "custom_percentage", allocationPercent: 25 })} />
+    <NumberField label={fixed ? `${label} amount per strategy` : `${label} percent per strategy`}
+      value={fixed ? convertFromUsd(Number(rule.capitalAmount ?? 100)) : Number((percentage ?? 25).toFixed(4))}
+      min={0.01} max={fixed ? undefined : 100} step={0.0001} suffix={fixed ? currencyCode : "%"}
+      invalid={fixed ? !(Number(rule.capitalAmount) > 0) : !(Number(percentage) > 0 && Number(percentage) <= 100)}
+      onChange={amount => onChange(fixed ? { allocationMode: "fixed_amount", capitalAmount: convertToUsd(amount) }
+        : { allocationMode: "custom_percentage", allocationPercent: amount })} />
+    {!fixed && <>
+      <input className="budget-slider" type="range" aria-label={`${label} budget percentage`}
+        min={1} max={100} step={1} value={percentage ?? 25}
+        onChange={event => onChange({ allocationMode: "custom_percentage", allocationPercent: Number(event.target.value) })} />
+      <div className="budget-presets" aria-label={`${label} percentage shortcuts`}>
+        {[10, 25, 50, 100].map(amount => <button type="button" key={amount} aria-pressed={percentage === amount}
+          onClick={() => onChange({ allocationMode: "custom_percentage", allocationPercent: amount })}>{amount}%</button>)}
+      </div>
+      {(rule.allocationMode === "one_third_balance" || rule.allocationMode === "equal_parts") && <p className="field-hint">Saved rule: {capitalRuleText(rule)}. Its exact calculation stays in place until you edit it.</p>}
+    </>}
   </div>;
 }
 
@@ -39,14 +41,14 @@ function LimitFields({ label, limit, onChange }: {
 }) {
   const { currencyCode, convertFromUsd, convertToUsd } = useCurrency();
   return <div className="capital-rule">
-    <Select label={`${label} total capital cap`} value={limit?.mode ?? "none"} options={[
-      { value: "none", label: "No additional cap" }, { value: "percentage", label: "Percentage of wallet" },
-      { value: "fixed_amount", label: `Fixed ${currencyCode} cap` }
+    <Select label={label} value={limit?.mode ?? "none"} options={[
+      { value: "none", label: "Up to all trading capital" }, { value: "percentage", label: "Percentage of trading capital" },
+      { value: "fixed_amount", label: `Fixed ${currencyCode} amount` }
     ]} onChange={mode => {
       if (mode === "none") onChange(null);
       else if (mode === "percentage" || mode === "fixed_amount") onChange({ mode, value: 100 });
     }} />
-    {limit && <NumberField label={`${label} cap`} min={0.01} max={limit.mode === "percentage" ? 100 : undefined} step={0.01}
+    {limit && <NumberField label={`${label} amount`} min={0.01} max={limit.mode === "percentage" ? 100 : undefined} step={0.01}
       suffix={limit.mode === "percentage" ? "%" : currencyCode}
       value={limit.mode === "percentage" ? limit.value : convertFromUsd(limit.value)}
       invalid={!(limit.value > 0) || (limit.mode === "percentage" && limit.value > 100)}
@@ -54,40 +56,46 @@ function LimitFields({ label, limit, onChange }: {
   </div>;
 }
 
-/** Both the account holder and the owner edit the same allocation contract. */
-export default function CapitalPolicyFields({ value, onChange, disabled = false }: {
-  value: CapitalSettings; onChange: (settings: CapitalSettings) => void; disabled?: boolean;
+export default function CapitalPolicyFields({ value, onChange, disabled = false, totalBalance = 0 }: {
+  value: CapitalSettings; onChange: (settings: CapitalSettings) => void; disabled?: boolean; totalBalance?: number;
 }) {
-  return <fieldset className="capital-policy-fields" disabled={disabled}>
-    <legend className="visually-hidden">Capital allocation settings</legend>
-    <p className="field-hint">Percentages use the total USD wallet balance. Each strategy includes all its legs.
-      BTC and ETH share the wallet. Open runs keep their entry budgets.</p>
-    <RuleFields label="Default" rule={value} onChange={rule => { if (rule) onChange({ ...value, ...rule }); }} />
-    <div className="capital-asset-fields">
-      {(["BTC", "ETH"] as const).map(asset => <section className="capital-rule capital-asset" key={asset} aria-label={`${asset} allocation`}>
-        <header className="capital-asset-heading">
-          <span aria-hidden="true">{asset === "BTC" ? "₿" : "Ξ"}</span>
-          <h3>{asset}<small>{asset === "BTC" ? "Bitcoin" : "Ethereum"}</small></h3>
-        </header>
-        <RuleFields label={asset} rule={value.assetOverrides?.[asset]} inherit onChange={rule => {
-          const overrides = { ...value.assetOverrides };
-          if (rule) overrides[asset] = rule;
-          else delete overrides[asset];
-          onChange({ ...value, assetOverrides: overrides });
-        }} />
-        <LimitFields label={asset} limit={value.assetLimits?.[asset]} onChange={limit => {
-          const limits = { ...value.assetLimits };
-          if (limit) limits[asset] = limit;
-          else delete limits[asset];
-          onChange({ ...value, assetLimits: limits });
-        }} />
-      </section>)}
+  const maximum = capitalStrategyLimit(value, totalBalance);
+  // Keep the count stable when adding an asset override to a legacy policy.
+  const changeBudget = (next: CapitalSettings) => onChange({ ...next, maximumConcurrentStrategies: value.maximumConcurrentStrategies ?? maximum });
+  return <fieldset id="capital-budget-settings" tabIndex={-1} className="capital-policy-fields budget-fields" disabled={disabled}>
+    <legend className="visually-hidden">Strategy budget settings</legend>
+    <div className="budget-setting-heading"><span>01</span><div><h3>Size each strategy</h3><p>One budget covers all its legs. BTC and ETH share this default.</p></div></div>
+    <RuleFields label="Default" rule={value} onChange={rule => changeBudget({ ...value, ...rule })} />
+    <div className="budget-setting-heading"><span>02</span><div><h3>Set the boundaries</h3><p>Limit total allocated budgets and simultaneous runs.</p></div></div>
+    <div className="budget-boundaries">
+      <LimitFields label="Maximum total allocated" limit={value.overallLimit} onChange={overallLimit => onChange({ ...value, overallLimit })} />
+      <NumberField label="Simultaneous strategies" value={maximum} min={1} max={100} step={1}
+        hint={value.maximumConcurrentStrategies == null ? `Current automatic limit: ${maximum}. Editing a budget keeps this count.` : "A count limit. Funds and allocation caps still apply."}
+        onChange={count => onChange({ ...value, maximumConcurrentStrategies: count })} />
     </div>
-    <LimitFields label="Overall" limit={value.overallLimit} onChange={overallLimit => onChange({ ...value, overallLimit })} />
-    <p className="field-hint">Caps limit the sum of reserved budgets across open strategies and logins sharing this wallet.
-      Asset budgets are per strategy. Caps do not reserve funds for future trades.</p>
-    <NumberField label="Maximum concurrent strategies" value={value.maximumConcurrentStrategies ?? 0} min={0} max={100} step={1}
-      hint="0 uses the default rule's limit, or 100 when asset budgets differ. Capital caps still apply."
-      onChange={count => onChange({ ...value, maximumConcurrentStrategies: count === 0 ? null : count })} />
+    <Select label="When the full budget is unavailable" value={value.allowSmallerEntries === false ? "wait" : "smaller"}
+      options={[{ value: "wait", label: "Wait for the full budget" }, { value: "smaller", label: "Allow a smaller entry", hint: "Uses the available amount, subject to caps and minimum lot size" }]}
+      onChange={kind => onChange({ ...value, allowSmallerEntries: kind === "smaller" })} />
+    <details className="budget-advanced">
+      <summary>Separate BTC & ETH rules<span>{Object.keys(value.assetOverrides ?? {}).length ? "Custom budgets active" : "Optional"}</span></summary>
+      <div className="budget-advanced-body">
+        {(["BTC", "ETH"] as const).map(asset => <section className="budget-asset-rule" key={asset} aria-label={`${asset} allocation`}>
+          <label className="profile-checkbox"><input type="checkbox" checked={!!value.assetOverrides?.[asset]} onChange={event => {
+            const overrides = { ...value.assetOverrides };
+            if (event.target.checked) overrides[asset] = { allocationMode: value.allocationMode, capitalAmount: value.capitalAmount,
+              allocationPercent: value.allocationPercent, divisionCount: value.divisionCount };
+            else delete overrides[asset];
+            changeBudget({ ...value, assetOverrides: overrides });
+          }} />Use a different {asset} budget</label>
+          {value.assetOverrides?.[asset] && <RuleFields label={asset} rule={value.assetOverrides[asset]} onChange={rule => changeBudget({ ...value, assetOverrides: { ...value.assetOverrides, [asset]: rule } })} />}
+          <LimitFields label={`${asset} total allocation limit`} limit={value.assetLimits?.[asset]} onChange={limit => {
+            const limits = { ...value.assetLimits };
+            if (limit) limits[asset] = limit; else delete limits[asset];
+            onChange({ ...value, assetLimits: limits });
+          }} />
+        </section>)}
+      </div>
+    </details>
+    <p className="field-hint">Budgets are allocation limits, separate from stop-loss settings. Open runs keep their entry budgets.</p>
   </fieldset>;
 }
