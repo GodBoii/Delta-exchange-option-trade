@@ -362,10 +362,16 @@ class TradingEngine:
         client = await self.client_for_user(user_id)
         try:
             available, total = await self.managed_wallet(user_id) or await self.usd_capital(client)
-            return has_available_capital_slot(
+            capacity_available = has_available_capital_slot(
                 available, total, policy, capacity["occupiedSlots"], Decimal(capacity["reservedBudget"]), asset,
                 {key: Decimal(value) for key, value in capacity.get("reservedByAsset", {}).items()},
             )
+            if not capacity_available:
+                return False
+            if self.subaccounts is not None:
+                preview = await self.subaccounts.preview(user_id, policy_budget(available, total, policy, asset))
+                return preview["status"] != "blocked"
+            return True
         finally:
             await client.close()
 
@@ -386,7 +392,14 @@ class TradingEngine:
         client = await self.client_for_user(user_id)
         try:
             available, total = await self.managed_wallet(user_id) or await self.usd_capital(client)
-            return evaluate(snapshot, available, total)
+            admission = evaluate(snapshot, available, total)
+            if admission == "ready" and self.subaccounts is not None:
+                preview = await self.subaccounts.preview(
+                    user_id, policy_budget(available, total, policy, snapshot.get("asset", "BTC"))
+                )
+                if preview["status"] == "blocked":
+                    return "full"
+            return admission
         finally:
             await client.close()
 
@@ -1031,6 +1044,8 @@ class TradingEngine:
                 raise AppError(
                     409, "No available Delta balance can fund this strategy", "automation_balance_unavailable"
                 )
+            if policy_budget(available, total_balance, policy, definition.instrument.underlying) <= 0:
+                raise AppError(409, "The full strategy budget is not available", "automation_balance_unavailable")
             maximum_slots = policy.concurrency_limit(total_balance)
             try:
                 reservation = await self.reserve_capital_slot(
