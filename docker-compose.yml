@@ -39,9 +39,12 @@ services:
         export PGPASSWORD="$$POSTGRES_PASSWORD";
         while :; do
         file="/backups/trade-$$(date -u +%Y%m%dT%H%M%SZ).dump";
-        pg_dump -Fc -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f "$$file.partial" && mv "$$file.partial" "$$file";
+        if pg_dump -Fc -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -f "$$file.partial" && mv "$$file.partial" "$$file"; then
         find /backups -name 'trade-*.dump' -mtime +7 -delete;
         sleep 86400;
+        else
+        sleep 60;
+        fi;
         done
     volumes:
       - ./data/backups:/backups
