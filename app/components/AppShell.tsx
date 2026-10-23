@@ -21,7 +21,7 @@ export type Tab = "connect" | "builder" | "market" | "automation" | "dashboard" 
 type NavItem = { id: Tab; label: string; short: string; hint: string; icon: ReactNode };
 
 /** Pages reachable only from the account window: never in the strip, dock or jump menu. */
-const PROFILE_ONLY: ReadonlySet<Tab> = new Set<Tab>(["users", "subaccounts"]);
+const PROFILE_ONLY: ReadonlySet<Tab> = new Set<Tab>(["users"]);
 type NavFamily = "execute" | "research" | "account";
 
 /**
@@ -34,9 +34,8 @@ type NavFamily = "execute" | "research" | "account";
  * browsing analysis should never land on a surface that can reach the exchange
  * without crossing a visible boundary first.
  *
- * Capital allocation is deliberately absent. Setting one account-wide budget is
- * a property of the portfolio, not a destination, so it lives inside Portfolio
- * next to the balance it is calculated from.
+ * Capital and account routing share one workspace, also reachable from Portfolio
+ * and Automation, so the budget and its funding consequences stay together.
  */
 const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
   { id: "connect", label: "Connection", short: "Connect", hint: "Enable live execution", icon: <KeyRound />, family: "execute" },
@@ -45,11 +44,9 @@ const NAV_ITEMS: (NavItem & { family: NavFamily })[] = [
   { id: "dashboard", label: "Portfolio", short: "Portfolio", hint: "Balances, positions and capital", icon: <PieChart />, family: "execute" },
   { id: "market", label: "Market", short: "Market", hint: "Order flow and volatility", icon: <BarChart3 />, family: "research" },
   { id: "automation", label: "Automation", short: "Agent", hint: "Agent reviews and proposals", icon: <Bot />, family: "research" },
-  /* Account pages open from the profile window. My P&L also sits at the end of
-     the desktop strip; Sub accounts and Users are profile-only, and the phone
-     dock leaves all account pages to the profile. */
+  /* Account destinations remain accessible from the profile on smaller screens. */
   { id: "pnl", label: "My P&L", short: "P&L", hint: "Your software trade results", icon: <TrendingUp />, family: "account" },
-  { id: "subaccounts", label: "Sub accounts", short: "Accounts", hint: "Accounts, funding and API access", icon: <Layers3 />, family: "account" },
+  { id: "subaccounts", label: "Capital & accounts", short: "Capital", hint: "Strategy budgets, accounts and funding", icon: <Layers3 />, family: "account" },
   { id: "users", label: "Users", short: "Users", hint: "Every account, capital and automation", icon: <Users />, family: "account" }
 ];
 
