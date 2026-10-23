@@ -69,7 +69,7 @@ def run_automation_team(
     if previous_run:
         account_context = {**account_context, "previousRun": previous_run}
     market_tools = MarketIntelligenceTools(session_trigger=trigger, asset=asset)
-    # News and market I/O are independent. Only one news synthesis is performed per decision.
+    # Capture market evidence after research so charts and cached tool results share a fresh snapshot.
     with ThreadPoolExecutor(max_workers=2) as executor:
         news_future = executor.submit(
             run_news_pipeline,
@@ -83,10 +83,10 @@ def run_automation_team(
             focus_query=asset.news_focus_query,
             evidence_sink=lambda member: save_news_evidence(settings.psycopg_url(), agent_run_id, member),
         )
+        news_result = news_future.result()
         option_future = executor.submit(market_tools.collect_delta_option_context)
         market_packet = market_tools.collect_market_packet()
         option_context = option_future.result()
-        news_result = news_future.result()
     chart_artifacts = _chart_artifacts(market_packet, code)
     chart_context = {chart.id: chart.context for chart in chart_artifacts}
     stored_charts = ChartStorage(settings).save_run_charts(
