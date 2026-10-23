@@ -191,6 +191,8 @@ services:
 
   binace:
     container_name: Binace
+    # The host resolver returns an unreachable address for Binance domains.
+    dns: [1.1.1.1, 8.8.8.8]
     volumes:
       - market-history:/app/data
     build:
@@ -200,7 +202,7 @@ services:
       ANALYSIS_SERVICE_SECRET: ${ANALYSIS_SERVICE_SECRET:?Load backend/.env with --env-file; ANALYSIS_SERVICE_SECRET is required}
       BINANCE_FUTURES_BASE_URL: ${BINANCE_FUTURES_BASE_URL:-https://fapi.binance.com}
       BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
-      BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://stream.binance.com:9443/stream}
+      BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://data-stream.binance.vision/stream}
       BINANCE_SYMBOL: ${BINANCE_SYMBOL:-BTCUSDT}
       DELTA_PUBLIC_BASE_URL: ${DELTA_PUBLIC_BASE_URL:-https://api.india.delta.exchange}
       DELTA_SYMBOL: ${DELTA_SYMBOL:-BTCUSD}
@@ -226,6 +228,7 @@ services:
   # Same market service for the ETH agent: Binance ETHUSDT spot plus Delta ETHUSD context.
   binace-eth:
     container_name: Binace-ETH
+    dns: [1.1.1.1, 8.8.8.8]
     volumes:
       - market-history-eth:/app/data
     build:
@@ -235,7 +238,7 @@ services:
       ANALYSIS_SERVICE_SECRET: ${ANALYSIS_SERVICE_SECRET:?Load backend/.env with --env-file; ANALYSIS_SERVICE_SECRET is required}
       BINANCE_FUTURES_BASE_URL: ${BINANCE_FUTURES_BASE_URL:-https://fapi.binance.com}
       BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://data-api.binance.vision}
-      BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://stream.binance.com:9443/stream}
+      BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://data-stream.binance.vision/stream}
       BINANCE_SYMBOL: ETHUSDT
       DELTA_PUBLIC_BASE_URL: ${DELTA_PUBLIC_BASE_URL:-https://api.india.delta.exchange}
       DELTA_SYMBOL: ETHUSD
