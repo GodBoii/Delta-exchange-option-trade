@@ -408,7 +408,7 @@ function UserDetail({ userId, onNotice, onAutomationSaved, refreshToken }: {
               <>
                 <strong>{formatMoneyNumber(budgetPreview.budgetPerStrategy)}<small>{currencyCode}</small></strong>
                 <small className="detail-tile-note">
-                  Next entry can use {formatMoneyNumber(budgetPreview.nextStrategyCanUse)} · up to {budgetPreview.maximumConcurrentStrategies} at once
+                  Wallet-based estimate {formatMoneyNumber(budgetPreview.nextStrategyCanUse)} · strategy limit {budgetPreview.maximumConcurrentStrategies}
                 </small>
               </>
             ) : (
@@ -433,6 +433,7 @@ function UserDetail({ userId, onNotice, onAutomationSaved, refreshToken }: {
           userId={userId}
           name={displayName(profile)}
           policy={capitalPolicy}
+          totalBalance={wallet.state === "live" ? Number(wallet.totalBalance) : 0}
           revision={detail.data.capitalRevision ?? null}
           onNotice={onNotice}
           onSaved={() => setToken(value => value + 1)}
@@ -530,8 +531,9 @@ function OwnerReportControls({ asset, range, onAssetChange, onRangeChange }: {
   </div>;
 }
 
-function CapitalPolicyEditor({ userId, name, policy, revision, onNotice, onSaved }: {
+function CapitalPolicyEditor({ userId, name, policy, revision, onNotice, onSaved, totalBalance }: {
   userId: string;
+  totalBalance: number;
   name: string;
   policy: OwnerUserDetail["capitalPolicy"];
   revision: string | null;
@@ -572,7 +574,7 @@ function CapitalPolicyEditor({ userId, name, policy, revision, onNotice, onSaved
 
   return (
     <div className="owner-capital-editor">
-      <CapitalPolicyFields value={draft} onChange={setDraft} disabled={status.kind === "saving"} />
+      <CapitalPolicyFields value={draft} onChange={setDraft} disabled={status.kind === "saving"} totalBalance={totalBalance} />
       {invalid && <InlineMessage tone="error">{invalid}</InlineMessage>}
       <div className="owner-capital-actions">
         {dirty && (
