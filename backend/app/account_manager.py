@@ -81,7 +81,24 @@ class AccountManager:
             raise AppError(
                 409, "Assign a subaccount to this run in Profile before entry", "subaccount_assignment_required"
             )
+        policy = await self.engine.capital_policy(owner)
+        wallet = await self.wallet(owner)
+        asset = row.get("definition_json", {}).get("instrument", {}).get("underlying", "BTC")
+        budget = policy_budget(*wallet, policy, asset)
+        if budget <= 0:
+            raise AppError(409, "The managed pool cannot fund the strategy budget", "subaccount_funding_required")
+        for account, _ in await self.candidates(owner, budget, settings["auto_fund"]):
+            try:
+                return await self.registry.reserve(owner, strategy, account["account_id"])
+            except AppError as error:
+                if error.code != "subaccount_busy":
+                    raise
+        raise AppError(409, "No eligible subaccount can fund this strategy", "subaccounts_full")
+
+    async def candidates(self, owner: str, budget: Decimal, auto_fund: bool) -> list[tuple[dict[str, Any], Decimal]]:
+        """Use live flat checks and prefer already-funded accounts before reserving one."""
         parent = str((await self.registry.main(owner))["delta_user_id"])
+        candidates = []
         for account in await self.registry.accounts(owner):
             if (
                 account["parent_id"] != parent
@@ -92,13 +109,75 @@ class AccountManager:
             ):
                 continue
             try:
-                await self.funding.flat(owner, account["account_id"])
-                return await self.registry.reserve(owner, strategy, account["account_id"])
+                available, _ = await self.funding.flat(owner, account["account_id"])
+                if auto_fund or available >= budget:
+                    candidates.append((account, available))
             except AppError as error:
                 logger.info(
                     "Subaccount unavailable owner=%s account=%s code=%s", owner, account["account_id"], error.code
                 )
-        raise AppError(409, "No connected, enabled and flat subaccount is available", "subaccounts_full")
+        return sorted(candidates, key=lambda item: item[1] < budget)
+
+    async def preview(self, owner: str, budget: Decimal) -> dict[str, Any]:
+        """Read-only funding estimate. Entry rechecks and locks every reservation and transfer."""
+        settings = await self.registry.settings(owner)
+        main = await self.registry.main(owner)
+        parent = str(main["delta_user_id"])
+        result: dict[str, Any] = {"mode": settings["mode"], "account": None, "transfers": []}
+        async with self.registry.pool.connection() as connection:
+            pending = await connection.execute(
+                """select 1 from trade.account_transfers where parent_id=%s
+                   and state in ('prepared','submitting','unknown') limit 1""", (parent,),
+            )
+            if await pending.fetchone():
+                return {**result, "status": "blocked", "reason": "Confirm the pending account transfer first."}
+        if settings["mode"] == "main":
+            return {**result, "status": "estimated", "reason": "New unassigned runs use your main account.",
+                    "account": {"id": parent, "name": main["account_name"]}}
+        if settings["mode"] == "manual":
+            return {**result, "status": "blocked",
+                    "reason": "Choose an account for the run before entry. Automatic allocation is paused."}
+        candidates = await self.candidates(owner, budget, settings["auto_fund"])
+        if not candidates:
+            reason = ("No connected, enabled, flat subaccount is available." if settings["auto_fund"]
+                      else "Fund an eligible subaccount with the full entry budget, or enable automatic transfers.")
+            return {**result, "status": "blocked", "reason": reason}
+        account, available = candidates[0]
+        result["account"] = {"id": account["account_id"], "name": account["account_name"]}
+        if not settings["auto_fund"]:
+            return {**result, "status": "estimated", "reason": "The selected account already has enough available USD."}
+        if available > budget:
+            result["transfers"].append({"source": account["account_name"], "target": main["account_name"],
+                                        "amount": str(available - budget), "purpose": "Return pre-entry surplus"})
+        if available < budget:
+            required = budget - available
+            try:
+                main_available = await self.funding.source_available(owner, None)
+            except AppError as error:
+                return {**result, "status": "blocked", "reason": error.message}
+            if main_available < required:
+                for idle in await self.registry.accounts(owner):
+                    if (idle["account_id"] == account["account_id"] or idle["busy"] or not idle["present"]
+                            or not idle["connected"] or idle["parent_id"] != parent
+                            or idle["participation"] == "disabled"):
+                        continue
+                    try:
+                        idle_available = await self.funding.source_available(owner, idle["account_id"])
+                    except AppError:
+                        continue
+                    amount = min(idle_available, required - main_available)
+                    if amount > 0:
+                        result["transfers"].append({"source": idle["account_name"], "target": main["account_name"],
+                                                    "amount": str(amount), "purpose": "Reuse idle funds"})
+                        main_available += amount
+                    if main_available >= required:
+                        break
+            if main_available < required:
+                return {**result, "transfers": [], "status": "blocked",
+                        "reason": "Eligible idle accounts cannot cover the required transfer."}
+            result["transfers"].append({"source": main["account_name"], "target": account["account_name"],
+                                        "amount": str(required), "purpose": "Fund the strategy"})
+        return {**result, "status": "estimated", "reason": "Account and transfers will be checked again at entry."}
 
     async def entry_budget(
         self, owner: str, assigned: dict[str, Any], policy: CapitalPolicy, asset: str
