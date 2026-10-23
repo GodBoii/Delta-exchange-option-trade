@@ -10,6 +10,7 @@ from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
 from .failures import ResearchOpenRouter
+from .intelligence import Brief
 from .sources import PublicSourceTools
 from .tools import NewsResearchTools
 
@@ -113,7 +114,7 @@ def create_news_agent(
             "check the relevant passage and preserve units, reference periods, announcement status and dates. "
             "Status feeds contain scheduled maintenance and incident updates; distinguish future maintenance "
             "from a current outage and resolved incidents from ongoing disruption. If an article is truncated, "
-            "use read_news_article with find to inspect a specific phrase in retained text. "
+            "use read_news_article with find or page to inspect retained text or a PDF page. "
             "Prioritize important original reads over additional generic searches. Curator results include "
             "remaining research resources; when discovery is exhausted, verify collected leads and finish.",
             "Omit separate title/date headings, executive-summary labels, methodology, appendices, progress "
@@ -123,6 +124,13 @@ def create_news_agent(
     )
 
     session_db = db if db is not None else create_session_db(settings) if persist_session else None
+    if settings.structured_news:
+        instructions.append(
+            "For this run return the structured event brief instead of Markdown. Use evidence_id from successful "
+            "original reads or calendar entries as each claim's source_id. Quote exact original source text. "
+            "Do not treat discovery snippets as evidence. All factual claims and event metadata will be checked "
+            "independently before rendering. Keep interpretations conditional and dates timezone-aware."
+        )
     agent = Agent(
         id="news-intelligence-analyst",
         name="News Intelligence Analyst",
@@ -139,6 +147,7 @@ def create_news_agent(
         max_tool_calls_from_history=0,
         store_events=True,
         tools=tools,
+        output_schema=Brief if settings.structured_news else None,
         tool_call_limit=50,
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
