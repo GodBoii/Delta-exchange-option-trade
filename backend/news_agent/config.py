@@ -53,6 +53,7 @@ class NewsAgentSettings:
     shared_analysis_enabled: bool = True
     analysis_service_secret: str | None = None
     trade_backend_internal_url: str = "http://delta-exchange:8000"
+    structured_news: bool = False
 
     @classmethod
     def load(cls) -> NewsAgentSettings:
@@ -72,6 +73,7 @@ class NewsAgentSettings:
             shared_analysis_enabled=os.getenv("SHARED_ANALYSIS_ENABLED", "true").lower() == "true",
             analysis_service_secret=os.getenv("ANALYSIS_SERVICE_SECRET") or None,
             trade_backend_internal_url=os.getenv("TRADE_BACKEND_INTERNAL_URL", "http://delta-exchange:8000"),
+            structured_news=os.getenv("NEWS_STRUCTURED_ENABLED", "false").lower() == "true",
         )
 
     def require_api_key(self) -> str:
