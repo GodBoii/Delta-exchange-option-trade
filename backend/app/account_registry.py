@@ -66,7 +66,8 @@ class AccountRegistry:
                           x.strategy_id is not null as busy,
                           case when x.owner_id=a.owner_id then x.strategy_id end as strategy_id,
                           case when x.owner_id=a.owner_id then x.budget end as budget,
-                          case when x.owner_id=a.owner_id then s.data->>'name' end as strategy_name
+                          case when x.owner_id=a.owner_id then s.data->>'name' end as strategy_name,
+                          case when x.owner_id=a.owner_id then s.status end as strategy_status
                    from trade.exchange_accounts a
                    left join trade.account_assignments x on x.account_id=a.account_id and x.state<>'released'
                    left join trade.strategies s on s.id=x.strategy_id
