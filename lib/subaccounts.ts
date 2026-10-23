@@ -11,6 +11,7 @@ export type ManagedAccount = {
   participation: Participation;
   strategyId: string | null;
   strategyName: string | null;
+  strategyStatus?: string | null;
   budget: string | null;
 };
 export type Transfer = {
@@ -136,6 +137,7 @@ export function parseOverview(value: unknown): AccountOverview {
         participation: participation(row.participation),
         strategyId: optionalString(row.strategyId),
         strategyName: optionalString(row.strategyName),
+        strategyStatus: optionalString(row.strategyStatus),
         budget: optionalString(row.budget),
       };
     }),
@@ -205,4 +207,20 @@ export function parsePendingRuns(
 
 export function validTransferAmount(value: string): boolean {
   return /^\d{1,18}(\.\d{1,10})?$/.test(value) && /[1-9]/.test(value);
+}
+
+export function accountState(account: ManagedAccount, snapshot: AccountSnapshot | null, error = ""): string {
+  if (!account.present) return "Unavailable on Delta";
+  if (!account.connected) return "API key needed";
+  if (account.busy) {
+    if (["completed", "cancelled", "skipped"].includes(account.strategyStatus ?? "")) return "Checking release";
+    if (["active", "executing_entry", "executing_exit"].includes(account.strategyStatus ?? "")) return "Trading";
+    if (account.strategyStatus === "attention") return "Review run";
+    return "Reserved for a run";
+  }
+  if (account.participation === "disabled") return "New entries disabled";
+  if (error) return "Account check failed";
+  if (!snapshot) return "Connected; check account";
+  if (snapshot.positions.some(position => Number(position.size) !== 0) || snapshot.orders.length) return "Exposure needs review";
+  return Number(snapshot.available) > 0 ? "Idle; funds available" : "Idle; funding needed";
 }
