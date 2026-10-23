@@ -643,6 +643,8 @@ class PublicSourceTools(Toolkit):
                     if selected and all(item.get("older_than_window") for item in selected)
                     else "no_current_items"
                     if not selected
+                    else "future_dated"
+                    if all(item.get("publication_status") == "future_date" for item in selected)
                     else "undated"
                     if all(item.get("publication_status") == "undated" for item in selected)
                     else "available"
