@@ -98,6 +98,28 @@ class AccountFunding:
         finally:
             await client.close()
 
+    async def source_available(self, owner: str, account: str | None) -> Decimal:
+        """Read-only source check for previews; transfer still validates under wallet locks."""
+        available, _ = await self.flat(owner, account)
+        async with self.registry.pool.connection() as connection:
+            if account is None:
+                parent = str((await self.registry.main(owner))["delta_user_id"])
+                busy = await connection.execute(
+                    """select 1 from trade.strategy_capital_slots slots
+                       join trade.users u on u.user_id=slots.owner_id
+                       left join trade.account_assignments a on a.strategy_id=slots.relation_id
+                       where u.connection->>'delta_user_id'=%s and slots.status in ('reserved','active')
+                         and a.strategy_id is null limit 1""", (parent,),
+                )
+            else:
+                busy = await connection.execute(
+                    "select 1 from trade.account_assignments where account_id=%s and state<>'released' limit 1",
+                    (account,),
+                )
+            if await busy.fetchone():
+                raise AppError(409, "The funding source is reserved for another run", "subaccount_busy")
+        return available
+
     async def transfer(
         self, owner: str, identity: UUID, source: str, target: str, amount: Decimal, *, strategy: str | None = None
     ) -> dict[str, Any]:
