@@ -15,10 +15,14 @@ from agno.run.base import RunStatus
 
 from .agent import create_news_agent
 from .budget import ResearchBudget
+from .collector import initial_collection
 from .config import NewsAgentSettings
 from .coverage import collection_coverage, coverage_notice
 from .database import create_session_db
+from .events import cluster_events
 from .failures import NewsResearchError, provider_failure
+from .intelligence import Brief, analyze_evidence, evidence_documents, render_events
+from .memory import memory_context, recent_events, save_events
 from .presentation import format_time
 from .report_quality import clean_report
 
@@ -208,6 +212,9 @@ def run_news_pipeline(
     report_response = None
     evidence_written = False
     try:
+        history = []
+        if settings.structured_news and settings.database_url:
+            history = recent_events(settings.psycopg_url(), asset, run_started_at)
         analyst = create_news_agent(
             settings=settings,
             db=session_db,
@@ -221,7 +228,13 @@ def run_news_pipeline(
             "search the web yourself. Investigate related global developments, scheduled meetings, "
             "crypto announcements, and public discussion. Open useful source pages before citing them. "
             "Continue with available evidence when a source fails; explain material gaps. Return the completed "
-            "Markdown report with linked evidence and clear market implications."
+            + (
+                "structured event brief with quoted evidence and clear market implications."
+                if settings.structured_news
+                else "Markdown report with linked evidence and clear market implications."
+            )
+            + memory_context(history)
+            + initial_collection(asset, run_started_at)
         )
         report_response = asyncio.run(
             analyst.arun(
@@ -233,10 +246,13 @@ def run_news_pipeline(
         if (
             not isinstance(report_response, RunOutput)
             or report_response.status != RunStatus.completed
-            or not isinstance(report_response.content, str)
-            or not report_response.content.strip()
-            or report_response.content.strip().casefold()
-            in {"provider returned error", "the operation was aborted", "request timed out", "request timed out."}
+            or not isinstance(report_response.content, (str, Brief))
+            or (isinstance(report_response.content, str) and not report_response.content.strip())
+            or (
+                isinstance(report_response.content, str)
+                and report_response.content.strip().casefold()
+                in {"provider returned error", "the operation was aborted", "request timed out", "request timed out."}
+            )
         ):
             failure = getattr(analyst.model, "last_failure", None) or {
                 "code": "news_synthesis_failed",
@@ -246,7 +262,10 @@ def run_news_pipeline(
             raise NewsResearchError(
                 failure, research_trace(report_response) if isinstance(report_response, RunOutput) else []
             )
-        cleaned = clean_report(report_response.content, report_response.tools or [])
+        proposed = report_response.content if isinstance(report_response.content, Brief) else None
+        cleaned = clean_report(
+            "## Source evidence" if proposed is not None else report_response.content, report_response.tools or []
+        )
         coverage = collection_coverage(report_response.tools or [])
         report_response.content = cleaned.markdown + coverage_notice(coverage)
         quality = {
@@ -255,6 +274,36 @@ def run_news_pipeline(
             "verified_urls": list(cleaned.verified_urls),
             "coverage": coverage,
         }
+        if settings.structured_news:
+            requested = (
+                {claim.source_id for event in proposed.events for claim in event.claims}
+                if proposed is not None
+                else None
+            )
+            documents = evidence_documents(report_response.tools or [], requested)
+
+            async def verify():
+                async with asyncio.timeout(180):
+                    if proposed is not None:
+                        return await analyze_evidence(settings, "", documents, run_started_at, brief=proposed)
+                    return await analyze_evidence(settings, cleaned.markdown, documents, run_started_at)
+
+            intelligence = (
+                asyncio.run(verify())
+                if documents
+                else {
+                    "events": [],
+                    "gaps": ["No original document evidence was retrieved."],
+                    "candidate_claims": 0,
+                    "accepted_claims": 0,
+                }
+            )
+            intelligence["events"] = cluster_events(intelligence["events"], history)
+            quality["intelligence"] = {key: value for key, value in intelligence.items() if key != "markdown"}
+            report_response.content = render_events(intelligence["events"], intelligence["gaps"])
+            report_response.content += coverage_notice(coverage)
+            if settings.database_url:
+                save_events(settings.psycopg_url(), intelligence["events"])
         if evidence_sink:
             evidence_written = True
             evidence_sink(
