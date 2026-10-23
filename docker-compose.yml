@@ -135,6 +135,8 @@ services:
     environment:
       NEWS_LOG_LEVEL: DEBUG
       NEWS_STATE_DIR: /app/data/news-state
+      NEWS_STRUCTURED_ENABLED: "true"
+      NEWS_SOCIAL_EXPORT_DIR: /app/data/news-state/social
       # The analysis service uses its own AI_DATABASE_URL role and never sees trading credentials.
       LOCAL_DATABASE_URL: ""
       LOCAL_READER_DATABASE_URL: ""
@@ -149,6 +151,43 @@ services:
       timeout: 15s
       start_period: 10s
       retries: 3
+
+  news-collector:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.news-analyzer
+    command: ["python", "-m", "news_agent.collector"]
+    environment:
+      NEWS_STATE_DIR: /app/data/news-state
+    volumes:
+      - news-state:/app/data/news-state
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      disable: true
+
+  news-social-export:
+    profiles: ["social-news"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.news-analyzer
+    command: ["python", "-m", "scripts.export_news_social"]
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    environment:
+      NEWS_X_DATABASE: /collector/monitor.sqlite
+      NEWS_SOCIAL_EXPORT_DIR: /exports/social
+    volumes:
+      - social-monitor-state:/collector:ro
+      - news-state:/exports
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      disable: true
 
   binace:
     container_name: Binace
@@ -220,6 +259,9 @@ services:
       retries: 3
 
 volumes:
+  social-monitor-state:
+    external: true
+    name: delta-social-monitor_monitor-state
   trading-state:
   market-history:
   market-history-eth:
