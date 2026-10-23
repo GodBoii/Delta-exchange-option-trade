@@ -16,6 +16,7 @@ from agno.run.base import RunStatus
 from .agent import create_news_agent
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
+from .coverage import collection_coverage, coverage_notice
 from .database import create_session_db
 from .failures import NewsResearchError, provider_failure
 from .presentation import format_time
@@ -246,11 +247,13 @@ def run_news_pipeline(
                 failure, research_trace(report_response) if isinstance(report_response, RunOutput) else []
             )
         cleaned = clean_report(report_response.content, report_response.tools or [])
-        report_response.content = cleaned.markdown
+        coverage = collection_coverage(report_response.tools or [])
+        report_response.content = cleaned.markdown + coverage_notice(coverage)
         quality = {
             "omitted_blocks": cleaned.omitted_blocks,
             "unsupported_urls": list(cleaned.unsupported_urls),
             "verified_urls": list(cleaned.verified_urls),
+            "coverage": coverage,
         }
         if evidence_sink:
             evidence_written = True
@@ -261,7 +264,7 @@ def run_news_pipeline(
                     "runId": report_response.run_id,
                     "model": analyst.model.id,
                     "status": str(report_response.status),
-                    "content": cleaned.markdown,
+                    "content": report_response.content,
                     "createdAt": report_response.created_at,
                     "researchTools": _tool_names(report_response),
                     "researchTrace": research_trace(report_response),
