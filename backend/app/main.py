@@ -28,7 +28,7 @@ from .auth import (
 )
 from .automation import AutomationScheduler
 from .automation import router as automation_router
-from .capital import fits_capital_limits, limit_budget, policy_budget
+from .capital import CapitalPolicy, fits_capital_limits, limit_budget, policy_budget, policy_from_row, requested_budget
 from .change_feed import ChangeFeed
 from .config import get_settings
 from .database import Database
@@ -39,6 +39,7 @@ from .exit_schedule import ExitChoice, fetch_option_catalog, resolve_exit_schedu
 from .instance_lock import InstanceLock
 from .models import (
     CancelOrderRequest,
+    CapitalPreviewRequest,
     CapitalSettingsUpdate,
     ClosePositionRequest,
     ConnectRequest,
@@ -485,15 +486,17 @@ async def portfolio_stream(websocket: WebSocket) -> None:
     await serve_portfolio(websocket, websocket.app.state.db, websocket.app.state.engine, settings)
 
 
-async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
+async def capital_overview(
+    request: Request, user_id: str, policy: CapitalPolicy | None = None, *, observe_wallet: bool = True,
+) -> dict[str, Any]:
     engine: TradingEngine = request.app.state.engine
-    policy = await engine.capital_policy(user_id)
+    policy = policy or await engine.capital_policy(user_id)
     client = await engine.client_for_user(user_id)
     try:
         available, total_balance = await engine.managed_wallet(user_id) or await engine.usd_capital(client)
     finally:
         await client.close()
-    if settings.trading_writer_enabled:
+    if observe_wallet and settings.trading_writer_enabled:
         try:
             # Throttled to one live observation per user every 15 minutes.
             await request.app.state.db.runtime.ledger.record_wallet(
@@ -506,7 +509,7 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
     occupied = len(capacity["occupiedSlots"])
     reserved = Decimal(capacity["reservedBudget"])
     by_asset = {key: Decimal(value) for key, value in capacity.get("reservedByAsset", {}).items()}
-    nominal_budget = policy_budget(total_balance, total_balance, policy)
+    nominal_budget = requested_budget(total_balance, policy)
     next_budget = policy_budget(available, total_balance, policy)
     asset_budgets = {}
     for asset in ("BTC", "ETH"):
@@ -514,11 +517,16 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
         can_enter = (occupied < maximum_slots and budget > 0
                      and fits_capital_limits(policy, total_balance, asset, budget, reserved, by_asset))
         asset_budgets[asset] = {
-            "nominalBudgetPerStrategy": float(policy_budget(total_balance, total_balance, policy, asset)),
+            "nominalBudgetPerStrategy": float(requested_budget(total_balance, policy, asset)),
             "availableBudgetForNextStrategy": float(budget) if can_enter else 0,
             "reservedBudget": float(by_asset.get(asset, Decimal(0))),
             "capitalLimit": float(limit_budget(total_balance, policy.asset_limits.get(asset))),
+            "reason": ("The simultaneous strategy limit is reached." if occupied >= maximum_slots
+                       else "The full strategy budget is not available." if budget <= 0
+                       else "The remaining allocation cap cannot fit this strategy." if not can_enter else None),
         }
+    management = (await engine.subaccounts.registry.settings(user_id)
+                  if engine.subaccounts is not None else {"mode": "main"})
     return {
         "success": True,
         "settings": {**policy.as_json(),
@@ -537,6 +545,8 @@ async def capital_overview(request: Request, user_id: str) -> dict[str, Any]:
         "reservedBudget": float(reserved),
         "overallCapitalLimit": float(limit_budget(total_balance, policy.overall_limit)),
         "capitalRevision": policy.revision,
+        "accountMode": management["mode"],
+        "walletScope": "main" if management["mode"] == "main" else "managed_pool",
     }
 
 
@@ -557,6 +567,28 @@ async def update_capital_settings(
         str(user["id"]), body.allocationMode, body.capitalAmount, extensions=body.extensions(),
     )
     return await capital_overview(request, str(user["id"]))
+
+
+@app.post("/api/capital/preview")
+async def preview_capital_settings(
+    request: Request, body: CapitalPreviewRequest, user: RequiredUser,
+) -> dict[str, Any]:
+    """Estimate a proposed policy without saving settings, reserving accounts or moving funds."""
+    await current_account(request.app.state.db, user, required=True)
+    owner = str(user["id"])
+    engine: TradingEngine = request.app.state.engine
+    saved = await engine.capital_policy(owner)
+    policy = policy_from_row({**saved.as_json(), **body.model_dump(exclude_unset=True)})
+    result = await capital_overview(request, owner, policy, observe_wallet=False)
+    budget = result["assetBudgets"][body.asset]
+    if budget["reason"]:
+        entry = {"status": "blocked", "reason": budget["reason"], "account": None, "transfers": []}
+    elif engine.subaccounts is not None:
+        entry = await engine.subaccounts.preview(owner, Decimal(str(budget["availableBudgetForNextStrategy"])))
+    else:
+        entry = {"status": "estimated", "reason": "Your main account will be checked at entry.",
+                 "account": None, "transfers": []}
+    return {**result, "entryPreview": entry, "asset": body.asset}
 
 
 @app.get("/api/market/options")
