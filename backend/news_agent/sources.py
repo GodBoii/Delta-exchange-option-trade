@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from contextlib import suppress
@@ -19,7 +21,9 @@ from bs4 import BeautifulSoup
 
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
+from .events import release_comparison
 from .search import WebSearchTools
+from .social import discussion_evidence
 from .source_cache import SOURCE_CACHE, SourceSnapshot
 from .tools import canonicalize_url, fetch_public_document
 
@@ -45,6 +49,7 @@ class Source:
     kind: str
     url: str
     assets: tuple[str, ...] = ("BTC", "ETH")
+    replacement_for: str | None = None
 
 
 SOURCES = (
@@ -58,6 +63,9 @@ SOURCES = (
     Source("White House statements", "official_listing", "https://www.whitehouse.gov/briefings-statements/"),
     Source("ECB releases", "official", "https://www.ecb.europa.eu/rss/press.html"),
     Source("Bank of England news", "official", "https://www.bankofengland.co.uk/rss/news"),
+    Source("Bank of Japan news", "official", "https://www.boj.or.jp/en/rss/whatsnew.xml"),
+    Source("Bank of Japan Japanese", "official", "https://www.boj.or.jp/rss/whatsnew.xml"),
+    Source("BIS releases", "official", "https://www.bis.org/doclist/all_pressrels.rss"),
     Source("Coinbase status", "organization_status", "https://status.coinbase.com/history.rss"),
     Source("Kraken status", "organization_status", "https://status.kraken.com/history.rss"),
     Source("Circle status", "organization_status", "https://status.circle.com/history.rss"),
@@ -211,7 +219,8 @@ def _card(
 
 def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, Any]]:
     root = ET.fromstring(body)
-    items = root.findall(".//item") or root.findall("{http://www.w3.org/2005/Atom}entry")
+    items = (root.findall(".//item") or root.findall("{http://www.w3.org/2005/Atom}entry")
+             or root.findall("{http://purl.org/rss/1.0/}item"))
     cards = []
     for item in items[:50]:
 
@@ -222,22 +231,22 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
                     return element.text
             return None
 
-        links = [*item.findall("link"), *item.findall("{http://www.w3.org/2005/Atom}link")]
+        links = [*item.findall("link"), *item.findall("{http://www.w3.org/2005/Atom}link"),
+                 *item.findall("{http://purl.org/rss/1.0/}link")]
         link = next((link for link in links if link.get("rel", "alternate") == "alternate"), None)
         href = link.get("href") or link.text if link is not None else None
         if not href:
             continue
         card = _card(
             source=source,
-            title=field("title", "{http://www.w3.org/2005/Atom}title"),
+            title=field("title", "{http://www.w3.org/2005/Atom}title", "{http://purl.org/rss/1.0/}title"),
             url=href,
             published=field(
                 "pubDate",
                 "{http://purl.org/dc/elements/1.1/}date",
                 "{http://www.w3.org/2005/Atom}published",
-                "{http://www.w3.org/2005/Atom}updated",
             ),
-            excerpt=field("description", "{http://www.w3.org/2005/Atom}summary"),
+            excerpt=field("description", "{http://www.w3.org/2005/Atom}summary", "{http://purl.org/rss/1.0/}description"),
             retrieved=retrieved,
             extra=(
                 {
@@ -249,6 +258,7 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
             ),
         )
         if card:
+            card["source_updated_at"] = _date(field("{http://www.w3.org/2005/Atom}updated"))
             cards.append(card)
     return cards
 
@@ -281,6 +291,8 @@ def parse_calendar(body: bytes, source: Source, retrieved: str) -> list[dict[str
                     "forecast": entry.get("forecast"),
                     "actual": entry.get("actual"),
                     "previous": entry.get("previous"),
+                    **{key: entry[key] for key in ("unit", "reference_period", "revised_previous", "actual_unit",
+                        "forecast_unit", "actual_period", "forecast_period") if key in entry},
                 },
             )
             if card:
@@ -430,6 +442,13 @@ def parse_polymarket(body: bytes, source: Source, retrieved: str) -> list[dict[s
 
 def _sources(asset: str, topics: list[str]) -> list[Source]:
     selected = [source for source in SOURCES if asset in source.assets]
+    for label, query in (
+        ("Institutional disclosures", f'{asset} (site:sec.gov OR site:blackrock.com OR site:fidelity.com)'),
+        ("Crypto infrastructure", f'{asset} (stablecoin OR exploit OR withdrawal OR custody OR network upgrade)'),
+        ("Regional macro", '(site:boj.or.jp OR site:imf.org OR site:ecb.europa.eu) monetary policy'),
+    ):
+        params = urlencode({"q": f"{query} when:2d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
+        selected.append(Source(label, "discovery", f"https://news.google.com/rss/search?{params}"))
     # Bound free text and quote it as a phrase rather than accepting search operators.
     terms = list(dict.fromkeys(" ".join(re.findall(r"[\w-]+", topic))[:80] for topic in topics[:4]))
     terms = [term for term in terms if term]
@@ -460,6 +479,16 @@ def _sources(asset: str, topics: list[str]) -> list[Source]:
         selected.append(Source(f"GDELT {label}", "discovery", f"https://api.gdeltproject.org/api/v2/doc/doc?{params}"))
     params = urlencode({"q": "ethereum" if asset == "ETH" else "bitcoin", "limit_per_type": 5})
     selected.append(Source("Polymarket", "expectations", f"https://gamma-api.polymarket.com/public-search?{params}"))
+    if os.getenv("NEWS_TRY_UNRELIABLE_SOURCES", "false").lower() != "true":
+        replacements = {"Binance announcements", "GDELT asset", "GDELT global", "Polymarket"}
+        for index, source in enumerate(selected):
+            if source.name in replacements:
+                query = DISCOVERY_FALLBACKS[source.name]
+                params = urlencode({"q": f"({query}) when:2d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
+                selected[index] = Source(
+                    f"{source.name} discovery", "discovery", f"https://news.google.com/rss/search?{params}",
+                    replacement_for=source.url,
+                )
     return selected
 
 
@@ -525,6 +554,9 @@ class PublicSourceTools(Toolkit):
         if not selected:
             selected = list(DISCUSSION_SITES)
         retrieved = datetime.now(UTC).isoformat()
+        collected = discussion_evidence(topic, selected)
+        sampled = {platform for platform in selected
+                   if sum(post["platform"] == platform for post in collected["posts"]) >= 3}
 
         async def discover(platform: str) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
             query = f"site:{DISCUSSION_SITES[platform]} {topic[:120]}"
@@ -552,12 +584,12 @@ class PublicSourceTools(Toolkit):
                 )
             return posts, None
 
-        outcomes = await asyncio.gather(*(discover(platform) for platform in selected))
+        outcomes = await asyncio.gather(*(discover(platform) for platform in selected if platform not in sampled))
         return json.dumps(
             {
                 "topic": topic[:120],
-                "posts": [post for posts, _ in outcomes for post in posts],
-                "errors": [error for _, error in outcomes if error],
+                "posts": [*collected["posts"], *[post for posts, _ in outcomes for post in posts]],
+                "errors": [*collected["errors"], *[error for _, error in outcomes if error]],
             },
             ensure_ascii=False,
         )
@@ -653,6 +685,8 @@ class PublicSourceTools(Toolkit):
                     {
                         "source": source.name,
                         "kind": source.kind,
+                        "replacement_for": source.replacement_for,
+                        "original_status": "not_attempted_prior_failures" if source.replacement_for else None,
                         "url": source.url,
                         "status": status,
                         "checked_at": snapshot.checked_at,
@@ -690,6 +724,14 @@ class PublicSourceTools(Toolkit):
                     continue
                 seen.add(item["url"])
                 cards.append(item)
+                if item["kind"] == "calendar":
+                    item["release_comparison"] = release_comparison(item)
+                    item["evidence_text"] = (
+                        f"{item['title']}\n{item.get('excerpt') or ''}\nScheduled_at: {item.get('published_at')}"
+                    )
+                    item["evidence_id"] = hashlib.sha256(
+                        (item["url"] + item["evidence_text"]).encode()
+                    ).hexdigest()[:20]
                 self.source_index[item["url"]] = {
                     "source": item["source"],
                     "published_at": item["published_at"],
