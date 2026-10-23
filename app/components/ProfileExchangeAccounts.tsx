@@ -10,11 +10,12 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronDown, Copy, KeyRound, Layers3, RefreshCw } from "@/app/components/icons";
-import { EmptyState, Field, InlineMessage, SectionHeading, Select, TableSkeleton } from "@/app/components/ui";
+import { ConfirmModal, EmptyState, Field, InlineMessage, SectionHeading, Select, TableSkeleton } from "@/app/components/ui";
+import CapitalAllocation from "@/app/components/CapitalAllocation";
 import { requestJson, type ApiRequester } from "@/lib/api";
 import { errorMessage } from "@/lib/format";
 import {
-  mode,
+  accountState,
   object,
   parseOverview,
   parsePendingRuns,
@@ -49,9 +50,9 @@ export function ProfileExchangeAccounts({
   return (
     <section
       className="profile-exchange"
-      aria-label="Sub accounts"
+      aria-label="Capital and accounts"
     >
-      <SectionHeading title="Sub accounts" />
+      <SectionHeading title="Capital & accounts" description="Set the budget. Choose the account. See what happens next." />
       {connected ? (
         <Subaccounts request={request} />
       ) : (
@@ -193,6 +194,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
   const [pending, setPending] = useState<{ id: string; name: string }[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
+  const [capitalEpoch, setCapitalEpoch] = useState(0);
   const operation = useRef(false);
   const alive = useRef(true);
   const reload = useCallback(async () => {
@@ -226,6 +228,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
     try {
       await work();
       await reload();
+      setCapitalEpoch(value => value + 1);
       setNote(message);
     } catch (error) {
       setError(errorMessage(error));
@@ -264,11 +267,23 @@ function Subaccounts({ request }: { request: ApiRequester }) {
   }
   return (
     <div className="profile-subaccounts">
+      {error && <InlineMessage tone="error">{error}</InlineMessage>}
+      {note && <span role="status" className="profile-exchange-note">{note}</span>}
+      {data && <>
+        <CapitalAllocation request={request} refreshKey={capitalEpoch} onNotice={notice => { setNote(notice.text); void reload(); }} />
+        <details className="account-routing" open={data.settings.mode === "manual" ? true : undefined}>
+          <summary><span><Layers3 aria-hidden="true" /><strong>Trade location</strong></span>
+            <span>{data.settings.mode === "main" ? "Main account" : data.settings.mode === "manual" ? "Manual assignment" : "Separate sub-accounts"} · {data.settings.autoFund && data.settings.mode !== "main" ? "Automatic transfers" : "Self-funded"}</span><span>Change setup</span></summary>
+          <ManagementForm data={data} busy={busy} save={(nextMode, autoFund) => action(() => request(`${BASE}/settings`, json("PUT", {
+            mode: nextMode, autoFund, expectedRevision: data.settings.revision,
+          })), "Account setup saved. Existing assigned runs keep their account.")} />
+        </details>
+      </>}
       <div className="profile-exchange-heading">
         <div>
-          <h2>Accounts{data && <span className="subaccount-count">{data.accounts.length}</span>}</h2>
+          <h2>Your sub-accounts{data && <span className="subaccount-count">{data.accounts.length}</span>}</h2>
           <p className="muted">
-            {data ? `${data.capacity.available} available for automatic assignment${data.capacity.target !== null ? ` · Target ${data.capacity.target}` : ""}` : "Separate balances and positions for each strategy"}
+            {data ? `${data.capacity.available} configured for automatic assignment. Live checks happen before entry.` : "Separate balances and positions for each strategy"}
           </p>
         </div>
         <button
@@ -286,24 +301,12 @@ function Subaccounts({ request }: { request: ApiRequester }) {
           {busy ? "Refreshing" : "Discover"}
         </button>
       </div>
-      {error && <InlineMessage tone="error">{error}</InlineMessage>}
-      <span role="status" className="profile-exchange-note">
-        {note}
-      </span>
       {!data ? (
         error ? <p className="muted">Accounts could not be loaded. Select Discover to retry.</p> : <TableSkeleton label="sub accounts" rows={3} />
       ) : (
         <div className="subaccounts-layout">
           <div className="subaccounts-main">
           {unresolved > 0 && <InlineMessage tone="warning">{unresolved} {unresolved === 1 ? "transfer needs" : "transfers need"} confirmation. Review Transfer activity before moving more funds.</InlineMessage>}
-          {data.capacity.target !== null &&
-            data.settings.mode === "automatic" &&
-            data.capacity.available < data.capacity.target && (
-              <p className="profile-capacity-warning">
-                Connected idle accounts currently limit new isolated entries to{" "}
-                {data.capacity.available}.
-              </p>
-            )}
           {data.accounts.length === 0 && (
             <EmptyState compact icon={<Layers3 />} title="No sub accounts yet"
               description="Create a sub account on Delta, then select Discover to connect its API key."
@@ -334,12 +337,6 @@ function Subaccounts({ request }: { request: ApiRequester }) {
           </div>
           </div>
           <aside className="subaccounts-tools" aria-label="Account settings and funding">
-          <Disclosure title="Account management" hint={data.settings.mode === "main" ? "New entries use the main account" : data.settings.mode === "automatic" ? "Automatic sub account assignment" : "Manual run assignment"}>
-            <ManagementForm data={data} busy={busy}
-              save={(nextMode, autoFund) => action(() => request(`${BASE}/settings`, json("PUT", {
-                mode: nextMode, autoFund, expectedRevision: data.settings.revision,
-              })), "Account management saved.")} />
-          </Disclosure>
           {data.accounts.length > 0 && (
             <TransferForm
               data={data}
@@ -364,7 +361,7 @@ function Subaccounts({ request }: { request: ApiRequester }) {
                   {accountLabel(transfer.source_id)} → {accountLabel(transfer.target_id)}
                   <br />
                   <small>
-                    {usd(transfer.amount)} · {transfer.state}
+                    {usd(transfer.amount)} · {transfer.state === "unknown" ? "Confirmation needed" : transfer.state === "prepared" || transfer.state === "submitting" ? "Awaiting confirmation" : transfer.state === "confirmed" ? "Completed" : "Failed"}
                   </small>
                   {transfer.error && <small>{transfer.error}</small>}
                 </span>
@@ -377,16 +374,18 @@ function Subaccounts({ request }: { request: ApiRequester }) {
                     disabled={busy}
                     onClick={() => {
                       void action(
-                        () =>
-                          request(
+                        async () => {
+                          const result = object(await request(
                             `${BASE}/transfers/${transfer.id}/reconcile`,
                             json("POST"),
-                          ),
-                        "Transfer reconciled.",
+                          ));
+                          if (result.state !== "confirmed" && result.state !== "failed") throw new Error("The transfer is still unconfirmed. Check its status on Delta; do not repeat it.");
+                        },
+                        "Transfer status checked against Delta history.",
                       );
                     }}
                   >
-                    Reconcile
+                    Check transfer status
                   </button>
                 )}
               </div>
@@ -446,36 +445,40 @@ function ManagementForm({
   }, [data.settings.mode, data.settings.autoFund]);
   return (
     <form
+      id="account-routing"
+      tabIndex={-1}
       className="profile-management"
       onSubmit={(event) => {
         event.preventDefault();
         void save(selected, autoFund);
       }}
     >
-      <Select
-        label="New strategy entries"
-        value={selected}
-        disabled={busy}
-        onChange={value => setSelected(mode(value))}
-        options={[
-          { value: "main", label: "Use main account" },
-          { value: "automatic", label: "Assign subaccounts automatically" },
-          { value: "manual", label: "Assign each run manually" },
-        ]}
-      />
-      <label className="profile-checkbox">
-        <input
-          type="checkbox"
-          checked={autoFund}
-          disabled={busy || selected === "main"}
-          onChange={(event) => setAutoFund(event.target.checked)}
-        />
-        Automatically transfer required funds before entry
-      </label>
-      <small className="muted">
-        Capital percentages apply to the combined managed pool once. Existing
-        positions keep their account and exit rules.
-      </small>
+      <div className="account-mode-choices" role="radiogroup" aria-label="Trading account setup">
+        {([{ value: "main", title: "Main account", text: "Strategies share your main wallet. No automatic funding transfers for new unassigned runs." },
+          { value: "automatic", title: "Separate sub-accounts", text: "Each strategy gets an eligible idle account. Already-funded accounts are preferred." }] as const).map(option =>
+          <label className="account-mode-choice" key={option.value} data-selected={selected === option.value}>
+            <input type="radio" name="account-mode" value={option.value} checked={selected === option.value} disabled={busy}
+              onChange={() => { setSelected(option.value); if (option.value === "main") setAutoFund(false); }} />
+            <span><strong>{option.title}</strong><small>{option.text}</small></span>
+          </label>)}
+      </div>
+      {selected !== "main" && <div className="account-funding-setting">
+        <Select label="Moving funds before entry" value={autoFund ? "automatic" : "manual"} disabled={busy}
+          onChange={value => setAutoFund(value === "automatic")} options={[
+            { value: "manual", label: "I fund accounts myself" }, { value: "automatic", label: "Manage transfers automatically" },
+          ]} />
+        <p className="field-hint">{autoFund ? "May top up the selected account, return pre-entry surplus to Main, and reuse funds from other idle accounts. Active account margin stays in place. Funds remain in the account after a trade finishes." : "Automatic selection needs a flat, eligible account with the full entry budget already available."}</p>
+      </div>}
+      <details className="budget-advanced" open={selected === "manual" ? true : undefined}>
+        <summary>Manual assignment<span>Advanced</span></summary>
+        <div className="budget-advanced-body">
+          <label className="profile-checkbox"><input type="checkbox" checked={selected === "manual"} disabled={busy}
+            onChange={event => setSelected(event.target.checked ? "manual" : "automatic")} />Choose a sub-account for every run myself</label>
+          <p className="field-hint">Automatic allocation pauses in this mode. Expand an account below to assign a draft or scheduled run before entry. Saved assignments are permanent.</p>
+        </div>
+      </details>
+      <p className="field-hint">{selected === "main" ? "Percentages use the main wallet." : "Percentages use Main + participating sub-accounts. Changing participation changes future budgets. Busy accounts stay included."} Existing assigned runs keep their account and exits.</p>
+      {selected !== data.settings.mode && <InlineMessage tone="info">Save account setup to recalculate the capital scope and next-entry estimate.</InlineMessage>}
       <button
         className="button secondary"
         type="submit"
@@ -485,7 +488,7 @@ function ManagementForm({
             autoFund === data.settings.autoFund)
         }
       >
-        Save account management
+        Save account setup
       </button>
     </form>
   );
@@ -514,6 +517,9 @@ function SubaccountCard({
   const [secret, setSecret] = useState("");
   const [strategy, setStrategy] = useState("");
   const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    title: string; description: string; confirm: string; work: () => Promise<unknown>; message: string;
+  } | null>(null);
   const snapshotGeneration = useRef(0);
   const invalidateSnapshot = useCallback(() => { snapshotGeneration.current++; }, []);
   const id = useId();
@@ -578,15 +584,9 @@ function SubaccountCard({
             ID {account.id} · {account.marginMode ?? "Margin unknown"}
           </small>
         </span>
-        <span className="profile-account-status" data-tone={!account.present || !account.connected ? "warning" : account.busy ? "neutral" : "active"}>
+        <span className="profile-account-status" data-tone={!account.present || !account.connected ? "warning" : account.busy || account.participation === "disabled" ? "neutral" : "active"}>
           <span>
-          {!account.present
-            ? "Unavailable on Delta"
-            : !account.connected
-              ? "Connect API key"
-              : account.busy
-                ? "Reserved"
-                : "Connected"}
+          {accountState(account, snapshot, snapshotError)}
           </span>
           <small>{account.busy ? account.strategyName ?? "Run assigned" : account.participation === "automatic" ? "Automatic" : account.participation === "manual" ? "Manual" : "New entries disabled"}</small>
         </span>
@@ -601,7 +601,7 @@ function SubaccountCard({
             <span>Recorded realized P&L<strong>{snapshot && snapshot.realizedPnl !== null ? usd(snapshot.realizedPnl) : "—"}</strong></span>
           </div>}
           <Select
-            label="Participation"
+            label="Accept new runs"
             value={account.participation}
             disabled={busy || !account.connected || !account.present}
             onChange={value => {
@@ -614,8 +614,8 @@ function SubaccountCard({
             }}
             options={[
               { value: "disabled", label: "Disabled for new entries" },
-              { value: "manual", label: "Manual assignment only" },
-              { value: "automatic", label: "Available for automatic assignment" },
+              { value: "manual", label: "Only runs I assign myself" },
+              { value: "automatic", label: "Automatic and manual assignments" },
             ]}
           />
           {account.busy && (
@@ -625,7 +625,7 @@ function SubaccountCard({
               Disabling new entries keeps its exits running.
             </p>
           )}
-          {account.strategyId && (
+          {account.strategyId && ["completed", "cancelled", "skipped"].includes(account.strategyStatus ?? "") && (
             <button
               type="button"
               className="button ghost"
@@ -682,18 +682,13 @@ function SubaccountCard({
                           className="button danger"
                           disabled={busy}
                           onClick={() => {
-                            if (
-                              window.confirm(
-                                `Close the position in ${account.name}: ${position.symbol}?`,
-                              )
-                            )
-                              void action(async () => {
+                            setConfirmation({ title: "Close this position?", description: `${account.name}, account ${account.id}: ${position.symbol}, ${position.size} lots. This submits a real closing order.`, confirm: "Close position", work: async () => {
                                 await request(
                                   `/api/positions/${position.productId}/close?accountId=${account.id}`,
                                   json("POST", { confirm: true }),
                                 );
                                 await refresh();
-                              }, "Position close submitted and verified.");
+                              }, message: "Position close submitted and verified." });
                           }}
                         >
                           Close
@@ -717,12 +712,7 @@ function SubaccountCard({
                         className="button secondary"
                         disabled={busy}
                         onClick={() => {
-                          if (
-                            window.confirm(
-                              `Cancel order ${order.id} in ${account.name}?`,
-                            )
-                          )
-                            void action(async () => {
+                          setConfirmation({ title: "Cancel this order?", description: `${account.name}, account ${account.id}: ${order.symbol}, ${order.side}, ${order.size} lots. Order ${order.id}.`, confirm: "Cancel order", work: async () => {
                               await request(
                                 `/api/orders/${order.id}?accountId=${account.id}`,
                                 json("DELETE", {
@@ -731,7 +721,7 @@ function SubaccountCard({
                                 }),
                               );
                               await refresh();
-                            }, "Order cancelled.");
+                            }, message: "Order cancelled." });
                         }}
                       >
                         Cancel
@@ -774,12 +764,7 @@ function SubaccountCard({
                       busy || !strategy || account.participation === "disabled"
                     }
                     onClick={() => {
-                      void mutation(
-                        `${BASE}/assignments`,
-                        "POST",
-                        { strategyId: strategy, accountId: account.id },
-                        "Run assigned permanently to this subaccount.",
-                      );
+                      setConfirmation({ title: "Assign this run permanently?", description: `${pending.find(run => run.id === strategy)?.name ?? strategy} will use ${account.name}, account ${account.id}. To use a different account later, cancel this run and create another.`, confirm: "Assign run", work: () => request(`${BASE}/assignments`, json("POST", { strategyId: strategy, accountId: account.id })), message: "Run assigned permanently to this subaccount." });
                     }}
                   >
                     Assign run
@@ -835,17 +820,7 @@ function SubaccountCard({
               className="button danger"
               disabled={busy || account.busy}
               onClick={() => {
-                if (
-                  window.confirm(
-                    `Remove the stored API key for ${account.name}?`,
-                  )
-                )
-                  void mutation(
-                    `${BASE}/${account.id}/key`,
-                    "DELETE",
-                    undefined,
-                    "Subaccount key removed.",
-                  );
+                setConfirmation({ title: "Remove this API key?", description: `Remove stored API access for ${account.name}, account ${account.id}. New entries will be disabled.`, confirm: "Remove API key", work: () => request(`${BASE}/${account.id}/key`, json("DELETE")), message: "Subaccount key removed." });
               }}
             >
               Remove API key
@@ -855,6 +830,8 @@ function SubaccountCard({
         </div>
         </div>
       </div>
+      {confirmation && <ConfirmModal title={confirmation.title} description={confirmation.description} confirm={confirmation.confirm} cancel="Go back" busy={busy}
+        onClose={() => { if (!busy) setConfirmation(null); }} onConfirm={() => { void action(confirmation.work, confirmation.message).then(() => setConfirmation(null)); }} />}
     </article>
   );
 }
@@ -871,6 +848,7 @@ function TransferForm({
   const [source, setSource] = useState(data.mainAccount.id);
   const [target, setTarget] = useState("");
   const [amount, setAmount] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const requestId = useRef<string | null>(null);
   const accounts = [
     data.mainAccount,
@@ -884,12 +862,9 @@ function TransferForm({
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!validTransferAmount(amount) || source === target || !target) return;
-    if (
-      !window.confirm(
-        `Transfer ${amount} USD from account ${source} to ${target}?`,
-      )
-    )
-      return;
+    setConfirming(true);
+  }
+  async function transfer() {
     requestId.current ??= crypto.randomUUID();
     await send({
       requestId: requestId.current,
@@ -898,6 +873,7 @@ function TransferForm({
       amount,
       confirm: true,
     });
+    setConfirming(false);
   }
   return (
     <Disclosure title="Transfer funds" hint="Move USD between your accounts">
@@ -916,7 +892,11 @@ function TransferForm({
             if (value === target) setTarget("");
             changed();
           }}
-          options={accounts.map(account => ({ value: account.id, label: account.name, hint: `Account ${account.id}` }))}
+          options={accounts.map(account => {
+            const child = data.accounts.find(child => child.id === account.id);
+            return { value: account.id, label: account.name, disabled: !!child && (child.busy || !child.connected),
+              hint: child?.busy ? "Assigned to a run; outgoing transfers blocked" : child && !child.connected ? "Connect its API key to transfer out" : `Account ${account.id}` };
+          })}
         />
         <Select
           label="To"
@@ -958,6 +938,8 @@ function TransferForm({
         >
           Transfer USD
         </button>
+        {confirming && <ConfirmModal title="Transfer funds?" description={`${usd(amount)} from ${accounts.find(account => account.id === source)?.name ?? source}, account ${source}, to ${accounts.find(account => account.id === target)?.name ?? target}, account ${target}. This moves real USD between your Delta accounts.`}
+          confirm="Transfer funds" cancel="Go back" tone="neutral" busy={busy} onClose={() => { if (!busy) setConfirming(false); }} onConfirm={() => { void transfer(); }} />}
       </form>
     </Disclosure>
   );
