@@ -1,69 +1,98 @@
 # News research agent
 
-## Reliability changes, 23 October 2026
+BTC and ETH automation use the same isolated Agno/OpenRouter news implementation. The news agent has
+no order, account, balance or execution tools. Main automation collects fresh market and option evidence
+after news completes and creates charts from that capture.
 
-The curator now attempts 29 baseline sources per asset, plus one bounded topic-specific discovery query
-when topics are supplied. Added feeds cover Bank of England news and Coinbase, Kraken and Circle status.
-Status feed entries can describe planned maintenance, ongoing incidents or resolved incidents. Their dates
-and original wording must be checked before describing a disruption as current.
+## Current research flow
 
-Both public-source discovery and direct model searches use the same search instance and cache. The final
-45 seconds of the default research budget are reserved for article verification and synthesis rather than
-new discovery. Curator responses expose remaining calls and time. Article reads and dossier calls retain
-their own bounded allowances.
+1. `news-collector` polls public sources for both assets independently of model runs. Shared file-cache locks
+   reuse common macro/calendar responses across assets and worker processes. Recent discovery snapshots
+   are supplied to research immediately, with original dates preserved. They do not trigger analyses.
+2. The curator attempts 35 baseline connectors per asset, plus one bounded topic-specific query when
+   topics are supplied. Coverage includes official US releases/calendars, ECB, Bank of England, BIS,
+   English/Japanese Bank of Japan, crypto publishers, exchange/issuer status, and labelled institutional,
+   infrastructure and regional discovery queries. Discovery coverage is not verified original coverage.
+3. Binance listings, both GDELT queries and Polymarket use explicitly labelled public discovery replacements
+   by default after repeated observed failures. Source-health records retain `replacement_for` and
+   `original_status`. `NEWS_TRY_UNRELIABLE_SOURCES=true` enables direct attempts for diagnosis. No private
+   or undocumented exchange endpoint or access-control workaround is used. A quiet official feed is not
+   proof of a broken connector. RSS 1.0, RSS 2.0 and Atom are parsed. Atom update times are not publication.
+4. Public discussion reads sanitized X/Reddit exports where configured, then fills gaps with site searches.
+   Samples are labelled as discussion, never population sentiment or proof of an event. Original article
+   reads remain mandatory for factual reporting. Search instances share their cache and research budget.
+5. Original HTML/PDF reads return text, dates, language, provenance and stable evidence IDs. HTML and the
+   first twelve PDF pages retain up to 128,000 characters. Each response is capped at 8,000 characters.
+   `read_news_article(url, find="phrase")` or `read_news_article(url, page=2)` retrieves a later retained
+   passage without another download. Scanned/encrypted PDFs and material outside retained text remain gaps.
+6. With `NEWS_STRUCTURED_ENABLED=true`, the researcher returns a typed event brief directly. Claims carry
+   source IDs and exact original-language passages. A separate tool-free model pass reviews entailment,
+   dates, units, reference periods, translations, attribution and event status. Exact-passage and numerical
+   checks run deterministically. Missing, duplicate or rejected verdicts cannot approve a claim. Metadata
+   and interpretation require their own approval and all supporting claims to survive. Review is bounded
+   to 180 seconds and at most 40 relevant documents / 100,000 retained text characters.
+7. The final Markdown is rendered from accepted claims. It separates reported facts from conditional
+   interpretation and direction from volatility. Partial collection is disclosed. Structured events,
+   quotes, review decisions and coverage are saved under `reportQuality.intelligence`; existing report
+   consumers continue receiving a Markdown string. A review failure cannot release the unreviewed draft.
+8. Public non-social events are stored in `ai.news_events`. History is bounded to twenty recent relevant
+   events; MACRO events are shared across assets. It is explicitly historical context requiring fresh
+   evidence. Conservative grouping distinguishes repeated release dates, preserves contradictions and
+   tracks corrections/retractions. Distinct URLs/domains do not establish independent corroboration.
+   Current event records expire after thirty days; this is not a complete evidence archive.
 
-`read_news_article(url, find="phrase")` can return a later passage from retained HTML text without another
-download. Up to 128,000 characters are retained per HTML document, while each result remains bounded to
-8,000 characters. PDFs retain their existing twelve-page and 8,000-character limit. Missing phrases do not
-establish that a statement is absent from the complete source.
+Model review can be wrong. Exact quotation and successful retrieval do not establish factual truth or
+predictive accuracy. Independent corroboration remains `not_established` unless separately proven.
+Calendar surprise calculations require compatible units and reference periods; unavailable forecast,
+actual or revision context remains unknown. Non-English evidence keeps original passages and language
+metadata; translated claims are reviewed against originals rather than replacing them.
 
-Reports omit uncited quantified claims containing currency amounts, percentages or magnitude words.
-This is a limited provenance check: cited claims still require passage-level semantic verification, and
-uncited non-numerical claims are not automatically proven. Coverage metadata and a report notice identify
-partial source collection separately from successful article verification. The Markdown report contract
-and existing `verified_urls` metadata remain available.
+## Compatibility and limits
 
-Main automation captures market and option evidence after news research, then generates charts from that
-capture. Collection failures propagate rather than silently reusing the pre-research market snapshot.
+Compose enables structured research in `news-analyzer`, whose container remains `bitcoin-agent`. The model
+remains MiMo. Standalone sessions default to legacy Markdown unless the flag is explicitly enabled.
+Tool names, action interfaces and Markdown report delivery remain compatible. Migration 016 adds one
+public-research table; the writer's existing startup migration/role provisioning handles access.
 
-Persistent events, structured claim verification, clustering, background collection, social collector
-integration and the remaining coverage expansion are subsequent implementation stages. No database
-migrations or new analysis triggers are introduced by this stage.
+Research has a four-minute tool budget, up to twenty web searches and sixteen new article reads. The final
+45 seconds are reserved for original reads/synthesis rather than new discovery. Dossier reads share the
+article allowance. Public downloads reject private/reserved targets, validate redirects, cap bytes, and
+keep time/call limits. Model synthesis and review have separate deadlines; four minutes is not a total
+end-to-end runtime promise. Failed/blocked sources retain explicit status and bounded retry backoff.
 
-The BTC and ETH automation runs each call `run_news_pipeline` for a news report. The news agent has no order or account tools. It chooses its own searches and article reads, then writes a Markdown report for the automation agent to consider.
+## Public social bridge
 
-Both assets run in the shared `news-analyzer` service, whose container is named `bitcoin-agent`. News research, strategy decisions, and activation rechecks use Agno `debug_mode=True`. Compose also sets `NEWS_LOG_LEVEL=DEBUG`. View detailed runs with `docker logs --timestamps --since 1h -f bitcoin-agent`; the analysis start message identifies the asset and run ID. `Binace` and `Binace-ETH` are market-data services and do not execute AI agents.
+The optional Compose profile `social-news` starts `news-social-export`. It has no network, API keys or
+trading database configuration. It reads the existing X collector SQLite volume read-only and exports
+only whitelisted public text, author, URL and publication/receipt fields to `news-state/social/x.jsonl`.
+The analyzer receives these sanitized files, not collector account/session databases. Files older than
+five minutes and posts outside the 48-hour window are rejected. Collector samples with at least three
+relevant posts per platform can satisfy that discussion query without additional platform searches.
 
-## Research flow
+The exporter also supports `NEWS_REDDIT_DATABASE` pointing at a read-only mounted Reddit evidence store.
+Only retained RSS observations are accepted; synthetic replay and erased revisions are excluded. The
+latest retained revision wins. A live Reddit store must be configured separately; an adapter is not proof
+of live platform coverage. No new Reddit access route or scraper is enabled by these changes. Social
+claims are not copied into long-lived shared event memory. Existing saved analysis reports are historical
+reports, not a live social erasure mirror.
 
-1. `curate_public_sources` attempts 29 baseline sources per asset plus a bounded topic query when requested. Official coverage includes Fed, SEC, ECB, BEA, Treasury, CFTC, and White House actions and statements. Publisher and organization coverage includes CoinDesk, Decrypt, Blockworks, The Block, Cointelegraph, Kraken, Delta, Binance, and the relevant Bitcoin Core or Ethereum Foundation source. BLS and Forex Factory provide calendars; Google News and GDELT provide discovery; Polymarket provides expectations. Each source has an explicit available, stale, undated, empty, blocked, timeout, or no-current-items status. Missing sources do not stop research. Blocked or stale sources with configured public discovery fallbacks retain their original status.
-2. `search_news` and `web_search` let the agent form follow-up queries. News search asks DDGS for the past week and includes recent Google News RSS discovery leads when DDGS returns too little recent material. Google News links are leads; the agent must find and read the publisher article before citing it. `search_public_discussion` makes site-restricted searches across Reddit, X, Threads, Facebook, and Binance Square. `search_exchange_announcements` finds public notices from Binance, Coinbase, Kraken, OKX, Bybit, and Delta Exchange when announcement listings are blocked. Both tools label search snippets as leads for further reading.
-3. `read_news_article` and `build_news_dossier` fetch selected original pages and bounded PDFs, extract readable text and metadata, and retain requested, redirected, and canonical URLs. Access-challenge pages are rejected. Cached reads do not spend another fresh-request allowance. Failed pages return individual errors so the agent can look elsewhere.
-4. Calendar selection ranks USD and high-impact releases before limiting the output to sixteen events per calendar. Calendar dates describe scheduled releases, not confirmation of actual publication. Shared snapshots give concurrent BTC and ETH workers the same recently fetched official documents and calendar payloads.
-5. The pipeline removes planning text before the first heading and rejects unfinished tool markup. Report blocks that cite unsupported URLs are omitted with an evidence-gap notice. Eligible citations match successful original article/PDF reads or retrieved calendar entries, using full tool results rather than truncated traces. Discovery snippets alone cannot support a report claim. This verifies retrieval provenance, not the truth of every sentence or predictive accuracy.
+## Configuration and tests
 
-Research has a four-minute tool budget per run. The production run allows up to 20 web searches and 16 article reads; other tools retain a ten-call allowance. Article downloads, redirects, and body size are also bounded. These are resource limits, not rules about whether the agent may analyze the evidence it found. The source allowlist is empty by default, so the fetcher accepts public HTTP(S) sites while blocking local, private, and reserved targets.
+Model calls need `OPENROUTER_API_KEY`; persistent sessions and structured event memory need
+`AI_DATABASE_URL`. `NEWS_STATE_DIR` enables shared public caching and collector snapshots.
+`NEWS_SOCIAL_EXPORT_DIR` points to sanitized public JSONL files. Keep provider keys and connection URIs
+server-only. Do not expose or commit environment files.
 
-The automation report stores the news Markdown, tool names, `researchTrace`, source health, and `reportQuality` in `ai.analysis_reports.member_responses`. News evidence commits before later market or strategy work can fail. A failed news stage also saves its trace and bounded provider failure details. Credit-limit errors survive the worker-process boundary and have a clear run-history message. Recovery with an empty member response does not erase previously saved news.
-
-Compose mounts a private `news-state` volume at `NEWS_STATE_DIR`. Public source snapshots use OS file locks across spawned workers. Successful snapshots last sixty seconds; failures back off, with blocked endpoints cached for fifteen minutes and HTTP 429 retry delays honoured. Cached material retains its actual check time and last successful fetch time. Application logs use separate bounded files per process and are retained for thirty days across container replacement. Agno debug console logs remain available through Docker.
-
-## Run and test
-
-From `backend`:
+From `backend`, use the repository virtual environment to run:
 
 ```powershell
-.venv\Scripts\python.exe -m news_agent "Analyze Bitcoin news and upcoming macro meetings"
-.venv\Scripts\python.exe -m pytest news_agent\tests
-.venv\Scripts\python.exe -m ruff check news_agent
+../.venv/Scripts/python.exe -m pytest -q
+../.venv/Scripts/python.exe -m ruff check app automation_agent news_agent news_analyzer
 ```
 
-The CLI defaults to BTC. Automation passes its BTC or ETH asset profile and corresponding search focus. `--json` includes the report, model, session ID, run ID, and research tool names. `--save` writes the report to a chosen path.
+Database tests require `TEST_LOCAL_DATABASE_URL` on a disposable PostgreSQL instance. The ETH catalog
+suite additionally requires `TEST_ETH_CATALOG_DATABASE_URL` pointing to an `eth_catalog_test` database.
+Apply migrations with `python -m scripts.init_local_db` in the isolated test environment first.
 
-`backend/.env` needs `OPENROUTER_API_KEY` for model calls and `AI_DATABASE_URL` for persistent standalone sessions. Automation uses an in-memory news session per run. The model default and database settings are in `config.py`.
-
-## Source limitations
-
-Public feeds and pages change. Binance's listing can return an empty response, CFTC may block retrieval, GDELT and Polymarket may time out, and Forex Factory may rate-limit requests. Blockworks can return a feed frozen in January even though article links parse correctly. These conditions remain visible, with discovery fallbacks where available. Public site searches can retry without a date filter when indexed originals are excluded; undated results remain leads requiring original reads. Social platforms may limit anonymous access. The independent `social_monitor` is not connected to this package, and public discovery does not provide complete platform coverage. Licensed news streams require their own configured provider and access.
-
-Do not add undocumented exchange endpoints or bypass site access restrictions. Check a source's current terms and published interface before changing its connector.
+Breaking-news triggers, pre-activation news refresh, operational monitoring, historical evaluation and
+complete reproducible evidence archives remain outside the agreed implementation scope.
