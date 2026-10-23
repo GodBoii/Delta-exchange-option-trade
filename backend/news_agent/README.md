@@ -1,12 +1,42 @@
 # News research agent
 
+## Reliability changes, 23 October 2026
+
+The curator now attempts 29 baseline sources per asset, plus one bounded topic-specific discovery query
+when topics are supplied. Added feeds cover Bank of England news and Coinbase, Kraken and Circle status.
+Status feed entries can describe planned maintenance, ongoing incidents or resolved incidents. Their dates
+and original wording must be checked before describing a disruption as current.
+
+Both public-source discovery and direct model searches use the same search instance and cache. The final
+45 seconds of the default research budget are reserved for article verification and synthesis rather than
+new discovery. Curator responses expose remaining calls and time. Article reads and dossier calls retain
+their own bounded allowances.
+
+`read_news_article(url, find="phrase")` can return a later passage from retained HTML text without another
+download. Up to 128,000 characters are retained per HTML document, while each result remains bounded to
+8,000 characters. PDFs retain their existing twelve-page and 8,000-character limit. Missing phrases do not
+establish that a statement is absent from the complete source.
+
+Reports omit uncited quantified claims containing currency amounts, percentages or magnitude words.
+This is a limited provenance check: cited claims still require passage-level semantic verification, and
+uncited non-numerical claims are not automatically proven. Coverage metadata and a report notice identify
+partial source collection separately from successful article verification. The Markdown report contract
+and existing `verified_urls` metadata remain available.
+
+Main automation captures market and option evidence after news research, then generates charts from that
+capture. Collection failures propagate rather than silently reusing the pre-research market snapshot.
+
+Persistent events, structured claim verification, clustering, background collection, social collector
+integration and the remaining coverage expansion are subsequent implementation stages. No database
+migrations or new analysis triggers are introduced by this stage.
+
 The BTC and ETH automation runs each call `run_news_pipeline` for a news report. The news agent has no order or account tools. It chooses its own searches and article reads, then writes a Markdown report for the automation agent to consider.
 
 Both assets run in the shared `news-analyzer` service, whose container is named `bitcoin-agent`. News research, strategy decisions, and activation rechecks use Agno `debug_mode=True`. Compose also sets `NEWS_LOG_LEVEL=DEBUG`. View detailed runs with `docker logs --timestamps --since 1h -f bitcoin-agent`; the analysis start message identifies the asset and run ID. `Binace` and `Binace-ETH` are market-data services and do not execute AI agents.
 
 ## Research flow
 
-1. `curate_public_sources` attempts 25 sources per asset. Official coverage includes Fed, SEC, ECB, BEA, Treasury, CFTC, and White House actions and statements. Publisher and organization coverage includes CoinDesk, Decrypt, Blockworks, The Block, Cointelegraph, Kraken, Delta, Binance, and the relevant Bitcoin Core or Ethereum Foundation source. BLS and Forex Factory provide calendars; Google News and GDELT provide discovery; Polymarket provides expectations. Each source has an explicit available, stale, undated, empty, blocked, timeout, or no-current-items status. Missing sources do not stop research. Blocked or stale sources with configured public discovery fallbacks retain their original status.
+1. `curate_public_sources` attempts 29 baseline sources per asset plus a bounded topic query when requested. Official coverage includes Fed, SEC, ECB, BEA, Treasury, CFTC, and White House actions and statements. Publisher and organization coverage includes CoinDesk, Decrypt, Blockworks, The Block, Cointelegraph, Kraken, Delta, Binance, and the relevant Bitcoin Core or Ethereum Foundation source. BLS and Forex Factory provide calendars; Google News and GDELT provide discovery; Polymarket provides expectations. Each source has an explicit available, stale, undated, empty, blocked, timeout, or no-current-items status. Missing sources do not stop research. Blocked or stale sources with configured public discovery fallbacks retain their original status.
 2. `search_news` and `web_search` let the agent form follow-up queries. News search asks DDGS for the past week and includes recent Google News RSS discovery leads when DDGS returns too little recent material. Google News links are leads; the agent must find and read the publisher article before citing it. `search_public_discussion` makes site-restricted searches across Reddit, X, Threads, Facebook, and Binance Square. `search_exchange_announcements` finds public notices from Binance, Coinbase, Kraken, OKX, Bybit, and Delta Exchange when announcement listings are blocked. Both tools label search snippets as leads for further reading.
 3. `read_news_article` and `build_news_dossier` fetch selected original pages and bounded PDFs, extract readable text and metadata, and retain requested, redirected, and canonical URLs. Access-challenge pages are rejected. Cached reads do not spend another fresh-request allowance. Failed pages return individual errors so the agent can look elsewhere.
 4. Calendar selection ranks USD and high-impact releases before limiting the output to sixteen events per calendar. Calendar dates describe scheduled releases, not confirmation of actual publication. Shared snapshots give concurrent BTC and ETH workers the same recently fetched official documents and calendar payloads.
