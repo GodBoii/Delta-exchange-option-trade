@@ -33,7 +33,7 @@ const SLOT_PREVIEW = 3;
 const HISTORY_PAGE = 8;
 const PROPOSAL_PAGE = 6;
 
-export default function Automation({ onNotice, isOwner = false }: { onNotice: NoticeHandler; isOwner?: boolean }) {
+export default function Automation({ onNotice, isOwner = false, onManageCapital }: { onNotice: NoticeHandler; isOwner?: boolean; onManageCapital?: () => void }) {
   const { automation: revision } = useRealtimeSignals();
   const [overview, setOverview] = useState<AutomationOverviewData | null>(null);
   const [phase, setPhase] = useState<LoadPhase>("loading");
@@ -161,6 +161,7 @@ export default function Automation({ onNotice, isOwner = false }: { onNotice: No
             : "Paused. Your account skips the shared agent decisions."}
         actions={
           <div className="automation-controls">
+            {onManageCapital && <button className="button secondary small" type="button" onClick={onManageCapital}>Capital & accounts</button>}
             <AutomationSwitch
               enabled={enabled}
               busy={saving}
