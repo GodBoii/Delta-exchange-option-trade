@@ -27,7 +27,7 @@ const AUTO_REFRESH_MS = 30_000;
 /** Live prices tick several times a second; a full digit replay at most this often. */
 const PRICE_REPLAY_MS = 900;
 
-export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
+export default function Dashboard({ onNotice, onManageCapital }: { onNotice: NoticeHandler; onManageCapital?: () => void }) {
   const { formatMoney, currencyCode } = useCurrency();
   const stream = usePortfolioStream(true);
   const [data, setData] = useState<AccountOverview | null>(null);
@@ -211,9 +211,8 @@ export default function Dashboard({ onNotice }: { onNotice: NoticeHandler }) {
             />
           </div>
 
-          {/* The account-wide capital rule is derived from the balance above, so
-              it is set here rather than on a route of its own. */}
-          <CapitalAllocation onNotice={onNotice} />
+          {/* Keep the current capital scope beside Portfolio and edit it in the shared workspace. */}
+          <CapitalAllocation onNotice={onNotice} compact onManage={onManageCapital} />
 
           {data && data.riskStrategies.length > 0 && <CombinedRiskPanel strategies={data.riskStrategies} />}
 
