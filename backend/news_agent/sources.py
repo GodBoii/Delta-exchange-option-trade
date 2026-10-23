@@ -57,6 +57,10 @@ SOURCES = (
     Source("White House actions", "official_listing", "https://www.whitehouse.gov/presidential-actions/"),
     Source("White House statements", "official_listing", "https://www.whitehouse.gov/briefings-statements/"),
     Source("ECB releases", "official", "https://www.ecb.europa.eu/rss/press.html"),
+    Source("Bank of England news", "official", "https://www.bankofengland.co.uk/rss/news"),
+    Source("Coinbase status", "organization_status", "https://status.coinbase.com/history.rss"),
+    Source("Kraken status", "organization_status", "https://status.kraken.com/history.rss"),
+    Source("Circle status", "organization_status", "https://status.circle.com/history.rss"),
     Source("BLS calendar", "calendar", "https://www.bls.gov/schedule/news_release/bls.ics"),
     Source("Forex Factory calendar", "calendar", "https://nfs.faireconomy.media/ff_calendar_thisweek.json"),
     Source("CoinDesk", "publisher", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
@@ -426,6 +430,13 @@ def parse_polymarket(body: bytes, source: Source, retrieved: str) -> list[dict[s
 
 def _sources(asset: str, topics: list[str]) -> list[Source]:
     selected = [source for source in SOURCES if asset in source.assets]
+    # Bound free text and quote it as a phrase rather than accepting search operators.
+    terms = list(dict.fromkeys(" ".join(re.findall(r"[\w-]+", topic))[:80] for topic in topics[:4]))
+    terms = [term for term in terms if term]
+    if terms:
+        topic_query = f'{asset} (' + " OR ".join(f'"{term}"' for term in terms) + ") when:2d"
+        params = urlencode({"q": topic_query, "hl": "en-US", "gl": "US", "ceid": "US:en"})
+        selected.append(Source("Google News topics", "discovery", f"https://news.google.com/rss/search?{params}"))
     for label, term in (
         ("asset", "Ethereum ETH staking ETF" if asset == "ETH" else "Bitcoin BTC ETF"),
         ("global", '"Federal Reserve" OR inflation OR tariffs OR sanctions OR geopolitics'),
@@ -639,6 +650,7 @@ class PublicSourceTools(Toolkit):
                 health.append(
                     {
                         "source": source.name,
+                        "kind": source.kind,
                         "url": source.url,
                         "status": status,
                         "checked_at": snapshot.checked_at,
@@ -688,6 +700,7 @@ class PublicSourceTools(Toolkit):
                 "errors": errors,
                 "source_count": len(sources),
                 "source_health": sorted(health, key=lambda item: item["source"]),
+                "budget": self.budget.snapshot(),
                 "calendar_note": "Calendar entries are scheduled times, not confirmation that a release occurred. "
                 "Use official delay notices over a calendar entry; "
                 "an unverified delay remains uncertain for both assets.",
