@@ -5,6 +5,7 @@ import { CurrencyProvider } from "@/app/components/currency";
 import PwaRuntime from "@/app/components/PwaRuntime";
 import { RealtimeSignalsProvider } from "@/app/components/RealtimeSignals";
 import "./globals.css";
+import "./capital-workspace.css";
 
 /**
  * Fonts are self-hosted by next/font. The previous stylesheet imported Geist
