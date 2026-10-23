@@ -461,6 +461,7 @@ class NewsResearchTools(Toolkit):
         self.budget = budget or ResearchBudget()
         self.source_index = source_index if source_index is not None else {}
         self.cache: dict[str, dict[str, Any]] = {}
+        self.document_text: dict[str, str] = {}
         self.pending: dict[str, asyncio.Task] = {}
         self.domain_failures: dict[str, int] = {}
         self.fetch_slots = asyncio.Semaphore(4)
@@ -493,7 +494,7 @@ class NewsResearchTools(Toolkit):
                         parse_article_html,
                         fetched.body.decode("utf-8", errors="replace"),
                         fetched.final_url,
-                        8000,
+                        128000,
                     )
                 if re.fullmatch(
                     r"just a moment\.?|access denied|attention required!.*", article.get("title") or "", re.IGNORECASE
@@ -517,6 +518,9 @@ class NewsResearchTools(Toolkit):
                 article["images"] = article["images"][:3]
                 if len(article.get("text") or "") < 200:
                     raise ValueError("Page has no usable article text; use an alternate source")
+                self.document_text[url] = article["text"]
+                article["text_truncated"] = article.get("text_truncated", False) or len(article["text"]) > 8000
+                article["text"] = article["text"][:8000]
                 result = {"ok": True, "article": article}
                 logger.info(
                     "news.parse url=%s elapsed_ms=%d text_chars=%d",
@@ -557,10 +561,30 @@ class NewsResearchTools(Toolkit):
         except (TimeoutError, ValueError) as exc:
             return {"ok": False, "url": url, "error": str(exc)}
 
-    async def read_news_article(self, url: str) -> str:
-        """Read one article, returning up to 8,000 characters plus dates and provenance."""
+    async def read_news_article(self, url: str, find: str | None = None) -> str:
+        """Read an original; optionally find a phrase beyond its initial excerpt without downloading again."""
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as client:
-            return json.dumps(await self._read(url, client), ensure_ascii=False, separators=(",", ":"))
+            result = await self._read(url, client)
+        if find is not None and result.get("ok"):
+            try:
+                self.budget.consume("read_news_passage")
+                phrase = find.strip()
+                if not phrase or len(phrase) > 200:
+                    raise ValueError("Find phrase must contain 1 to 200 characters")
+                text = self.document_text.get(canonicalize_url(url), result["article"]["text"])
+                match = re.search(re.escape(phrase), text, re.IGNORECASE)
+                if match is None:
+                    raise ValueError("Phrase not found in retained document text; this is not proof of absence")
+                start = max(0, match.start() - 1500)
+                end = min(len(text), start + 8000)
+                result = {"ok": True, "article": {
+                    **result["article"], "text": text[start:end], "text_offset": start,
+                    "text_truncated": start > 0 or end < len(text) or result["article"].get("text_truncated", False),
+                    "matched_phrase": phrase,
+                }}
+            except (TimeoutError, ValueError) as exc:
+                result = {"ok": False, "url": url, "error": str(exc)}
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
     async def build_news_dossier(self, urls: list[str]) -> str:
         """Read up to ten unique articles concurrently; nested reads share the ten-article run allowance."""
