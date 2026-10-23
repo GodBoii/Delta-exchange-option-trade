@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -29,6 +30,11 @@ TRACKING_QUERY_PREFIXES = ("utm_",)
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src"}
 
 PRIMARY_OFFICIAL_DOMAINS = {
+    "bankofengland.co.uk",
+    "boj.or.jp",
+    "bis.org",
+    "ecb.europa.eu",
+    "imf.org",
     "bea.gov",
     "bls.gov",
     "cftc.gov",
@@ -40,6 +46,13 @@ PRIMARY_OFFICIAL_DOMAINS = {
     "whitehouse.gov",
 }
 OFFICIAL_ORGANIZATION_DOMAINS = {
+    "blackrock.com",
+    "fidelity.com",
+    "coinbase.com",
+    "kraken.com",
+    "circle.com",
+    "ethereum.org",
+    "bitcoin.org",
     "binance.com",
     "delta.exchange",
     "openrouter.ai",
@@ -359,6 +372,7 @@ def parse_article_html(html: str, final_url: str, max_article_chars: int | None 
 
     return {
         "title": str(title).strip() if title else None,
+        "language": str(soup.html.get("lang") or "unknown")[:35] if soup.html else "unknown",
         "canonical_url": canonical_url,
         "publisher": str(publisher).strip() if publisher else None,
         "author": author,
@@ -381,19 +395,35 @@ def _safe_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def parse_article_pdf(body: bytes, final_url: str) -> dict[str, Any]:
+def parse_article_pdf(body: bytes, final_url: str, max_article_chars: int = 8000) -> dict[str, Any]:
     """Read bounded official document text, without OCR or invented publication dates."""
     reader = PdfReader(BytesIO(body))
     if reader.is_encrypted:
         raise ValueError("Encrypted PDF cannot be used as article evidence")
     pages = reader.pages[:12]
-    text = "\n\n".join(page.extract_text() or "" for page in pages)
+    sections, spans, length = [], [], 0
+    truncated = len(reader.pages) > 12
+    for number, page in enumerate(pages, 1):
+        if length >= max_article_chars:
+            truncated = True
+            break
+        extracted = page.extract_text() or ""
+        remaining = max(0, max_article_chars - length - (2 if sections else 0))
+        section = extracted[:remaining]
+        start = length + (2 if sections else 0)
+        if section:
+            sections.append(section)
+            spans.append({"page": number, "start": start, "end": start + len(section)})
+            length = start + len(section)
+        truncated = truncated or len(section) < len(extracted)
+    text = "\n\n".join(sections)
     return {
         "title": str((reader.metadata or {}).get("/Title") or final_url.rsplit("/", 1)[-1]),
         "canonical_url": final_url,
         "published_at": None,
-        "text": text[:8000],
-        "text_truncated": len(reader.pages) > 12 or len(text) > 8000,
+        "text": text,
+        "text_truncated": truncated,
+        "page_spans": spans,
         "images": [],
         "publication_date_source": "undated",
     }
@@ -488,7 +518,7 @@ class NewsResearchTools(Toolkit):
                 )
                 parsed_at = time.perf_counter()
                 if fetched.content_type == "application/pdf":
-                    article = await asyncio.to_thread(parse_article_pdf, fetched.body, fetched.final_url)
+                    article = await asyncio.to_thread(parse_article_pdf, fetched.body, fetched.final_url, 128000)
                 else:
                     article = await asyncio.to_thread(
                         parse_article_html,
@@ -521,6 +551,9 @@ class NewsResearchTools(Toolkit):
                 self.document_text[url] = article["text"]
                 article["text_truncated"] = article.get("text_truncated", False) or len(article["text"]) > 8000
                 article["text"] = article["text"][:8000]
+                article["evidence_id"] = hashlib.sha256((article["final_url"] + article["text"]).encode()).hexdigest()[
+                    :20
+                ]
                 result = {"ok": True, "article": article}
                 logger.info(
                     "news.parse url=%s elapsed_ms=%d text_chars=%d",
@@ -561,27 +594,47 @@ class NewsResearchTools(Toolkit):
         except (TimeoutError, ValueError) as exc:
             return {"ok": False, "url": url, "error": str(exc)}
 
-    async def read_news_article(self, url: str, find: str | None = None) -> str:
-        """Read an original; optionally find a phrase beyond its initial excerpt without downloading again."""
+    async def read_news_article(self, url: str, find: str | None = None, page: int | None = None) -> str:
+        """Read an original; request a phrase or retained PDF page beyond its excerpt without downloading again."""
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as client:
             result = await self._read(url, client)
-        if find is not None and result.get("ok"):
+        if (find is not None or page is not None) and result.get("ok"):
             try:
                 self.budget.consume("read_news_passage")
-                phrase = find.strip()
-                if not phrase or len(phrase) > 200:
-                    raise ValueError("Find phrase must contain 1 to 200 characters")
                 text = self.document_text.get(canonicalize_url(url), result["article"]["text"])
-                match = re.search(re.escape(phrase), text, re.IGNORECASE)
-                if match is None:
-                    raise ValueError("Phrase not found in retained document text; this is not proof of absence")
-                start = max(0, match.start() - 1500)
-                end = min(len(text), start + 8000)
-                result = {"ok": True, "article": {
-                    **result["article"], "text": text[start:end], "text_offset": start,
-                    "text_truncated": start > 0 or end < len(text) or result["article"].get("text_truncated", False),
-                    "matched_phrase": phrase,
-                }}
+                if page is not None:
+                    if find is not None:
+                        raise ValueError("Use either find or page, not both")
+                    span = next((row for row in result["article"].get("page_spans", []) if row["page"] == page), None)
+                    if span is None:
+                        raise ValueError("PDF page is not retained; available pages are listed in page_spans")
+                    start, end = span["start"], min(span["end"], span["start"] + 8000)
+                    phrase = None
+                else:
+                    phrase = (find or "").strip()
+                    if not phrase or len(phrase) > 200:
+                        raise ValueError("Find phrase must contain 1 to 200 characters")
+                    match = re.search(re.escape(phrase), text, re.IGNORECASE)
+                    if match is None:
+                        raise ValueError("Phrase not found in retained document text; this is not proof of absence")
+                    start = max(0, match.start() - 1500)
+                    end = min(len(text), start + 8000)
+                result = {
+                    "ok": True,
+                    "article": {
+                        **result["article"],
+                        "text": text[start:end],
+                        "text_offset": start,
+                        "text_truncated": start > 0
+                        or end < len(text)
+                        or result["article"].get("text_truncated", False),
+                        "matched_phrase": phrase,
+                        "selected_page": page,
+                    },
+                }
+                result["article"]["evidence_id"] = hashlib.sha256(
+                    (result["article"]["final_url"] + result["article"]["text"]).encode()
+                ).hexdigest()[:20]
             except (TimeoutError, ValueError) as exc:
                 result = {"ok": False, "url": url, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
