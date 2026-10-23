@@ -36,6 +36,7 @@ class CapitalPolicy:
     asset_limits: dict[str, dict[str, Any]] = field(default_factory=dict)
     maximum_strategies: int | None = None
     revision: str | None = None
+    allow_smaller_entries: bool = True
 
     def for_asset(self, asset: str) -> "CapitalPolicy":
         return self.asset_overrides.get(asset, self)
@@ -76,6 +77,8 @@ class CapitalPolicy:
             result["assetLimits"] = self.asset_limits
         if self.maximum_strategies is not None:
             result["maximumConcurrentStrategies"] = self.maximum_strategies
+        if not self.allow_smaller_entries:
+            result["allowSmallerEntries"] = False
         return result
 
 
@@ -95,6 +98,7 @@ def policy_from_row(row: dict[str, Any] | None) -> CapitalPolicy:
             "allocationPercent": "allocation_percent", "divisionCount": "division_count",
             "assetOverrides": "asset_overrides", "overallLimit": "overall_limit",
             "assetLimits": "asset_limits", "maximumConcurrentStrategies": "maximum_concurrent_strategies",
+            "allowSmallerEntries": "allow_smaller_entries",
         }
         row = {fields[key]: value for key, value in row.items() if key in fields}
     mode = str(row.get("allocation_mode") or DEFAULT_ALLOCATION_MODE)
@@ -135,6 +139,7 @@ def policy_from_row(row: dict[str, Any] | None) -> CapitalPolicy:
         asset_limits=row.get("asset_limits") or {},
         maximum_strategies=row.get("maximum_concurrent_strategies"),
         revision=row.get("_revision"),
+        allow_smaller_entries=row.get("allow_smaller_entries", True),
     )
 
 
@@ -146,22 +151,26 @@ def capital_budget(
     *,
     allocation_percent: Decimal | None = None,
     division_count: int | None = None,
+    allow_smaller_entries: bool = True,
 ) -> Decimal:
+    def available_budget(requested: Decimal) -> Decimal:
+        return min(available, requested) if allow_smaller_entries or available >= requested else Decimal(0)
+
     if allocation_mode == "fixed_amount":
         requested = decimal_value(fixed_amount)
         if not requested.is_finite() or requested <= 0:
             raise AppError(409, "The custom capital budget is invalid", "capital_cap_invalid")
-        return min(available, requested)
+        return available_budget(requested)
     if allocation_mode == "custom_percentage":
         if allocation_percent is None or not allocation_percent.is_finite() or not 0 < allocation_percent <= 100:
             raise AppError(409, "The capital percentage is invalid", "capital_cap_invalid")
-        return min(available, total_balance * allocation_percent / Decimal(100))
+        return available_budget(total_balance * allocation_percent / Decimal(100))
     divisor = division_count if allocation_mode == "equal_parts" else ALLOCATION_DIVISORS.get(allocation_mode)
     if allocation_mode == "equal_parts" and (not isinstance(divisor, int) or not 1 <= divisor <= 100):
         raise AppError(409, "The capital division count is invalid", "capital_cap_invalid")
     if divisor is None:
         raise AppError(409, "The capital allocation mode is invalid", "capital_mode_invalid")
-    return min(available, total_balance / divisor)
+    return available_budget(total_balance / divisor)
 
 
 def maximum_concurrent_strategies(
@@ -209,6 +218,15 @@ def policy_budget(available: Decimal, total: Decimal, policy: CapitalPolicy, ass
         rule.capital_amount,
         allocation_percent=rule.allocation_percent,
         division_count=rule.division_count,
+        allow_smaller_entries=policy.allow_smaller_entries,
+    )
+
+
+def requested_budget(total: Decimal, policy: CapitalPolicy, asset: str | None = None) -> Decimal:
+    rule = policy.for_asset(asset) if asset is not None else policy
+    return capital_budget(
+        max(total, rule.capital_amount or Decimal(0)), total, rule.allocation_mode, rule.capital_amount,
+        allocation_percent=rule.allocation_percent, division_count=rule.division_count,
     )
 
 
@@ -250,4 +268,6 @@ def has_available_capital_slot(
     if len(occupied_slots) >= maximum:
         return False
     budget = policy_budget(available, total_balance, policy, asset)
-    return fits_capital_limits(policy, total_balance, asset, budget, reserved_budget, reserved_by_asset or {})
+    return budget > 0 and fits_capital_limits(
+        policy, total_balance, asset, budget, reserved_budget, reserved_by_asset or {}
+    )
