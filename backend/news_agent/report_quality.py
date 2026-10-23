@@ -12,6 +12,7 @@ from .tools import canonicalize_url
 
 LINK = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
 BARE_URL = re.compile(r"(?<!\()(?:https?://)[^\s<>]+")
+NUMERICAL_FACT = re.compile(r"(?:[$€£]\s*\d|\d[\d,.]*\s*(?:%|percent\b|million\b|billion\b|trillion\b))", re.I)
 
 
 @dataclass(frozen=True)
@@ -87,7 +88,10 @@ def clean_report(content: str, executions: list[Any]) -> ReportQuality:
         urls = [url for _, url in LINK.findall(block)]
         urls.extend(url.rstrip(".,;") for url in BARE_URL.findall(LINK.sub("", block)))
         missing = {canonicalize_url(url) for url in urls} - verified
-        if missing:
+        # Quantified material claims need an explicit retrieved source, including summaries.
+        # This is a provenance guard, not a semantic truth check of the cited passage.
+        uncited_number = not urls and not block.lstrip().startswith("#") and NUMERICAL_FACT.search(block)
+        if missing or uncited_number:
             unsupported.update(missing)
             omitted += 1
         else:
