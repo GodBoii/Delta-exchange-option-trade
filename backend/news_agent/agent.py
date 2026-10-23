@@ -10,7 +10,6 @@ from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
 from .failures import ResearchOpenRouter
-from .search import WebSearchTools
 from .sources import PublicSourceTools
 from .tools import NewsResearchTools
 
@@ -35,7 +34,7 @@ def _create_research_tools(settings: NewsAgentSettings, budget: ResearchBudget) 
     public_sources = PublicSourceTools(settings, budget)
     return [
         public_sources,
-        WebSearchTools(budget, timelimit="w"),
+        public_sources.search,
         NewsResearchTools(settings, budget, source_index=public_sources.source_index),
     ]
 
@@ -109,6 +108,14 @@ def create_news_agent(
             "market impact, sentiment, positive factors, risks, what to watch and sources in a useful order. Define "
             "specialist terms. Link material claims to successfully read originals or retrieved calendar entries; "
             "list only cited sources under Sources.",
+            "Cite every material factual statement, including numbers in the summary. Separate reported facts "
+            "from your conditional interpretation. A retrieved page is not proof that it supports a claim; "
+            "check the relevant passage and preserve units, reference periods, announcement status and dates. "
+            "Status feeds contain scheduled maintenance and incident updates; distinguish future maintenance "
+            "from a current outage and resolved incidents from ongoing disruption. If an article is truncated, "
+            "use read_news_article with find to inspect a specific phrase in retained text. "
+            "Prioritize important original reads over additional generic searches. Curator results include "
+            "remaining research resources; when discovery is exhausted, verify collected leads and finish.",
             "Omit separate title/date headings, executive-summary labels, methodology, appendices, progress "
             "commentary, promises and tool markup. Do not mention internal models, tools, agents, prompts, "
             "databases, storage, APIs or systems.",
