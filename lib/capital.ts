@@ -40,7 +40,8 @@ export function normalizeCapitalSettings(settings: Omit<CapitalSettings, "alloca
   return {
     ...normalizeCapitalRule(settings), assetOverrides: overrides,
     overallLimit: settings.overallLimit ?? null, assetLimits: limits,
-    maximumConcurrentStrategies: settings.maximumConcurrentStrategies ?? null
+    maximumConcurrentStrategies: settings.maximumConcurrentStrategies ?? null,
+    allowSmallerEntries: settings.allowSmallerEntries ?? true
   };
 }
 
@@ -70,4 +71,21 @@ export function capitalRuleText(rule: CapitalRule): string {
   if (rule.allocationMode === "equal_parts") return `${rule.divisionCount} equal parts`;
   if (rule.allocationMode === "custom_percentage") return `${rule.allocationPercent}% per strategy`;
   return CAPITAL_MODE_OPTIONS.find(option => option.value === rule.allocationMode)?.label ?? rule.allocationMode;
+}
+
+/** Resolve legacy counts for display without changing saved policy semantics. */
+export function capitalStrategyLimit(settings: CapitalSettings, total = 0): number {
+  if (settings.maximumConcurrentStrategies != null) return settings.maximumConcurrentStrategies;
+  if (Object.keys(settings.assetOverrides ?? {}).length) return 100;
+  if (settings.allocationMode === "fixed_amount") return Math.max(1, Math.min(100, Math.floor(total / Number(settings.capitalAmount))));
+  if (settings.allocationMode === "equal_parts") return settings.divisionCount ?? 10;
+  if (settings.allocationMode === "custom_percentage") return Math.max(1, Math.min(100, Math.floor(100 / Number(settings.allocationPercent))));
+  return { full_balance: 1, half_balance: 2, one_third_balance: 3, one_quarter_balance: 4 }[settings.allocationMode];
+}
+
+export function capitalRulePercent(rule: CapitalRule): number | null {
+  if (rule.allocationMode === "fixed_amount") return null;
+  if (rule.allocationMode === "custom_percentage") return Number(rule.allocationPercent);
+  if (rule.allocationMode === "equal_parts") return 100 / Number(rule.divisionCount);
+  return { full_balance: 100, half_balance: 50, one_third_balance: 100 / 3, one_quarter_balance: 25 }[rule.allocationMode];
 }
