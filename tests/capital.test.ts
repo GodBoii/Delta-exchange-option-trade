@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { capitalRuleText, capitalSettingsError, normalizeCapitalSettings } from "@/lib/capital";
+import { capitalRulePercent, capitalRuleText, capitalSettingsError, capitalStrategyLimit, normalizeCapitalSettings } from "@/lib/capital";
 
 describe("capital settings shared by user and owner editors", () => {
+  it("preserves exact one-third calculations and existing strategy limits", () => {
+    const legacy = normalizeCapitalSettings({ allocationMode: "one_third_balance" });
+    expect(capitalRulePercent(legacy)).toBe(100 / 3);
+    expect(capitalStrategyLimit(legacy, 10000)).toBe(3);
+    const count = capitalStrategyLimit(legacy, 10000);
+    expect(capitalStrategyLimit({ ...legacy, maximumConcurrentStrategies: count, assetOverrides: {
+      ETH: { allocationMode: "custom_percentage", allocationPercent: 10 }
+    } }, 10000)).toBe(3);
+    expect(capitalStrategyLimit({ allocationMode: "fixed_amount", capitalAmount: 250 }, 1000)).toBe(4);
+  });
+
+  it("retains an explicit full-budget requirement across normalization", () => {
+    expect(normalizeCapitalSettings({ allocationMode: "half_balance", allowSmallerEntries: false }).allowSmallerEntries).toBe(false);
+    expect(normalizeCapitalSettings({ allocationMode: "half_balance" }).allowSmallerEntries).toBe(true);
+  });
   it("normalizes API decimal strings without changing asset overrides", () => {
     const policy = normalizeCapitalSettings({ allocationMode: "fixed_amount", capitalAmount: "250.0",
       assetOverrides: { ETH: { allocationMode: "custom_percentage", allocationPercent: "10.0" } },
