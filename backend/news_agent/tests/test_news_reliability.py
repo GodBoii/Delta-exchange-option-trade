@@ -76,6 +76,33 @@ def test_uncited_numbers_do_not_survive_summary_filter():
 
 
 @pytest.mark.asyncio
+async def test_future_status_notice_is_not_current_available_coverage(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from news_agent import sources
+    from news_agent.source_cache import SourceCache
+    from news_agent.tools import FetchResult
+
+    monkeypatch.setattr(sources, "SOURCE_CACHE", SourceCache())
+    source = sources.Source("Maintenance", "organization_status", "https://example.com/status.rss")
+    monkeypatch.setattr(sources, "_sources", lambda *args: [source])
+
+    async def fetch(url, *args, **kwargs):
+        future = (datetime.now(UTC) + timedelta(days=7)).isoformat()
+        body = (
+            f"<rss><channel><item><title>Scheduled maintenance</title><link>https://example.com/planned</link>"
+            f"<pubDate>{future}</pubDate></item></channel></rss>"
+        ).encode()
+        return FetchResult(url, url, "application/rss+xml", body)
+
+    monkeypatch.setattr(sources, "fetch_public_document", fetch)
+    tools = sources.PublicSourceTools(SimpleNamespace(allowed_domains=()), ResearchBudget())
+    result = json.loads(await tools.curate_public_sources("BTC", []))
+    assert result["source_health"][0]["status"] == "future_dated"
+    assert result["sources"][0]["publication_status"] == "future_date"
+
+
+@pytest.mark.asyncio
 async def test_targeted_read_finds_later_passage_without_download_or_cache_mutation(monkeypatch):
     from news_agent.tools import FetchResult, NewsResearchTools
 
