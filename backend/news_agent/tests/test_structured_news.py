@@ -56,6 +56,16 @@ def test_rejected_duplicate_or_missing_review_verdict_is_fail_closed():
     assert "invented" not in render_events(records, [])
 
 
+def test_rendered_model_text_cannot_inject_links_or_images():
+    records = [{"title": "[title](https://evil.example)", "metadata_verified": True,
+                "claims": [{"text": "A source statement", "url": "https://official.example/report(1)"}],
+                "interpretation": "![tracking](https://evil.example/image)", "status": "unknown",
+                "direction": "uncertain", "volatility": "uncertain", "horizon": "unknown"}]
+    output = render_events(records, [])
+    assert "![tracking]" not in output and "[title](https://evil.example)" not in output
+    assert "https://official.example/report%281%29" in output
+
+
 def test_event_metadata_requires_its_own_semantic_approval():
     review = Review(
         verdicts=[Verdict(claim_id="0:0", supported=True, reason="source entails statement")],
