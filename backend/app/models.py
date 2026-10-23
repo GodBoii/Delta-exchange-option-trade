@@ -180,6 +180,7 @@ class CapitalLimitUpdate(StrictModel):
 
 
 class CapitalSettingsUpdate(CapitalRuleUpdate):
+    allowSmallerEntries: bool = True
     expectedRevision: str | None = Field(default=None, max_length=64)
     assetOverrides: dict[Literal["BTC", "ETH"], CapitalRuleUpdate] | None = None
     overallLimit: CapitalLimitUpdate | None = None
@@ -195,9 +196,14 @@ class CapitalSettingsUpdate(CapitalRuleUpdate):
             "overallLimit": "overall_limit",
             "assetLimits": "asset_limits",
             "expectedRevision": "expected_revision",
+            "allowSmallerEntries": "allow_smaller_entries",
             "maximumConcurrentStrategies": "maximum_concurrent_strategies",
         }
         return {fields[key]: value for key, value in self.model_dump(exclude_unset=True).items() if key in fields}
+
+
+class CapitalPreviewRequest(CapitalSettingsUpdate):
+    asset: Literal["BTC", "ETH"] = "BTC"
 
 
 class ConnectRequest(StrictModel):
