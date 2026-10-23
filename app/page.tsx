@@ -339,6 +339,7 @@ export default function Home() {
           }}
           onSignOut={signOut}
           onConnect={() => setTab("connect")}
+          onManageCapital={() => setTab("subaccounts")}
         />
       </AppShell>
 
@@ -373,7 +374,7 @@ export default function Home() {
  * arranged rather than swapped at random. `PageEnter` is keyed on the tab, so
  * React remounts the body and the animation restarts on every move.
  */
-function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, onAttention, onConnected, onSignOut, onConnect }: {
+function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, onAttention, onConnected, onSignOut, onConnect, onManageCapital }: {
   tab: Tab;
   connected: boolean;
   backendOnline: boolean;
@@ -384,6 +385,7 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
   onConnected: (account: Account) => void;
   onSignOut: () => void;
   onConnect: () => void;
+  onManageCapital: () => void;
 }) {
   const direction = useTravelDirection(tab, TAB_ORDER);
 
@@ -395,9 +397,9 @@ function WorkspaceBody({ tab, connected, backendOnline, user, userId, onNotice, 
       )}
       {tab === "builder" && <StrategyBuilder isOwner={user.userType === "owner"} userId={userId} onNotice={onNotice} liveEnabled={connected} backendOnline={backendOnline} />}
       {tab === "runs" && connected && <RunHistory onNotice={onNotice} onAttentionChange={onAttention} />}
-      {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} />}
+      {tab === "dashboard" && connected && <Dashboard onNotice={onNotice} onManageCapital={onManageCapital} />}
       {tab === "market" && <BtcMarketChart />}
-      {tab === "automation" && connected && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} />}
+      {tab === "automation" && connected && backendOnline && <Automation isOwner={user.userType === "owner"} onNotice={onNotice} onManageCapital={onManageCapital} />}
       {tab === "pnl" && backendOnline && <PnlView />}
       {tab === "subaccounts" && backendOnline && <ProfileExchangeAccounts connected={connected} onConnect={onConnect} />}
       {tab === "users" && backendOnline && user.userType === "owner" && <OwnerUsers onNotice={onNotice} />}
