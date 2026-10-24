@@ -14,12 +14,12 @@ def test_agent_is_isolated_and_uses_requested_openrouter_model() -> None:
 
     assert agent.model.id == "xiaomi/mimo-v2.6-pro"
     assert settings.automation_model_id == "deepseek/deepseek-v4.1-flash"
-    assert agent.model.reasoning_effort == "max"
-    assert agent.model.get_request_params()["reasoning_effort"] == "max"
+    assert agent.model.reasoning_effort == "medium"
+    assert agent.model.get_request_params()["reasoning_effort"] == "medium"
     assert agent.model.supports_native_structured_outputs is False
-    assert agent.model.max_tokens is None
+    assert agent.model.max_tokens == 12000
     assert agent.model.max_completion_tokens is None
-    assert "max_tokens" not in agent.model.get_request_params()
+    assert agent.model.get_request_params()["max_tokens"] == 12000
     assert "max_completion_tokens" not in agent.model.get_request_params()
     assert agent.output_schema is None
     assert agent.db is db
