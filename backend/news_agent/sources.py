@@ -400,8 +400,12 @@ def parse_listing(body: bytes, source: Source, retrieved: str) -> list[dict[str,
 
 def parse_gdelt(body: bytes, source: Source, retrieved: str) -> list[dict[str, Any]]:
     data = json.loads(body)
+    if not isinstance(data, dict) or not isinstance(data.get("articles", []), list):
+        raise ValueError("GDELT response must contain an article list")
     cards = []
     for item in data.get("articles", [])[:30]:
+        if not isinstance(item, dict):
+            continue
         card = _card(
             source=source,
             title=item.get("title"),
@@ -417,13 +421,15 @@ def parse_gdelt(body: bytes, source: Source, retrieved: str) -> list[dict[str, A
 
 def parse_polymarket(body: bytes, source: Source, retrieved: str) -> list[dict[str, Any]]:
     data = json.loads(body)
+    if not isinstance(data, dict) or not isinstance(data.get("events", []), list):
+        raise ValueError("Prediction response must contain an event list")
     cards = []
     for item in data.get("events", [])[:12]:
         if not isinstance(item, dict):
             continue
         markets = item.get("markets") or []
         detail = _text(item.get("description"), 300)
-        if markets and isinstance(markets[0], dict):
+        if isinstance(markets, list) and markets and isinstance(markets[0], dict):
             market = markets[0]
             detail += f" Outcomes: {market.get('outcomes')}; current prices: {market.get('outcomePrices')}."
         card = _card(
@@ -490,6 +496,27 @@ def _sources(asset: str, topics: list[str]) -> list[Source]:
                     replacement_for=source.url,
                 )
     return selected
+
+
+class SourceParseError(ValueError):
+    """A retrieved document did not satisfy its connector format."""
+
+
+def parse_source_document(body: bytes, source: Source, retrieved: str) -> list[dict[str, Any]]:
+    try:
+        if source.kind == "calendar":
+            return parse_calendar(body, source, retrieved)
+        if source.kind == "expectations" and source.name == "Polymarket":
+            return parse_polymarket(body, source, retrieved)
+        if source.kind == "discovery" and source.replacement_for:
+            return parse_feed(body, source, retrieved)
+        if source.name in {"GDELT asset", "GDELT global"}:
+            return parse_gdelt(body, source, retrieved)
+        if source.kind.endswith("_listing") or source.name in {"Binance announcements", "Bitcoin Core"}:
+            return parse_listing(body, source, retrieved)
+        return parse_feed(body, source, retrieved)
+    except (ValueError, ET.ParseError) as error:
+        raise SourceParseError(str(error) or "Unusable source document") from error
 
 
 class PublicSourceTools(Toolkit):
@@ -617,20 +644,7 @@ class PublicSourceTools(Toolkit):
                             fetched = await fetch_public_document(
                                 source.url, self.settings, client=client, accepted_types=SOURCE_TYPES
                             )
-                            body = fetched.body
-                            if source.kind == "calendar":
-                                cards = parse_calendar(body, source, checked)
-                            elif source.name == "Polymarket":
-                                cards = parse_polymarket(body, source, checked)
-                            elif source.name.startswith("GDELT"):
-                                cards = parse_gdelt(body, source, checked)
-                            elif source.kind.endswith("_listing") or source.name in {
-                                "Binance announcements",
-                                "Bitcoin Core",
-                            }:
-                                cards = parse_listing(body, source, checked)
-                            else:
-                                cards = parse_feed(body, source, checked)
+                            cards = parse_source_document(fetched.body, source, checked)
                         return SourceSnapshot(
                             cards,
                             checked,
@@ -640,7 +654,9 @@ class PublicSourceTools(Toolkit):
                         )
                     except (httpx.HTTPError, TimeoutError, ValueError, ET.ParseError) as error:
                         code, retry = "fetch_failed", 120.0
-                        if isinstance(error, httpx.HTTPStatusError):
+                        if isinstance(error, SourceParseError):
+                            code = "parse_failed"
+                        elif isinstance(error, httpx.HTTPStatusError):
                             status = error.response.status_code
                             code = (
                                 "rate_limited"
@@ -660,7 +676,7 @@ class PublicSourceTools(Toolkit):
                 try:
                     async with semaphore, asyncio.timeout(self.budget.remaining(25)):
                         snapshot = await SOURCE_CACHE.get(
-                            (2, source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
+                            (3, source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
                         )
                 except TimeoutError:
                     snapshot = SourceSnapshot([], retrieved, "Source collection deadline", "timeout", 120)
