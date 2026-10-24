@@ -58,6 +58,9 @@ SOURCES = (
     Source("SEC releases", "official", "https://www.sec.gov/rss/news/press.xml"),
     Source("BEA releases", "official", "https://apps.bea.gov/rss/rss.xml"),
     Source("Treasury releases", "official_listing", "https://home.treasury.gov/news/press-releases"),
+    Source("IRS tax releases", "official_listing", "https://www.irs.gov/newsroom/news-releases-for-current-month"),
+    Source("OFAC sanctions", "official_listing", "https://ofac.treasury.gov/recent-actions"),
+    Source("EU sanctions guidance", "official", "https://finance.ec.europa.eu/node/1296/rss_en"),
     Source("CFTC releases", "official", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml"),
     Source("White House actions", "official_listing", "https://www.whitehouse.gov/presidential-actions/"),
     Source("White House statements", "official_listing", "https://www.whitehouse.gov/briefings-statements/"),
@@ -158,6 +161,11 @@ def select_source_cards(
             )
         )
         return recent[:16]
+    # Feeds and listings do not necessarily arrive newest first. Unknown dates remain behind dated leads.
+    recent.sort(
+        key=lambda item: (item.get("publication_status") != "undated", item.get("published_at") or ""), reverse=True
+    )
+    background.sort(key=lambda item: item.get("published_at") or "", reverse=True)
     # A stale article may provide background, but never substitutes for a recent feed item.
     return recent[:4] if recent else background[:1]
 
@@ -170,6 +178,8 @@ def _date(value: Any) -> str | None:
     if not value:
         return None
     raw = str(value).strip()
+    # IRS release teasers use abbreviated month names such as Oct. 23, 2026.
+    raw = re.sub(r"^([A-Z][a-z]{2})\.(?= )", r"\1", raw)
     for pattern in ("%B %d, %Y", "%b %d, %Y"):
         with suppress(ValueError):
             return datetime.strptime(raw, pattern).replace(tzinfo=UTC).isoformat()
@@ -219,8 +229,11 @@ def _card(
 
 def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, Any]]:
     root = ET.fromstring(body)
-    items = (root.findall(".//item") or root.findall("{http://www.w3.org/2005/Atom}entry")
-             or root.findall("{http://purl.org/rss/1.0/}item"))
+    items = (
+        root.findall(".//item")
+        or root.findall("{http://www.w3.org/2005/Atom}entry")
+        or root.findall("{http://purl.org/rss/1.0/}item")
+    )
     cards = []
     for item in items[:50]:
 
@@ -231,8 +244,11 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
                     return element.text
             return None
 
-        links = [*item.findall("link"), *item.findall("{http://www.w3.org/2005/Atom}link"),
-                 *item.findall("{http://purl.org/rss/1.0/}link")]
+        links = [
+            *item.findall("link"),
+            *item.findall("{http://www.w3.org/2005/Atom}link"),
+            *item.findall("{http://purl.org/rss/1.0/}link"),
+        ]
         link = next((link for link in links if link.get("rel", "alternate") == "alternate"), None)
         href = link.get("href") or link.text if link is not None else None
         if not href:
@@ -246,7 +262,9 @@ def parse_feed(body: bytes, source: Source, retrieved: str) -> list[dict[str, An
                 "{http://purl.org/dc/elements/1.1/}date",
                 "{http://www.w3.org/2005/Atom}published",
             ),
-            excerpt=field("description", "{http://www.w3.org/2005/Atom}summary", "{http://purl.org/rss/1.0/}description"),
+            excerpt=field(
+                "description", "{http://www.w3.org/2005/Atom}summary", "{http://purl.org/rss/1.0/}description"
+            ),
             retrieved=retrieved,
             extra=(
                 {
@@ -291,8 +309,19 @@ def parse_calendar(body: bytes, source: Source, retrieved: str) -> list[dict[str
                     "forecast": entry.get("forecast"),
                     "actual": entry.get("actual"),
                     "previous": entry.get("previous"),
-                    **{key: entry[key] for key in ("unit", "reference_period", "revised_previous", "actual_unit",
-                        "forecast_unit", "actual_period", "forecast_period") if key in entry},
+                    **{
+                        key: entry[key]
+                        for key in (
+                            "unit",
+                            "reference_period",
+                            "revised_previous",
+                            "actual_unit",
+                            "forecast_unit",
+                            "actual_period",
+                            "forecast_period",
+                        )
+                        if key in entry
+                    },
                 },
             )
             if card:
@@ -354,6 +383,12 @@ def parse_listing(body: bytes, source: Source, retrieved: str) -> list[dict[str,
             continue
         if source.name == "Treasury releases" and not re.search(r"/news/press-releases/[a-z]+\d+/?$", path):
             continue
+        if source.name == "OFAC sanctions" and not re.search(r"/recent-actions/\d{8}[^/?#]*/?$", path):
+            continue
+        if source.name == "IRS tax releases" and (
+            not link.find_parent(["h2", "h3"]) or "bookmark" not in link.get("rel", [])
+        ):
+            continue
         if source.name == "Delta announcements" and not re.search(r"/blog/[^/?#]+", path):
             continue
         if source.name == "Binance announcements" and "/support/announcement/detail/" not in href:
@@ -372,12 +407,16 @@ def parse_listing(body: bytes, source: Source, retrieved: str) -> list[dict[str,
             heading = link.find_parent(["h2", "h3"])
             if heading:
                 container = heading.parent
+        if source.name == "IRS tax releases":
+            container = link.find_parent(class_=re.compile(r"^field--item$|views-row")) or container
+        if source.name == "OFAC sanctions":
+            container = link.find_parent("tr") or link.find_parent(class_=re.compile(r"views-row")) or container
         if container:
             dated = container.find("time")
             if dated:
                 published = dated.get("datetime") or dated.get_text(" ", strip=True)
             if not published:
-                date_text = re.search(r"[A-Z][a-z]+ \d{1,2}, \d{4}", container.get_text(" ", strip=True))
+                date_text = re.search(r"[A-Z][a-z]+\.? \d{1,2}, \d{4}", container.get_text(" ", strip=True))
                 published = date_text.group() if date_text else None
         if source.name == "Delta announcements":
             heading = link.select_one('[class*="cardTitle"]')
@@ -449,9 +488,32 @@ def parse_polymarket(body: bytes, source: Source, retrieved: str) -> list[dict[s
 def _sources(asset: str, topics: list[str]) -> list[Source]:
     selected = [source for source in SOURCES if asset in source.assets]
     for label, query in (
-        ("Institutional disclosures", f'{asset} (site:sec.gov OR site:blackrock.com OR site:fidelity.com)'),
-        ("Crypto infrastructure", f'{asset} (stablecoin OR exploit OR withdrawal OR custody OR network upgrade)'),
-        ("Regional macro", '(site:boj.or.jp OR site:imf.org OR site:ecb.europa.eu) monetary policy'),
+        (
+            "Crypto law and regulation",
+            '(cryptocurrency OR "digital assets") (regulation OR law OR court OR ban OR MiCA)',
+        ),
+        ("Tax and fiscal policy", '(cryptocurrency OR "digital assets" OR budget) (tax OR taxation OR revenue)'),
+        (
+            "Country economic reports",
+            '(GDP OR inflation OR employment OR "fiscal monitor" OR "financial stability") '
+            "(site:imf.org OR site:worldbank.org OR site:oecd.org OR site:gov.uk)",
+        ),
+        (
+            "Trade tariffs and sanctions",
+            '(tariffs OR sanctions OR "export controls" OR "import ban") (trade OR economy OR finance)',
+        ),
+        (
+            "War energy and shipping",
+            '(war OR ceasefire OR "military escalation" OR blockade) (oil OR energy OR shipping OR markets)',
+        ),
+        (
+            "Regional crypto policy",
+            '(cryptocurrency OR "digital assets") (India OR China OR Japan OR "European Union") '
+            "(law OR ban OR tax OR regulation)",
+        ),
+        ("Institutional disclosures", f"{asset} (site:sec.gov OR site:blackrock.com OR site:fidelity.com)"),
+        ("Crypto infrastructure", f"{asset} (stablecoin OR exploit OR withdrawal OR custody OR network upgrade)"),
+        ("Regional macro", "(site:boj.or.jp OR site:imf.org OR site:ecb.europa.eu) monetary policy"),
     ):
         params = urlencode({"q": f"{query} when:2d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
         selected.append(Source(label, "discovery", f"https://news.google.com/rss/search?{params}"))
@@ -459,7 +521,7 @@ def _sources(asset: str, topics: list[str]) -> list[Source]:
     terms = list(dict.fromkeys(" ".join(re.findall(r"[\w-]+", topic))[:80] for topic in topics[:4]))
     terms = [term for term in terms if term]
     if terms:
-        topic_query = f'{asset} (' + " OR ".join(f'"{term}"' for term in terms) + ") when:2d"
+        topic_query = f"{asset} (" + " OR ".join(f'"{term}"' for term in terms) + ") when:2d"
         params = urlencode({"q": topic_query, "hl": "en-US", "gl": "US", "ceid": "US:en"})
         selected.append(Source("Google News topics", "discovery", f"https://news.google.com/rss/search?{params}"))
     for label, term in (
@@ -492,7 +554,9 @@ def _sources(asset: str, topics: list[str]) -> list[Source]:
                 query = DISCOVERY_FALLBACKS[source.name]
                 params = urlencode({"q": f"({query}) when:2d", "hl": "en-US", "gl": "US", "ceid": "US:en"})
                 selected[index] = Source(
-                    f"{source.name} discovery", "discovery", f"https://news.google.com/rss/search?{params}",
+                    f"{source.name} discovery",
+                    "discovery",
+                    f"https://news.google.com/rss/search?{params}",
                     replacement_for=source.url,
                 )
     return selected
@@ -553,6 +617,10 @@ class PublicSourceTools(Toolkit):
                     "url": row.get("url"),
                     "excerpt": row.get("body"),
                     "search_date": row.get("date"),
+                    "reported_date": row.get("reported_date"),
+                    "publication_status": row.get("publication_status"),
+                    "age_hours": row.get("age_hours"),
+                    "retrieved_at": row.get("retrieved_at"),
                     "access": "search_snippet",
                 }
                 for row in result
@@ -582,8 +650,9 @@ class PublicSourceTools(Toolkit):
             selected = list(DISCUSSION_SITES)
         retrieved = datetime.now(UTC).isoformat()
         collected = discussion_evidence(topic, selected)
-        sampled = {platform for platform in selected
-                   if sum(post["platform"] == platform for post in collected["posts"]) >= 3}
+        sampled = {
+            platform for platform in selected if sum(post["platform"] == platform for post in collected["posts"]) >= 3
+        }
 
         async def discover(platform: str) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
             query = f"site:{DISCUSSION_SITES[platform]} {topic[:120]}"
@@ -604,6 +673,9 @@ class PublicSourceTools(Toolkit):
                         "url": row["url"],
                         "excerpt": row.get("body"),
                         "published_at": row.get("date"),
+                        "reported_date": row.get("reported_date"),
+                        "publication_status": row.get("publication_status"),
+                        "age_hours": row.get("age_hours"),
                         "retrieved_at": retrieved,
                         "access": "search_snippet",
                         "note": "Public discussion, not a verified event",
@@ -676,7 +748,7 @@ class PublicSourceTools(Toolkit):
                 try:
                     async with semaphore, asyncio.timeout(self.budget.remaining(25)):
                         snapshot = await SOURCE_CACHE.get(
-                            (3, source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
+                            (4, source.url, source.kind, tuple(getattr(self.settings, "allowed_domains", ()))), load
                         )
                 except TimeoutError:
                     snapshot = SourceSnapshot([], retrieved, "Source collection deadline", "timeout", 120)
@@ -728,7 +800,41 @@ class PublicSourceTools(Toolkit):
                 return selected, error
 
             health: list[dict[str, Any]] = []
-            outcomes = await asyncio.gather(*(collect(source) for source in sources))
+            tasks = [asyncio.create_task(collect(source)) for source in sources]
+            try:
+                done, pending = (
+                    await asyncio.wait(tasks, timeout=self.budget.remaining(45)) if tasks else (set(), set())
+                )
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                outcomes = []
+                for source, task in zip(sources, tasks, strict=True):
+                    if task in done and not task.cancelled():
+                        outcomes.append(task.result())
+                    else:
+                        error = {
+                            "source": source.name,
+                            "error": "Source collection deadline or cancellation",
+                            "code": "timeout",
+                        }
+                        outcomes.append(([], error))
+                        health.append(
+                            {
+                                "source": source.name,
+                                "kind": source.kind,
+                                "url": source.url,
+                                "status": "timeout",
+                                "checked_at": datetime.now(UTC).isoformat(),
+                                "selected_items": 0,
+                            }
+                        )
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
         cards: list[dict[str, Any]] = []
         seen: set[str] = set()
         errors = []
@@ -745,9 +851,9 @@ class PublicSourceTools(Toolkit):
                     item["evidence_text"] = (
                         f"{item['title']}\n{item.get('excerpt') or ''}\nScheduled_at: {item.get('published_at')}"
                     )
-                    item["evidence_id"] = hashlib.sha256(
-                        (item["url"] + item["evidence_text"]).encode()
-                    ).hexdigest()[:20]
+                    item["evidence_id"] = hashlib.sha256((item["url"] + item["evidence_text"]).encode()).hexdigest()[
+                        :20
+                    ]
                 self.source_index[item["url"]] = {
                     "source": item["source"],
                     "published_at": item["published_at"],
