@@ -10,7 +10,6 @@ from .budget import ResearchBudget
 from .config import NewsAgentSettings
 from .database import create_session_db
 from .failures import ResearchOpenRouter
-from .intelligence import Brief
 from .sources import PublicSourceTools
 from .tools import NewsResearchTools
 
@@ -23,10 +22,10 @@ def _create_model(settings: NewsAgentSettings, require_api_key: bool) -> OpenRou
         id=settings.model_id,
         api_key=api_key,
         supports_native_structured_outputs=False,
-        reasoning_effort="max",
+        reasoning_effort="medium",
         timeout=90,
         max_retries=3,
-        max_tokens=None,
+        max_tokens=12000,
         max_completion_tokens=None,
     )
 
@@ -50,6 +49,7 @@ def create_news_agent(
     persist_session: bool = True,
     asset: str = "BTC",
     research_budget: ResearchBudget | None = None,
+    research_tools: list | None = None,
 ) -> Agent:
     """Build a news analyst that can direct its own public-source research."""
     settings = settings or NewsAgentSettings.load()
@@ -68,7 +68,11 @@ def create_news_agent(
             "Use search_news, web_search, search_public_discussion and search_exchange_announcements for relevant "
             "follow-ups; refine stale, irrelevant or generic results.",
         ]
-        tools = _create_research_tools(settings, research_budget or ResearchBudget())
+        tools = (
+            research_tools
+            if research_tools is not None
+            else _create_research_tools(settings, research_budget or ResearchBudget())
+        )
     else:
         instructions = [
             "Research has already been collected and embedded in the user message. Synthesize it immediately.",
@@ -124,13 +128,6 @@ def create_news_agent(
     )
 
     session_db = db if db is not None else create_session_db(settings) if persist_session else None
-    if settings.structured_news:
-        instructions.append(
-            "For this run return the structured event brief instead of Markdown. Use evidence_id from successful "
-            "original reads or calendar entries as each claim's source_id. Quote exact original source text. "
-            "Do not treat discovery snippets as evidence. All factual claims and event metadata will be checked "
-            "independently before rendering. Keep interpretations conditional and dates timezone-aware."
-        )
     agent = Agent(
         id="news-intelligence-analyst",
         name="News Intelligence Analyst",
@@ -147,7 +144,6 @@ def create_news_agent(
         max_tool_calls_from_history=0,
         store_events=True,
         tools=tools,
-        output_schema=Brief if settings.structured_news else None,
         tool_call_limit=50,
         add_datetime_to_context=True,
         timezone_identifier="Asia/Kolkata",
