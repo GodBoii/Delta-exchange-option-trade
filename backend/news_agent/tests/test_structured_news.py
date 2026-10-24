@@ -24,6 +24,14 @@ QUOTE = "The bank announced a 25 basis point reduction effective next month."
 DOCS = {"d1": {"text": QUOTE, "url": "https://official.example/release", "kind": "article"}}
 
 
+@pytest.fixture(autouse=True)
+def skip_live_preparation(monkeypatch):
+    async def prepare(*args):
+        return ""
+
+    monkeypatch.setattr("news_agent.pipeline.prepare_research", prepare)
+
+
 def event(**kwargs):
     return Event(
         title="Central bank announces monetary policy reduction",
@@ -57,10 +65,18 @@ def test_rejected_duplicate_or_missing_review_verdict_is_fail_closed():
 
 
 def test_rendered_model_text_cannot_inject_links_or_images():
-    records = [{"title": "[title](https://evil.example)", "metadata_verified": True,
-                "claims": [{"text": "A source statement", "url": "https://official.example/report(1)"}],
-                "interpretation": "![tracking](https://evil.example/image)", "status": "unknown",
-                "direction": "uncertain", "volatility": "uncertain", "horizon": "unknown"}]
+    records = [
+        {
+            "title": "[title](https://evil.example)",
+            "metadata_verified": True,
+            "claims": [{"text": "A source statement", "url": "https://official.example/report(1)"}],
+            "interpretation": "![tracking](https://evil.example/image)",
+            "status": "unknown",
+            "direction": "uncertain",
+            "volatility": "uncertain",
+            "horizon": "unknown",
+        }
+    ]
     output = render_events(records, [])
     assert "![tracking]" not in output and "[title](https://evil.example)" not in output
     assert "https://official.example/report%281%29" in output
@@ -109,7 +125,7 @@ async def test_extraction_and_semantic_review_use_separate_tool_free_calls(monke
     class FakeAgent:
         def __init__(self, **kwargs):
             assert kwargs["tools"] == []
-            self.schema = kwargs["output_schema"]
+            self.schema = Brief if kwargs["instructions"][0].startswith("Extract up to") else Review
 
         async def arun(self, prompt):
             calls.append(json.loads(prompt))
@@ -126,7 +142,7 @@ async def test_extraction_and_semantic_review_use_separate_tool_free_calls(monke
             return SimpleNamespace(status=RunStatus.completed, content=result)
 
     monkeypatch.setattr("agno.agent.Agent", FakeAgent)
-    monkeypatch.setattr("news_agent.agent._create_model", lambda *args: object())
+    monkeypatch.setattr("news_agent.agent._create_model", lambda *args: SimpleNamespace())
     result = await analyze_evidence(object(), "Untrusted draft with $900 billion fabrication", DOCS, datetime.now(UTC))
     assert len(calls) == 2 and "claims" in calls[1]
     assert result["accepted_claims"] == 1 and "$900" not in result["markdown"]
@@ -189,7 +205,7 @@ async def test_prestructured_research_needs_only_one_review_call(monkeypatch):
     assert len(calls) == 1 and result["accepted_claims"] == 1
 
 
-def test_structured_agent_registers_brief_schema_and_keeps_research_tools():
+def test_research_agent_keeps_tools_without_json_mode_even_when_review_is_enabled():
     from dataclasses import replace
 
     from agno.db.in_memory import InMemoryDb
@@ -200,7 +216,7 @@ def test_structured_agent_registers_brief_schema_and_keeps_research_tools():
     agent = create_news_agent(
         settings=replace(NewsAgentSettings.load(), structured_news=True), db=InMemoryDb(), require_api_key=False
     )
-    assert agent.output_schema is Brief
+    assert agent.output_schema is None
     assert len(agent.tools) == 3
 
 
@@ -241,6 +257,8 @@ def test_complete_structured_pipeline_dispatches_original_read_then_review(monke
                 ],
             )
         if len(requests) == 2:
+            return ModelResponse(role="assistant", content=f"## Summary\n\n{QUOTE} [Source]({url})")
+        if len(requests) == 3:
             return ModelResponse(role="assistant", content=Brief(events=[candidate]).model_dump_json())
         return ModelResponse(
             role="assistant",
@@ -260,7 +278,7 @@ def test_complete_structured_pipeline_dispatches_original_read_then_review(monke
         db=InMemoryDb(),
         debug_mode=False,
     )
-    assert len(requests) == 3 and result.quality["intelligence"]["accepted_claims"] == 1
+    assert len(requests) == 4 and result.quality["intelligence"]["accepted_claims"] == 1
     assert QUOTE in result.markdown and url in result.markdown
 
 
