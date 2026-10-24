@@ -9,10 +9,13 @@ after news completes and creates charts from that capture.
 1. `news-collector` polls public sources for both assets independently of model runs. Shared file-cache locks
    reuse common macro/calendar responses across assets and worker processes. Recent discovery snapshots
    are available as discovery context, with original dates preserved. They do not trigger analyses.
-2. The curator attempts 35 baseline connectors per asset, plus one bounded topic-specific query when
+2. The curator attempts 44 baseline connectors per asset, plus one bounded topic-specific query when
    topics are supplied. Coverage includes official US releases/calendars, ECB, Bank of England, BIS,
    English/Japanese Bank of Japan, crypto publishers, exchange/issuer status, and labelled institutional,
-   infrastructure and regional discovery queries. Discovery coverage is not verified original coverage.
+   infrastructure and regional discovery queries. Dedicated discovery covers crypto law, tax/fiscal
+   policy, country economic reports, tariffs/sanctions, war/energy/shipping and regional crypto policy.
+   IRS releases, OFAC actions and EU sanctions guidance add direct official sources. Discovery coverage
+   is not verified original coverage, and broad discovery does not guarantee every country's coverage.
 3. Binance listings, both GDELT queries and Polymarket use explicitly labelled public discovery replacements
    by default after repeated observed failures. Source-health records retain `replacement_for` and
    `original_status`. `NEWS_TRY_UNRELIABLE_SOURCES=true` enables direct attempts for diagnosis. No private
@@ -111,6 +114,26 @@ To exercise public fetching directly without model calls or database writes, run
 `python -m scripts.probe_news_tools --asset BTC --output /tmp/news-tools-BTC.json`, and repeat for ETH.
 The probe calls all seven tool entry points and records coverage, retrieval, cache reuse and explicit
 search/discussion gaps. Successful fetching does not prove model analysis quality.
+
+`python -m scripts.audit_news_tools --rounds 3 --output /tmp/news-audit.json` repeats all seven tools
+for BTC and ETH and retains actual public JSON payloads. Each round has fresh tool instances and two
+calls with the same arguments. The six search topics cover crypto, regulation/tax, fiscal reports,
+trade/sanctions and war/energy. It never calls a model or writes to the trading database.
+
+Search successes remain JSON arrays for compatibility; failures return an explicit error object.
+Search leads include normalized UTC dates, original reported dates, retrieval time, publication status
+and age. Relative or timezone-ambiguous dates remain undated. Search snippets are plain text and remain
+discovery evidence. Original article results are JSON objects containing `ok` and `article`, with
+provenance, cleaned text, stable evidence IDs and the same freshness metadata. HTML character encoding
+is detected from the original bytes. No serializer rounds financial numbers inside source text.
+
+Identical in-flight searches share one request. Successful search entries expire after 60 seconds,
+empty entries after ten. Original downloads are reused within the bounded research run. Source feeds
+refresh after 60 seconds; blocked/rate-limited connectors back off separately. Retrieval time does not
+establish publication time. Newest dated feed items precede unknown dates and older background items.
+Live public sources can still be blocked, stale, unavailable or legitimately empty; these remain gaps.
+Each curation call has a 45-second collection deadline. Completed sources survive when slower sources
+time out; the pipeline retains time for original reads instead of waiting indefinitely for full coverage.
 
 Breaking-news triggers, pre-activation news refresh, operational monitoring, historical evaluation and
 complete reproducible evidence archives remain outside the agreed implementation scope.
