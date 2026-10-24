@@ -18,8 +18,9 @@ from agno.tools.calculator import CalculatorTools
 from app.automation_schedule import fixed_runs_between, ist_text
 from news_agent.config import NewsAgentSettings
 from news_agent.database import create_session_db
+from news_agent.failures import NewsResearchError
 from news_agent.model import EvidenceOpenRouter
-from news_agent.pipeline import run_news_pipeline
+from news_agent.pipeline import run_news_pipeline, strategy_evidence_ready
 from news_agent.presentation import format_time, markdown_evidence
 
 from .assets import PROFILES, AssetProfile
@@ -84,6 +85,18 @@ def run_automation_team(
             evidence_sink=lambda member: save_news_evidence(settings.psycopg_url(), agent_run_id, member),
         )
         news_result = news_future.result()
+        if (
+            getattr(settings, "structured_news", False)
+            and not strategy_evidence_ready(news_result.quality)
+        ):
+            raise NewsResearchError(
+                {
+                    "code": "news_evidence_insufficient",
+                    "stage": "news",
+                    "message": "News evidence is insufficient for strategy selection. Selection was not started.",
+                },
+                news_result.research_trace,
+            )
         option_future = executor.submit(market_tools.collect_delta_option_context)
         market_packet = market_tools.collect_market_packet()
         option_context = option_future.result()
