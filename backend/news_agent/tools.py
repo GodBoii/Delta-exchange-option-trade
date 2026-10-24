@@ -10,6 +10,7 @@ import socket
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -22,6 +23,7 @@ from pypdf.errors import PdfReadError
 
 from .budget import ResearchBudget
 from .config import NewsAgentSettings
+from .freshness import publication_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,10 @@ PRIMARY_OFFICIAL_DOMAINS = {
     "bis.org",
     "ecb.europa.eu",
     "imf.org",
+    "irs.gov",
+    "finance.ec.europa.eu",
+    "worldbank.org",
+    "oecd.org",
     "bea.gov",
     "bls.gov",
     "cftc.gov",
@@ -272,7 +278,7 @@ def _image_candidates(value: Any) -> list[dict[str, Any]]:
     return []
 
 
-def parse_article_html(html: str, final_url: str, max_article_chars: int | None = None) -> dict[str, Any]:
+def parse_article_html(html: str | bytes, final_url: str, max_article_chars: int | None = None) -> dict[str, Any]:
     """Extract article metadata, readable text, and image provenance from HTML."""
     soup = BeautifulSoup(html, "lxml")
     article_json = _json_ld_article(soup)
@@ -522,7 +528,7 @@ class NewsResearchTools(Toolkit):
                 else:
                     article = await asyncio.to_thread(
                         parse_article_html,
-                        fetched.body.decode("utf-8", errors="replace"),
+                        fetched.body,
                         fetched.final_url,
                         128000,
                     )
@@ -530,6 +536,8 @@ class NewsResearchTools(Toolkit):
                     r"just a moment\.?|access denied|attention required!.*", article.get("title") or "", re.IGNORECASE
                 ):
                     raise ValueError("Source returned an access challenge instead of an article")
+                article.update(publication_metadata(article.get("published_at")))
+                article["retrieved_at"] = datetime.now(UTC).isoformat()
                 article.setdefault(
                     "publication_date_source", "article_metadata" if article.get("published_at") else "undated"
                 )
@@ -544,6 +552,7 @@ class NewsResearchTools(Toolkit):
                     if not article.get("published_at") and feed_source["published_at"]:
                         article["published_at"] = feed_source["published_at"]
                         article["publication_date_source"] = "source_feed"
+                        article.update(publication_metadata(feed_source["published_at"]))
                 # Image URLs alone are not visual evidence. Keep compact provenance for later inspection.
                 article["images"] = article["images"][:3]
                 if len(article.get("text") or "") < 200:
