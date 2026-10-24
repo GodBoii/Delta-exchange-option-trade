@@ -51,6 +51,7 @@ RequiredUser = Annotated[dict[str, Any], Depends(require_user)]
 
 ANALYSIS_FAILED_MESSAGE = "The analysis failed. No strategy was activated."
 CREDIT_LIMIT_MESSAGE = "Analysis paused because the model provider's credit or key limit was reached."
+NEWS_INCOMPLETE_MESSAGE = "News evidence was insufficient. No strategy was selected."
 NO_TRADE_SLOTS_MESSAGE = "No trade slots are available"
 PENDING_CAPACITY_MESSAGE = "Waiting for capacity committed to another review or entry"
 UNKNOWN_CAPACITY_MESSAGE = "Trade slot availability could not be checked"
@@ -60,6 +61,7 @@ ANALYZER_UNAVAILABLE_MESSAGE = "Waiting for the analysis service to become ready
 PUBLIC_RUN_ERRORS = frozenset({
     ANALYSIS_FAILED_MESSAGE,
     CREDIT_LIMIT_MESSAGE,
+    NEWS_INCOMPLETE_MESSAGE,
     NO_TRADE_SLOTS_MESSAGE,
     PENDING_CAPACITY_MESSAGE,
     UNKNOWN_CAPACITY_MESSAGE,
@@ -411,6 +413,11 @@ async def execute_automation_run(
                 raise AppError(503, MARKET_AUTH_ERROR_MESSAGE, MARKET_AUTH_ERROR_CODE)
             if isinstance(nested, dict) and nested.get("code") == "model_credit_limit":
                 raise AppError(502, CREDIT_LIMIT_MESSAGE, "model_credit_limit")
+            if isinstance(nested, dict) and nested.get("code") in {
+                "news_research_incomplete", "news_evidence_insufficient", "news_verification_timeout",
+                "news_verification_invalid", "news_verification_failed"
+            }:
+                raise AppError(502, NEWS_INCOMPLETE_MESSAGE, nested["code"])
             if isinstance(nested, dict) and nested.get("code") in {
                 "news_synthesis_failed", "model_provider_failed", "model_rate_limited", "model_timeout"
             }:
