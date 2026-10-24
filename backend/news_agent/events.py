@@ -13,7 +13,17 @@ def same_story(left: dict, right: dict) -> bool:
         return False
     # Repeated monthly releases can have identical headlines.
     if not left.get("event_at") or not right.get("event_at"):
-        return bool(set(left.get("source_urls", [])) & set(right.get("source_urls", [])))
+        if bool(left.get("event_at")) != bool(right.get("event_at")):
+            return False
+        if not set(left.get("source_urls", [])) & set(right.get("source_urls", [])):
+            return False
+        dates_left = {claim.get("published_at") for claim in left.get("claims", []) if claim.get("published_at")}
+        dates_right = {claim.get("published_at") for claim in right.get("claims", []) if claim.get("published_at")}
+        if dates_left or dates_right:
+            return bool(dates_left) and dates_left == dates_right
+        quotes_left = {claim.get("quote") for claim in left.get("claims", []) if claim.get("quote")}
+        quotes_right = {claim.get("quote") for claim in right.get("claims", []) if claim.get("quote")}
+        return bool(quotes_left) and quotes_left == quotes_right
     return left["event_at"] == right["event_at"]
 
 
