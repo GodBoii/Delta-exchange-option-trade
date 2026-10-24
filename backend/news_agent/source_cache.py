@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -95,8 +96,20 @@ class FileSourceCache(SourceCache):
                     previous = None
                     if path.exists():
                         try:
+                            if path.stat().st_size > 2_000_000:
+                                raise ValueError("oversized source snapshot")
                             saved = json.loads(path.read_text(encoding="utf-8"))
+                            if not isinstance(saved, dict) or not isinstance(saved.get("snapshot"), dict):
+                                raise ValueError("invalid source snapshot")
                             previous = SourceSnapshot(**saved["snapshot"])
+                            if not isinstance(previous.cards, list) or not all(
+                                isinstance(row, dict) for row in previous.cards
+                            ):
+                                raise ValueError("source cards must be a list of objects")
+                            if type(saved.get("expires_at")) not in (int, float) or not math.isfinite(
+                                saved["expires_at"]
+                            ):
+                                raise ValueError("invalid source expiry")
                             remaining = saved["expires_at"] - time.time()
                             if remaining > 0:
                                 return replace(previous, retry_seconds=remaining)
