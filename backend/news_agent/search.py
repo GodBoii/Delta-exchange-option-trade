@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 from ddgs.exceptions import DDGSException
 
 from .budget import ResearchBudget
+from .freshness import publication_metadata
 from .tools import canonicalize_url
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ class WebSearchTools(AgnoWebSearchTools):
     def __init__(self, budget: ResearchBudget | None = None, *, timelimit: str | None = None) -> None:
         self.budget = budget or ResearchBudget()
         self.cache: dict[tuple[str, str, int], str] = {}
+        self.cache_expires: dict[tuple[str, str, int], float] = {}
+        self.pending: dict[tuple[str, str, int], asyncio.Task] = {}
+        self.search_slots = asyncio.Semaphore(4)
         super().__init__(timeout=10, fixed_max_results=10, timelimit=timelimit)
 
     async def _google_news(self, query: str, limit: int) -> list[dict]:
@@ -72,23 +76,37 @@ class WebSearchTools(AgnoWebSearchTools):
                 published = datetime.fromisoformat(str(row.get("date") or "").replace("Z", "+00:00"))
             except ValueError:
                 continue
-            if published.tzinfo and 0 <= (now - published).total_seconds() <= 72 * 3600:
+            if published.tzinfo and 0 <= (now - published).total_seconds() <= 48 * 3600:
                 count += 1
         return count
 
     async def _search(self, name: str, query: str, max_results: int | None) -> str:
+        limit = max(1, min(max_results or 10, 10))
+        query = " ".join(query.split())[:500]
+        key = (name, query.casefold(), limit)
+        if key in self.cache and self.cache_expires.get(key, 0) > time.monotonic():
+            return self.cache[key]
+        if key not in self.pending:
+            task = asyncio.create_task(self._execute_search(name, query, limit))
+            self.pending[key] = task
+
+            def finished(done):
+                if self.pending.get(key) is done:
+                    self.pending.pop(key, None)
+
+            task.add_done_callback(finished)
+        # Cancelling one waiter must not discard another caller's in-flight search.
+        return await asyncio.shield(self.pending[key])
+
+    async def _execute_search(self, name: str, query: str, limit: int) -> str:
         started = time.perf_counter()
+        key = (name, query.casefold(), limit)
         try:
-            limit = max(1, min(max_results or 10, 10))
-            query = " ".join(query.split())[:500]
-            key = (name, query.casefold(), limit)
-            if key in self.cache:
-                return self.cache[key]
             self.budget.consume(name)
             method = super().search_news if name == "search_news" else super().web_search
             provider_error = None
             try:
-                async with asyncio.timeout(self.budget.remaining(20)):
+                async with asyncio.timeout(self.budget.remaining(20)), self.search_slots:
                     rows = json.loads(await asyncio.to_thread(method, query, max_results=limit))
             except (DDGSException, TimeoutError, ValueError) as exc:
                 provider_error = str(exc) or type(exc).__name__
@@ -136,7 +154,7 @@ class WebSearchTools(AgnoWebSearchTools):
                     discovered = await self._google_news(query, limit)
                     primary = discovered[: max(1, limit // 2)] if results else discovered
                     remainder = discovered[len(primary) :]
-                    results = list(dict((row["url"], row) for row in [*primary, *results, *remainder]).values())[:limit]
+                    results = list(dict((row["url"], row) for row in [*primary, *results, *remainder]).values())
                 except (httpx.HTTPError, TimeoutError, ValueError, ET.ParseError) as exc:
                     logger.warning(
                         "Google News discovery failed query=%r reason=%s", query, str(exc) or type(exc).__name__
@@ -145,8 +163,28 @@ class WebSearchTools(AgnoWebSearchTools):
                 logger.warning("News search provider failed tool=%s query=%r reason=%s", name, query, provider_error)
                 if not results:
                     return json.dumps({"ok": False, "error": provider_error[:160], "results": []})
-            result = json.dumps(results, ensure_ascii=False, separators=(",", ":"))
+            now = datetime.now(UTC)
+            for row in results:
+                date = publication_metadata(row.get("date"), now)
+                row.update(
+                    {
+                        "date": date["published_at"],
+                        "reported_date": date["reported_published_at"],
+                        "publication_status": date["publication_status"],
+                        "age_hours": date["age_hours"],
+                        "retrieved_at": now.isoformat(),
+                        "access": "discovery_snippet",
+                    }
+                )
+                for field, length in (("title", 300), ("body", 700)):
+                    row[field] = " ".join(
+                        BeautifulSoup(str(row.get(field) or ""), "html.parser").get_text(" ", strip=True).split()
+                    )[:length]
+            freshness_order = {"recent": 0, "undated": 1, "stale": 2, "future_date": 3}
+            results.sort(key=lambda row: (freshness_order[row["publication_status"]], row["age_hours"] or 0))
+            result = json.dumps(results[:limit], ensure_ascii=False, allow_nan=False, separators=(",", ":"))
             self.cache[key] = result
+            self.cache_expires[key] = time.monotonic() + (60 if results else 10)
             return result
         except (TimeoutError, ValueError) as exc:
             return json.dumps({"ok": False, "error": str(exc), "results": []})
