@@ -4,11 +4,23 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def topic_matches(topic: str, text: str) -> bool:
+    btc = {"btc", "bitcoin", "xbt", "btcusd", "btcusdt"}
+    eth = {"eth", "ethereum", "ether", "ethusd", "ethusdt", "ethbtc", "weth", "steth"}
+    aliases = {"btc": btc, "bitcoin": btc, "eth": eth, "ethereum": eth}
+    terms = set(re.findall(r"\w+", topic.casefold())) - {"news", "latest", "market", "and", "the"}
+    assets = set().union(*(aliases[term] for term in terms if term in aliases))
+    sought = assets or terms
+    tokens = set(re.findall(r"\w+", text.casefold()))
+    return not sought or bool(sought & tokens)
 
 
 def discussion_evidence(topic: str, platforms: list[str], now: datetime | None = None) -> dict:
@@ -38,8 +50,7 @@ def discussion_evidence(topic: str, platforms: list[str], now: datetime | None =
                     if not now - timedelta(hours=48) <= published <= now:
                         continue
                     text = item["text"][:4000]
-                    terms = set(topic.casefold().split()) - {"news", "latest", "market", "and", "the"}
-                    if terms and not any(term in text.casefold() for term in terms):
+                    if not topic_matches(topic, text):
                         continue
                     posts.append(
                         {
