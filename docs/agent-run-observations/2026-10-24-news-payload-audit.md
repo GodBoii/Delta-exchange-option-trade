@@ -30,8 +30,10 @@ failed publisher reads even when other originals succeed. No result establishes 
 
 The baseline returned old news alongside current leads, and web results often lacked publication dates.
 Future and undated results did not have explicit status. A concurrency reproduction sent 64 identical
-searches through the ten-call allowance, yielding mixed successes and budget errors. Some HTML originals
-showed damaged punctuation after forced UTF-8 decoding. Feed selection also assumed incoming ordering.
+searches through the ten-call allowance, yielding mixed successes and budget errors. A non-UTF-8 fixture
+also reproduced damaged source characters under forced UTF-8 decoding. The saved live article samples
+contained no replacement characters; apparent damage in a printed excerpt came from the terminal
+display. Feed selection also assumed incoming ordering.
 
 Searches now share identical in-flight requests, refresh successful cache entries after 60 seconds and
 empty entries after ten, clean snippets to plain text, and expose normalized UTC publication dates,
@@ -94,3 +96,49 @@ review remain required before accepted claims reach the strategy agent.
 Freshness is measured at collection, subject to a one-minute source/search cache and subsequent model
 runtime. Breaking-news triggers and pre-activation refresh remain deferred. A source can be unavailable,
 undated or quiet, and no implementation can guarantee new data from every external call every time.
+
+## Final regression checks
+
+The full backend suite passed 1,152 tests with no failures or skips in 152.33 seconds against disposable
+PostgreSQL on an internal network. It had dummy model credentials and no production database connection.
+The final news suite passed 162 tests, including the 26 focused payload/load tests. Ruff and whitespace
+checks passed. One existing Starlette/httpx deprecation warning remains. No frontend files changed.
+
+## Deployed verification
+
+Release `bef4a3b` was pushed and pulled on `ubuntu-server`. The analyzer and collector were rebuilt and
+restarted after confirming zero running analysis jobs and zero active/pending strategies. Eight deployed
+source files matched their committed contents. Writer, analyzer and BTC/ETH market services remained
+healthy. No analysis or trade was started for verification. The disposable test database and internal
+test network were removed.
+
+The final deployed audit completed another 84 observations. Across baseline, staged and deployed audits,
+252 actual public-tool invocations were recorded, with zero model calls. Each final tool ran twelve times:
+
+| Tool | Final populated responses |
+| --- | --- |
+| curate_public_sources | 12 / 12 |
+| build_news_dossier | 12 / 12 |
+| read_news_article | 12 / 12 |
+| search_news | 12 / 12 |
+| web_search | 11 / 12 |
+| search_public_discussion | 12 / 12 |
+| search_exchange_announcements | 10 / 12 |
+
+All payloads passed strict JSON round trips. The empty web response included an explicit provider
+connection failure. Exchange results could contain a provider error even when another exchange supplied
+a lead. The twelve successful sampled article reads were all labelled recent and included retrieval
+timestamps. Six cached-repeat pairs preserved identical source text. No replacement characters were
+present in the saved live samples, before or after the repair.
+
+Final news-search payloads contained 38 recent and 14 stale leads. Stale leads were explicitly labelled;
+the collector does not invent newer stories when a source cannot provide them. The six new discovery
+categories returned material in all twelve final curation calls. IRS was available, while OFAC and EU
+guidance remained correctly stale. Separate background-collector checks found BTC/ETH snapshots about
+29 seconds old, with all six new categories present. These are observed collection results, not a
+guarantee of exhaustive news coverage or proof of model reasoning quality.
+
+Temporary validation artifacts are `/tmp/news-audit-baseline.json`, `/tmp/news-audit-repaired.json` and
+`/tmp/news-audit-deployed.json` on the server. Local copies use the same filenames in the user's Temp
+directory. They contain public tool payloads only. The final audit command is reproducible through
+`scripts.audit_news_tools` without model or trading-database access.
