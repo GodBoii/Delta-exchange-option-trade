@@ -590,7 +590,12 @@ class NewsResearchTools(Toolkit):
                     return {"ok": False, "url": url, "error": "Source failed twice in this run; use another source"}
                 self.budget.consume("read_news_article")
                 self.pending[url] = asyncio.create_task(self._fetch_article(url, client))
-            return await self.pending[url]
+            task = self.pending[url]
+            try:
+                return await task
+            finally:
+                if task.done() and self.pending.get(url) is task:
+                    self.pending.pop(url, None)
         except (TimeoutError, ValueError) as exc:
             return {"ok": False, "url": url, "error": str(exc)}
 
