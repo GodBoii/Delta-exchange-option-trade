@@ -160,6 +160,6 @@ def test_market_capture_starts_after_news_finishes(monkeypatch):
     monkeypatch.setattr(team, "_chart_artifacts", charts)
     with pytest.raises(ReachedCharts):
         team.run_automation_team(
-            settings=SimpleNamespace(), user_id="global", agent_run_id="test", session_id="test",
+            settings=SimpleNamespace(structured_news=False), user_id="global", agent_run_id="test", session_id="test",
             account_context={}, trigger="manual", asset=PROFILES["BTC"],
         )
