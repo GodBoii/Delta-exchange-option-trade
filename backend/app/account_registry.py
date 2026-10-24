@@ -25,7 +25,7 @@ class AccountRegistry:
         row = await self.db.local_data.request("accounts:credentials", {"userId": owner})
         if not row or row.get("status") != "connected":
             raise AppError(409, "Connect your main Delta account first", "delta_not_connected")
-        return row
+        return {**row, "account_name": row.get("account_name") or "Main account"}
 
     async def settings(self, owner: str) -> dict[str, Any]:
         async with self.pool.connection() as connection, connection.cursor(row_factory=dict_row) as cursor:
