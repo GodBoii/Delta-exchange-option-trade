@@ -8,7 +8,7 @@ after news completes and creates charts from that capture.
 
 1. `news-collector` polls public sources for both assets independently of model runs. Shared file-cache locks
    reuse common macro/calendar responses across assets and worker processes. Recent discovery snapshots
-   are supplied to research immediately, with original dates preserved. They do not trigger analyses.
+   are available as discovery context, with original dates preserved. They do not trigger analyses.
 2. The curator attempts 35 baseline connectors per asset, plus one bounded topic-specific query when
    topics are supplied. Coverage includes official US releases/calendars, ECB, Bank of England, BIS,
    English/Japanese Bank of Japan, crypto publishers, exchange/issuer status, and labelled institutional,
@@ -25,16 +25,28 @@ after news completes and creates charts from that capture.
    first twelve PDF pages retain up to 128,000 characters. Each response is capped at 8,000 characters.
    `read_news_article(url, find="phrase")` or `read_news_article(url, page=2)` retrieves a later retained
    passage without another download. Scanned/encrypted PDFs and material outside retained text remain gaps.
-6. With `NEWS_STRUCTURED_ENABLED=true`, the researcher returns a typed event brief directly. Claims carry
-   source IDs and exact original-language passages. A separate tool-free model pass reviews entailment,
+6. With `NEWS_STRUCTURED_ENABLED=true`, the pipeline calls the curator and reads up to six balanced original
+   candidates before inference, favoring fresh asset leads and different publishers within each source
+   category. The researcher receives these actual results and retains all seven tool
+   interfaces, with free-form Markdown output. Research does not use provider JSON mode. Prepared reads and
+   model tool calls share one cache and budget; persisted traces distinguish their origin. A tool-free
+   extraction pass creates a brief whose claims carry source IDs and exact original-language passages.
+   A separate tool-free model pass reviews entailment,
    dates, units, reference periods, translations, attribution and event status. Exact-passage and numerical
    checks run deterministically. Missing, duplicate or rejected verdicts cannot approve a claim. Metadata
    and interpretation require their own approval and all supporting claims to survive. Review is bounded
-   to 180 seconds and at most 40 relevant documents / 100,000 retained text characters.
+   to 180 seconds overall. The inventory retains at most 40 documents / 100,000 text characters. Extraction
+   receives at most 48,000 source characters, 4,000 per document, and 12,000 draft characters. Review receives
+   only documents referenced by grounded candidates. Both passes validate JSON locally with Pydantic,
+   without provider JSON mode, and have 90-second request timeouts, no retries and 6,000-token output caps.
 7. The final Markdown is rendered from accepted claims. It separates reported facts from conditional
    interpretation and direction from volatility. Partial collection is disclosed. Structured events,
    quotes, review decisions and coverage are saved under `reportQuality.intelligence`; existing report
    consumers continue receiving a Markdown string. A review failure cannot release the unreviewed draft.
+   Empty findings require an explicit limitation. Missing evidence, researched-with-no-findings, limited
+   findings and verified findings remain distinct. Structured automation requires verified non-discussion
+   findings, at least one original article read and a positive accepted-claim count before market capture
+   and strategy selection. Calendar-only or discussion-only results cannot satisfy this condition.
 8. Public non-social events are stored in `ai.news_events`. History is bounded to twenty recent relevant
    events; MACRO events are shared across assets. It is explicitly historical context requiring fresh
    evidence. Conservative grouping distinguishes repeated release dates, preserves contradictions and
@@ -50,7 +62,8 @@ metadata; translated claims are reviewed against originals rather than replacing
 ## Compatibility and limits
 
 Compose enables structured research in `news-analyzer`, whose container remains `bitcoin-agent`. The model
-remains MiMo. Standalone sessions default to legacy Markdown unless the flag is explicitly enabled.
+remains MiMo, with medium research reasoning and a 12,000-token output cap. Standalone sessions default
+to legacy Markdown unless the flag is explicitly enabled.
 Tool names, action interfaces and Markdown report delivery remain compatible. Migration 016 adds one
 public-research table; the writer's existing startup migration/role provisioning handles access.
 
@@ -93,6 +106,11 @@ From `backend`, use the repository virtual environment to run:
 Database tests require `TEST_LOCAL_DATABASE_URL` on a disposable PostgreSQL instance. The ETH catalog
 suite additionally requires `TEST_ETH_CATALOG_DATABASE_URL` pointing to an `eth_catalog_test` database.
 Apply migrations with `python -m scripts.init_local_db` in the isolated test environment first.
+
+To exercise public fetching directly without model calls or database writes, run
+`python -m scripts.probe_news_tools --asset BTC --output /tmp/news-tools-BTC.json`, and repeat for ETH.
+The probe calls all seven tool entry points and records coverage, retrieval, cache reuse and explicit
+search/discussion gaps. Successful fetching does not prove model analysis quality.
 
 Breaking-news triggers, pre-activation news refresh, operational monitoring, historical evaluation and
 complete reproducible evidence archives remain outside the agreed implementation scope.
