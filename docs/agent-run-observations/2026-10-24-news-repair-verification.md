@@ -43,6 +43,34 @@ News search returned results; general web search was empty in the earlier probe 
 in the later ETH probe. X export observations were available. Reddit reported an unavailable export.
 These checks made zero model calls and do not establish analysis accuracy or complete coverage.
 
+## Deployment
+
+Code release `70ccb6f` was pushed to `origin main`, pulled on `ubuntu-server`, rebuilt and restarted at
+16:43 IST on 24 October. The writer, analyzer, collector and public social exporter were recreated.
+The writer and analyzer passed health checks, including database readiness and scheduler health.
+Fourteen deployed source files matched their committed contents across the writer, analyzer and
+collector. Binance BTC/ETH services remained healthy. There were no active strategies or running
+analysis jobs at restart; the persisted job and strategy counts were unchanged after verification.
+
+Deployed fetching-only probes completed with these observed results. Durations include cache reuse
+and are not cold-start benchmarks or model runtime measurements.
+
+| Check | BTC | ETH |
+| --- | --- | --- |
+| Public-tool elapsed time | 31.3 seconds | 29.1 seconds |
+| Available source connectors | 27 / 37 | 26 / 37 |
+| Successful original reads | 4 | 3 |
+| Targeted passage read and download reuse | passed | passed |
+| News / web search results | 3 / 3 | 3 / 3 |
+| Sampled discussion posts | 30 | 27 |
+| Exchange announcement leads | 1 | 1 |
+| GDELT replacement RSS connectors | both available | both available |
+| Model calls | 0 | 0 |
+
+Coverage remained partial. Reddit had no usable configured export. Stale official feeds do not prove
+the connector is broken or that no relevant event exists. Publisher access failures remain explicit.
+The disposable test PostgreSQL containers and internal test network were removed after testing.
+
 ## Limits
 
 Earlier live model attempts timed out during extraction, then hit account credit limits. The user
