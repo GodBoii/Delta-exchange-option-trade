@@ -29,16 +29,20 @@ async def _normalize_embedded_error(response: httpx.Response) -> None:
 
 def provider_failure(error: Exception, api_key: str | None = None) -> dict:
     message = str(error)
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)) and not message:
+        message = "News request timed out"
     if api_key:
         message = message.replace(api_key, "[redacted]")
     message = re.sub(r"Bearer\s+\S+|sk-[\w-]+", "[redacted]", message, flags=re.IGNORECASE)
+    message = re.sub(r"https://openrouter\.ai/[^\s]*keys/[^\s]+", "[provider key settings]", message)
     status = getattr(error, "status_code", None)
     code = "model_provider_failed"
     if re.search(r"credit|key limit|insufficient funds|spending limit", message, re.IGNORECASE):
         code = "model_credit_limit"
     elif status == 429:
         code = "model_rate_limited"
-    elif re.search(r"timed? out|timeout", message, re.IGNORECASE):
+    elif (isinstance(error, (TimeoutError, httpx.TimeoutException))
+          or re.search(r"timed? out|timeout", message, re.IGNORECASE)):
         code = "model_timeout"
     return {"code": code, "stage": "news", "http_status": status, "message": message[:300]}
 
