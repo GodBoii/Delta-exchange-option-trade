@@ -13,7 +13,7 @@ from agno.db.base import BaseDb
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 
-from .agent import create_news_agent
+from .agent import _create_research_tools, create_news_agent
 from .budget import ResearchBudget
 from .collector import initial_collection
 from .config import NewsAgentSettings
@@ -25,6 +25,7 @@ from .intelligence import Brief, analyze_evidence, evidence_documents, render_ev
 from .memory import memory_context, recent_events, save_events
 from .presentation import format_time
 from .report_quality import clean_report
+from .research import prepare_research
 
 logger = logging.getLogger(__name__)
 BTC_FOCUS_QUERY = "Bitcoin BTC ETF regulation latest news"
@@ -159,6 +160,9 @@ def research_trace(run: RunOutput) -> list[dict[str, Any]]:
         trace.append(
             {
                 "name": str(name),
+                "origin": "pipeline"
+                if str(_tool_field(execution, "tool_call_id") or "").startswith("prepared:")
+                else "model",
                 "args": args if isinstance(args, dict) else str(args)[:500],
                 "result": _trace_result(str(name), _tool_field(execution, "result", "tool_result")),
                 "duration_seconds": getattr(metrics, "duration", None),
@@ -189,6 +193,19 @@ class NewsPipelineResult:
         return research_trace(self.report_response)
 
 
+def strategy_evidence_ready(quality: dict[str, Any]) -> bool:
+    intelligence = quality.get("intelligence")
+    accepted = intelligence.get("accepted_claims") if isinstance(intelligence, dict) else None
+    originals = quality.get("original_reads")
+    return (
+        quality.get("research_status") == "verified_findings"
+        and type(originals) is int
+        and originals > 0
+        and type(accepted) is int
+        and accepted > 0
+    )
+
+
 def run_news_pipeline(
     prompt: str,
     *,
@@ -211,16 +228,20 @@ def run_news_pipeline(
     started_at = time.perf_counter()
     report_response = None
     evidence_written = False
+    prepared = []
     try:
         history = []
         if settings.structured_news and settings.database_url:
             history = recent_events(settings.psycopg_url(), asset, run_started_at)
+        budget = ResearchBudget(limits={"web_search": 20, "read_news_article": 16})
+        toolkits = _create_research_tools(settings, budget) if settings.structured_news else None
         analyst = create_news_agent(
             settings=settings,
             db=session_db,
             debug_mode=debug_mode,
             asset=asset,
-            research_budget=ResearchBudget(limits={"web_search": 20, "read_news_article": 16}),
+            research_budget=budget,
+            research_tools=toolkits,
         )
         research_prompt = (
             f"Run started at: {format_time(run_started_at)}. Times use IST, UTC+05:30.\n\n"
@@ -228,21 +249,27 @@ def run_news_pipeline(
             "search the web yourself. Investigate related global developments, scheduled meetings, "
             "crypto announcements, and public discussion. Open useful source pages before citing them. "
             "Continue with available evidence when a source fails; explain material gaps. Return the completed "
-            + (
-                "structured event brief with quoted evidence and clear market implications."
-                if settings.structured_news
-                else "Markdown report with linked evidence and clear market implications."
-            )
+            "Markdown report with linked evidence and clear market implications."
             + memory_context(history)
-            + initial_collection(asset, run_started_at)
+            + ("" if settings.structured_news else initial_collection(asset, run_started_at))
         )
-        report_response = asyncio.run(
-            analyst.arun(
-                research_prompt,
-                session_id=effective_session_id,
-                user_id=effective_user_id,
+
+        async def research():
+            context = ""
+            if toolkits is not None:
+                try:
+                    async with asyncio.timeout(90):
+                        context = await prepare_research(toolkits, asset, prepared)
+                except (TimeoutError, ValueError) as error:
+                    logger.warning("Initial original collection incomplete asset=%s reason=%s", asset, error)
+                    context = "\nInitial collection was incomplete; use your research tools to fill the gaps."
+            return await analyst.arun(
+                research_prompt + context, session_id=effective_session_id, user_id=effective_user_id
             )
-        )
+
+        report_response = asyncio.run(research())
+        if isinstance(report_response, RunOutput):
+            report_response.tools = [*prepared, *(report_response.tools or [])]
         if (
             not isinstance(report_response, RunOutput)
             or report_response.status != RunStatus.completed
@@ -263,8 +290,11 @@ def run_news_pipeline(
                 failure, research_trace(report_response) if isinstance(report_response, RunOutput) else []
             )
         proposed = report_response.content if isinstance(report_response.content, Brief) else None
+        if proposed is not None and not proposed.events:
+            proposed = None
         cleaned = clean_report(
-            "## Source evidence" if proposed is not None else report_response.content, report_response.tools or []
+            "## Source evidence" if isinstance(report_response.content, Brief) else report_response.content,
+            report_response.tools or [],
         )
         coverage = collection_coverage(report_response.tools or [])
         report_response.content = cleaned.markdown + coverage_notice(coverage)
@@ -281,25 +311,49 @@ def run_news_pipeline(
                 else None
             )
             documents = evidence_documents(report_response.tools or [], requested)
+            if not documents:
+                raise NewsResearchError(
+                    {
+                        "code": "news_research_incomplete",
+                        "stage": "news",
+                        "message": "No usable original or calendar news evidence was retrieved. Selection is blocked.",
+                    },
+                    research_trace(report_response),
+                )
 
             async def verify():
-                async with asyncio.timeout(180):
-                    if proposed is not None:
-                        return await analyze_evidence(settings, "", documents, run_started_at, brief=proposed)
-                    return await analyze_evidence(settings, cleaned.markdown, documents, run_started_at)
+                try:
+                    async with asyncio.timeout(180):
+                        if proposed is not None:
+                            return await analyze_evidence(settings, "", documents, run_started_at, brief=proposed)
+                        return await analyze_evidence(settings, cleaned.markdown, documents, run_started_at)
+                except TimeoutError as error:
+                    raise NewsResearchError(
+                        {
+                            "code": "news_verification_timeout",
+                            "stage": "news",
+                            "message": "News verification exceeded its 180-second deadline. Selection is blocked.",
+                        },
+                        research_trace(report_response),
+                    ) from error
 
-            intelligence = (
-                asyncio.run(verify())
-                if documents
-                else {
-                    "events": [],
-                    "gaps": ["No original document evidence was retrieved."],
-                    "candidate_claims": 0,
-                    "accepted_claims": 0,
-                }
-            )
+            intelligence = asyncio.run(verify())
             intelligence["events"] = cluster_events(intelligence["events"], history)
             quality["intelligence"] = {key: value for key, value in intelligence.items() if key != "markdown"}
+            quality["retrieved_documents"] = len(documents)
+            quality["original_reads"] = sum(doc["kind"] == "article" for doc in documents.values())
+            actionable = any(
+                claim.get("source_kind") != "discussion"
+                for event in intelligence["events"]
+                for claim in event["claims"]
+            )
+            quality["research_status"] = (
+                "verified_findings"
+                if actionable and quality["original_reads"]
+                else "limited_findings"
+                if actionable
+                else "researched_no_findings"
+            )
             report_response.content = render_events(intelligence["events"], intelligence["gaps"])
             report_response.content += coverage_notice(coverage)
             if settings.database_url:
@@ -334,6 +388,12 @@ def run_news_pipeline(
             quality=quality,
         )
     except Exception as error:
+        if isinstance(error, NewsResearchError) and not error.trace:
+            error.trace = (
+                research_trace(report_response)
+                if isinstance(report_response, RunOutput)
+                else research_trace(RunOutput(tools=prepared))
+            )
         if evidence_sink and not evidence_written:
             failure = (
                 error.failure
@@ -347,7 +407,9 @@ def run_news_pipeline(
                     "status": "error",
                     "content": None,
                     "failure": failure,
-                    "researchTrace": research_trace(report_response) if isinstance(report_response, RunOutput) else [],
+                    "researchTrace": research_trace(report_response)
+                    if isinstance(report_response, RunOutput)
+                    else research_trace(RunOutput(tools=prepared)),
                 }
             )
         logger.exception("News pipeline failed session_id=%s user_id=%s", effective_session_id, effective_user_id)
