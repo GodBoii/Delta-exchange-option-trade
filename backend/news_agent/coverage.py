@@ -1,6 +1,7 @@
 """Summarize observed collection outcomes without equating discovery with verification."""
 
 import json
+import re
 from typing import Any
 
 
@@ -39,10 +40,16 @@ def coverage_notice(coverage: dict[str, Any]) -> str:
         status = row["status"] or "unknown"
         counts[status] = counts.get(status, 0) + 1
     details = ", ".join(f"{status.replace('_', ' ')}: {count}" for status, count in sorted(counts.items()))
+    names = "; ".join(
+        re.sub(r"([\\`*_\[\]<>])", r"\\\1", " ".join(str(row["source"]).split())[:80])
+        + f" ({row['status'] or 'unknown'})"
+        for row in coverage["limited_sources"][:12]
+    )
     return (
         "\n\n## Coverage limitations\n\n"
         f"{coverage['available_sources']} of {coverage['checked_sources']} checked sources "
         "returned available material. "
         f"Other collection outcomes were {details}. Missing coverage cannot establish that no relevant event occurred. "
         "Search leads still require verification from originals."
+        + (f" Limited sources include {names}." if names else "")
     )
